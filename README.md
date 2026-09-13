@@ -24,6 +24,8 @@ Required environment variables:
 - `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, and `SUPABASE_STORAGE_BUCKET`:
 	configure these to store uploads permanently in a public Supabase Storage
 	bucket. The service-role key must remain server-side only.
+- `OPENAI_API_KEY`: optional server-side key for semantic item embeddings. When
+	absent, matching falls back to keyword similarity.
 
 Uploads use Supabase Storage when configured. Without those variables, local
 development writes to `static/uploads`; Render's free filesystem is ephemeral.

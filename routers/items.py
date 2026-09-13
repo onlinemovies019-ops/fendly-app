@@ -1,4 +1,5 @@
 import io
+import math
 import os
 import re
 from pathlib import Path
@@ -10,6 +11,7 @@ from PIL import Image, UnidentifiedImageError
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from ai_matching import create_embedding, item_text
 from auth import get_current_user
 from database import get_db
 from models import FoundItem, LostItem
@@ -22,8 +24,9 @@ ALLOWED_IMAGE_TYPES = {"image/jpeg", "image/png", "image/webp"}
 WORD_PATTERN = re.compile(r"[a-z0-9]+")
 
 
-def _save_item(payload: ItemCreate, session: Session, uid: str, model: type[LostItem] | type[FoundItem]):
-    record = model(**payload.model_dump(), created_by=uid)
+async def _save_item(payload: ItemCreate, session: Session, uid: str, model: type[LostItem] | type[FoundItem]):
+    embedding = await create_embedding(item_text(payload.title, payload.description, payload.category))
+    record = model(**payload.model_dump(), created_by=uid, embedding=embedding)
     session.add(record)
     session.commit()
     session.refresh(record)
@@ -77,25 +80,25 @@ async def upload_image(
 
 
 @router.post("/items/lost", response_model=ItemResponse, status_code=status.HTTP_201_CREATED)
-def create_lost_item(
+async def create_lost_item(
     payload: ItemCreate,
     session: Session = Depends(get_db),
     uid: str = Depends(get_current_user),
 ) -> LostItem:
-    return _save_item(payload, session, uid, LostItem)
+    return await _save_item(payload, session, uid, LostItem)
 
 
 @router.post("/items/found", response_model=ItemResponse, status_code=status.HTTP_201_CREATED)
-def create_found_item(
+async def create_found_item(
     payload: ItemCreate,
     session: Session = Depends(get_db),
     uid: str = Depends(get_current_user),
 ) -> FoundItem:
-    return _save_item(payload, session, uid, FoundItem)
+    return await _save_item(payload, session, uid, FoundItem)
 
 
 @router.post("/items/match", response_model=list[MatchResponse])
-def match_items(
+async def match_items(
     request: MatchRequest,
     session: Session = Depends(get_db),
     _: str = Depends(get_current_user),
@@ -110,12 +113,22 @@ def match_items(
             func.abs(LostItem.lng - found_item.lng) <= request.radius_degrees,
         )
     ).all()
+    found_embedding = found_item.embedding or await create_embedding(
+        item_text(found_item.title, found_item.description, found_item.category)
+    )
     found_words = set(WORD_PATTERN.findall(f"{found_item.title} {found_item.description}".lower()))
     results = []
     for item in candidates:
         lost_words = set(WORD_PATTERN.findall(f"{item.title} {item.description}".lower()))
-        text_score = len(found_words & lost_words) / max(len(found_words | lost_words), 1)
+        keyword_score = len(found_words & lost_words) / max(len(found_words | lost_words), 1)
+        semantic_score = keyword_score
+        if found_embedding is not None and item.embedding is not None:
+            dot_product = sum(left * right for left, right in zip(found_embedding, item.embedding))
+            found_norm = math.sqrt(sum(value * value for value in found_embedding))
+            item_norm = math.sqrt(sum(value * value for value in item.embedding))
+            if found_norm and item_norm:
+                semantic_score = max(0.0, min(1.0, dot_product / (found_norm * item_norm)))
         distance = abs(item.lat - found_item.lat) + abs(item.lng - found_item.lng)
         location_score = max(0.0, 1 - distance / (2 * request.radius_degrees))
-        results.append({"item": item, "score": round(text_score * 0.7 + location_score * 0.3, 4)})
+        results.append({"item": item, "score": round(semantic_score * 0.7 + location_score * 0.3, 4)})
     return sorted(results, key=lambda result: float(result["score"]), reverse=True)[:25]
