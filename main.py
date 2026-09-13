@@ -15,8 +15,13 @@ from pydantic import BaseModel, Field
 from sqlalchemy import Float, String, Text, create_engine, func, select
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
 
-database_url = os.getenv("DATABASE_URL", "postgresql+psycopg2://localhost/fendly")
-database_url = database_url.replace("postgres://", "postgresql+psycopg2://", 1).replace("postgresql://", "postgresql+psycopg2://", 1)
+database_url = os.getenv("DATABASE_URL", "postgresql+psycopg://localhost/fendly")
+database_url = (
+    database_url
+    .replace("postgres://", "postgresql+psycopg://", 1)
+    .replace("postgresql://", "postgresql+psycopg://", 1)
+    .replace("postgresql+psycopg2://", "postgresql+psycopg://", 1)
+)
 upload_dir = Path(os.getenv("UPLOAD_DIR", "static/uploads"))
 upload_dir.mkdir(parents=True, exist_ok=True)
 engine = create_engine(database_url, pool_pre_ping=True)
@@ -45,8 +50,16 @@ class LostItem(Base):
     image_url: Mapped[str | None] = mapped_column(String(1000))
 
 
-class FoundItem(LostItem):
+class FoundItem(Base):
     __tablename__ = "found_items"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    created_by: Mapped[str] = mapped_column(String(128), index=True)
+    title: Mapped[str] = mapped_column(String(160))
+    description: Mapped[str] = mapped_column(Text)
+    category: Mapped[str] = mapped_column(String(80), default="other")
+    lat: Mapped[float] = mapped_column(Float)
+    lng: Mapped[float] = mapped_column(Float)
+    image_url: Mapped[str | None] = mapped_column(String(1000))
 
 
 class Item(BaseModel):
