@@ -8,6 +8,7 @@ import android.os.Build;
 import android.os.Bundle;
 import android.view.Gravity;
 import android.widget.Button;
+import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 import androidx.core.app.ActivityCompat;
@@ -34,34 +35,50 @@ public final class MainActivity extends Activity {
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
         root.setGravity(Gravity.CENTER_HORIZONTAL);
-        root.setPadding(48, 72, 48, 48);
+        root.setPadding(48, 40, 48, 32);
         root.setBackgroundColor(Color.WHITE);
 
-        TextView title = new TextView(this);
-        title.setText("Fendly\nLost & Found");
-        title.setTextColor(Color.rgb(31, 53, 74));
-        title.setTextSize(30);
-        title.setGravity(Gravity.CENTER);
-        root.addView(title, new LinearLayout.LayoutParams(-1, -2));
+        ImageView logo = new ImageView(this);
+        logo.setImageResource(R.drawable.fendly_logo);
+        logo.setAdjustViewBounds(true);
+        logo.setContentDescription("Fendly");
+        LinearLayout.LayoutParams logoParams = new LinearLayout.LayoutParams(280, 190);
+        root.addView(logo, logoParams);
+
+        TextView tagline = new TextView(this);
+        tagline.setText("Lost & Found across India");
+        tagline.setTextColor(Color.rgb(100, 100, 100));
+        tagline.setTextSize(16);
+        tagline.setGravity(Gravity.CENTER);
+        root.addView(tagline, new LinearLayout.LayoutParams(-1, -2));
 
         status = new TextView(this);
-        status.setText("Sign in to register this device for match notifications.");
-        status.setTextSize(16);
-        status.setTextColor(Color.DKGRAY);
+        status.setText("Help is right here - get started.");
+        status.setTextSize(17);
+        status.setTextColor(Color.rgb(125, 125, 125));
         status.setGravity(Gravity.CENTER);
         LinearLayout.LayoutParams statusParams = new LinearLayout.LayoutParams(-1, -2);
-        statusParams.setMargins(0, 40, 0, 24);
+        statusParams.setMargins(0, 30, 0, 24);
         root.addView(status, statusParams);
 
-        Button signIn = new Button(this);
-        signIn.setText("Continue with Firebase");
-        signIn.setOnClickListener(view -> FirebaseAuth.getInstance().signInAnonymously()
+        Button createProfile = new Button(this);
+        createProfile.setText("Create my profile");
+        createProfile.setTextColor(Color.WHITE);
+        createProfile.setBackgroundColor(Color.rgb(36, 96, 175));
+        createProfile.setOnClickListener(view -> FirebaseAuth.getInstance().signInAnonymously()
                 .addOnSuccessListener(result -> {
-                    status.setText("Connected. Push notifications are enabled for this device.");
+                    status.setText("Profile started. Push notifications are enabled.");
                     FcmRegistration.registerCurrentToken();
                 })
                 .addOnFailureListener(error -> status.setText("Connection failed: " + error.getMessage())));
-        root.addView(signIn, new LinearLayout.LayoutParams(-1, -2));
+        root.addView(createProfile, new LinearLayout.LayoutParams(-1, -2));
+
+        Button pinLogin = new Button(this);
+        pinLogin.setText("Login with PIN");
+        pinLogin.setOnClickListener(view -> status.setText("PIN login will be available after profile setup."));
+        LinearLayout.LayoutParams pinParams = new LinearLayout.LayoutParams(-1, -2);
+        pinParams.setMargins(0, 12, 0, 0);
+        root.addView(pinLogin, pinParams);
         setContentView(root);
     }
 }
