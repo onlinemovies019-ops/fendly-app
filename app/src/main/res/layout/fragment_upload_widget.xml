@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<RelativeLayout android:background="@android:color/black" android:layout_width="match_parent" android:layout_height="match_parent"
+  xmlns:android="http://schemas.android.com/apk/res/android" xmlns:app="http://schemas.android.com/apk/res-auto">
+    <androidx.appcompat.widget.Toolbar android:id="@id/toolbar" android:background="@android:color/transparent" android:layout_width="match_parent" android:layout_height="?android:actionBarSize" android:layout_alignParentTop="true" />
+    <androidx.viewpager.widget.ViewPager android:id="@id/imagesViewPager" android:layout_width="match_parent" android:layout_height="match_parent" android:layout_marginTop="@dimen/images_pager_margin_top" android:layout_above="@id/thumbnailsRecyclerView" android:layout_below="@id/toolbar" />
+    <com.google.android.material.floatingactionbutton.FloatingActionButton android:id="@id/uploadFab" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_margin="@dimen/upload_fab_margin" android:layout_above="@id/thumbnailsRecyclerView" android:layout_alignParentRight="true" android:layout_alignParentEnd="true" app:backgroundTint="@color/buttonColor" app:srcCompat="@drawable/check" />
+    <androidx.recyclerview.widget.RecyclerView android:id="@id/thumbnailsRecyclerView" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="@dimen/thumbnails_list_vertical_margin" android:layout_marginBottom="@dimen/thumbnails_list_vertical_margin" android:layout_alignParentBottom="true" />
+</RelativeLayout>

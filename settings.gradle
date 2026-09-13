@@ -1,0 +1,3 @@
+rootProject.name = 'Fendly Lost & Found'
+
+include 'app'

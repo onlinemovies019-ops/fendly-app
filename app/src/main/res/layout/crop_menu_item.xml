@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout android:gravity="center_vertical" android:orientation="horizontal" android:layout_width="match_parent" android:layout_height="?android:actionBarSize"
+  xmlns:android="http://schemas.android.com/apk/res/android" xmlns:app="http://schemas.android.com/apk/res-auto">
+    <TextView android:textColor="?android:textColorPrimary" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="@string/menu_item_crop" />
+    <ImageView android:padding="@dimen/menu_item_icon_padding" android:layout_width="wrap_content" android:layout_height="wrap_content" app:srcCompat="@drawable/crop_rotate" />
+</LinearLayout>
