@@ -1,6 +1,7 @@
 import io
 import json
 import os
+import sys
 from pathlib import Path
 from uuid import uuid4
 
@@ -15,13 +16,14 @@ from pydantic import BaseModel, Field
 from sqlalchemy import Float, String, Text, create_engine, func, select
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
 
-database_url = os.getenv("DATABASE_URL", "postgresql+psycopg://localhost/fendly")
-database_url = (
-    database_url
-    .replace("postgres://", "postgresql+psycopg://", 1)
-    .replace("postgresql://", "postgresql+psycopg://", 1)
-    .replace("postgresql+psycopg2://", "postgresql+psycopg://", 1)
-)
+database_url = os.getenv("DATABASE_URL")
+if not database_url:
+    print("FATAL ERROR: DATABASE_URL environment variable is not set!", file=sys.stderr)
+    sys.exit(1)
+
+database_url = database_url.replace("postgres://", "postgresql+psycopg://", 1)
+database_url = database_url.replace("postgresql://", "postgresql+psycopg://", 1)
+database_url = database_url.replace("postgresql+psycopg2://", "postgresql+psycopg://", 1)
 upload_dir = Path(os.getenv("UPLOAD_DIR", "static/uploads"))
 upload_dir.mkdir(parents=True, exist_ok=True)
 engine = create_engine(database_url, pool_pre_ping=True)
