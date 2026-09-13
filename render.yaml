@@ -1,0 +1,21 @@
+services:
+  - type: web
+    name: fendly-api
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    plan: starter
+    envVars:
+      - key: DATABASE_URL
+        sync: false
+      - key: CORS_ORIGINS
+        value: "*"
+      - key: PUBLIC_BASE_URL
+        value: https://fendly-api.onrender.com
+      - key: FIREBASE_SERVICE_ACCOUNT_JSON
+        sync: false
+    disk:
+      name: fendly-uploads
+      mountPath: /app/static/uploads
+      sizeGB: 1
