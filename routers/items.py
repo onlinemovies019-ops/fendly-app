@@ -15,6 +15,7 @@ from ai_matching import create_embedding, item_text
 from auth import get_current_user
 from database import get_db
 from models import FoundItem, LostItem
+from notifications import send_match_notifications
 from schemas import ItemCreate, ItemResponse, MatchRequest, MatchResponse
 
 
@@ -131,4 +132,18 @@ async def match_items(
         distance = abs(item.lat - found_item.lat) + abs(item.lng - found_item.lng)
         location_score = max(0.0, 1 - distance / (2 * request.radius_degrees))
         results.append({"item": item, "score": round(semantic_score * 0.7 + location_score * 0.3, 4)})
-    return sorted(results, key=lambda result: float(result["score"]), reverse=True)[:25]
+    ranked_results = sorted(results, key=lambda result: float(result["score"]), reverse=True)[:25]
+    notified_uids = {
+        item.created_by
+        for result in ranked_results
+        if float(result["score"]) >= 0.5
+        for item in [result["item"]]
+        if item.created_by != found_item.created_by
+    }
+    send_match_notifications(
+        session,
+        notified_uids,
+        found_item.id,
+        max((float(result["score"]) for result in ranked_results), default=0.0),
+    )
+    return ranked_results

@@ -28,3 +28,8 @@ class MatchRequest(BaseModel):
 class MatchResponse(BaseModel):
     item: ItemResponse
     score: float = Field(ge=0, le=1)
+
+
+class FcmTokenRequest(BaseModel):
+    token: str = Field(min_length=20, max_length=4096)
+    platform: str = Field(default="android", min_length=1, max_length=32)

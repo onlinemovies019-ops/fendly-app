@@ -8,6 +8,7 @@ from sqlalchemy import text
 from database import engine
 from models import Base
 from routers.items import router as items_router
+from routers.notifications import router as notifications_router
 
 
 @asynccontextmanager
@@ -28,6 +29,7 @@ app.add_middleware(
 )
 app.mount("/static", StaticFiles(directory="static"), name="static")
 app.include_router(items_router)
+app.include_router(notifications_router)
 
 
 @app.get("/health")

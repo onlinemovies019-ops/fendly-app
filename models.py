@@ -2,7 +2,7 @@ from datetime import datetime
 from uuid import uuid4
 
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import DateTime, Float, String, Text, func
+from sqlalchemy import DateTime, Float, String, Text, UniqueConstraint, func
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -16,6 +16,17 @@ class User(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
     firebase_uid: Mapped[str] = mapped_column(String(128), unique=True, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class DeviceToken(Base):
+    __tablename__ = "device_tokens"
+    __table_args__ = (UniqueConstraint("token", name="uq_device_tokens_token"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    firebase_uid: Mapped[str] = mapped_column(String(128), index=True)
+    token: Mapped[str] = mapped_column(String(4096), unique=True)
+    platform: Mapped[str] = mapped_column(String(32), default="android")
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
 
 class LostItem(Base):

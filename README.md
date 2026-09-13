@@ -24,8 +24,8 @@ Required environment variables:
 - `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, and `SUPABASE_STORAGE_BUCKET`:
 	configure these to store uploads permanently in a public Supabase Storage
 	bucket. The service-role key must remain server-side only.
-- `OPENAI_API_KEY`: optional server-side key for semantic item embeddings. When
-	absent, matching falls back to keyword similarity.
+- Matching is local and free: keyword similarity is combined with location
+	proximity. No paid AI API key is required.
 
 Uploads use Supabase Storage when configured. Without those variables, local
 development writes to `static/uploads`; Render's free filesystem is ephemeral.
@@ -37,5 +37,7 @@ development writes to `static/uploads`; Render's free filesystem is ephemeral.
 - `POST /api/items/lost`
 - `POST /api/items/found`
 - `POST /api/items/match`
+- `POST /api/devices/fcm-token`
+- `DELETE /api/devices/fcm-token`
 
 All `/api` endpoints require `Authorization: Bearer <Firebase ID token>`.
