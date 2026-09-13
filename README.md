@@ -21,10 +21,12 @@ Required environment variables:
 	Admin credentials used to verify Android ID tokens.
 - `PUBLIC_BASE_URL`: Public API URL used in uploaded image URLs.
 - `CORS_ORIGINS`: Comma-separated allowed origins. Defaults to `*`.
+- `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, and `SUPABASE_STORAGE_BUCKET`:
+	configure these to store uploads permanently in a public Supabase Storage
+	bucket. The service-role key must remain server-side only.
 
-Uploads are written to `static/uploads` by default. Render's free filesystem is
-ephemeral, so configure `UPLOAD_DIR` or replace the upload implementation with a
-Supabase Storage bucket before relying on uploads in production.
+Uploads use Supabase Storage when configured. Without those variables, local
+development writes to `static/uploads`; Render's free filesystem is ephemeral.
 
 ## API
 

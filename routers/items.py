@@ -5,6 +5,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+import httpx
 from PIL import Image, UnidentifiedImageError
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -29,6 +30,30 @@ def _save_item(payload: ItemCreate, session: Session, uid: str, model: type[Lost
     return record
 
 
+async def _store_image(data: bytes, filename: str, content_type: str) -> str:
+    supabase_url = os.getenv("SUPABASE_URL", "").rstrip("/")
+    service_role_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+    bucket = os.getenv("SUPABASE_STORAGE_BUCKET", "uploads")
+    if supabase_url and service_role_key:
+        endpoint = f"{supabase_url}/storage/v1/object/{bucket}/{filename}"
+        headers = {
+            "Authorization": f"Bearer {service_role_key}",
+            "Content-Type": content_type,
+            "x-upsert": "false",
+        }
+        async with httpx.AsyncClient(timeout=30) as client:
+            response = await client.post(endpoint, content=data, headers=headers)
+        if response.is_error:
+            raise HTTPException(502, "Image storage upload failed")
+        return f"{supabase_url}/storage/v1/object/public/{bucket}/{filename}"
+
+    upload_dir = Path(os.getenv("UPLOAD_DIR", "static/uploads"))
+    upload_dir.mkdir(parents=True, exist_ok=True)
+    (upload_dir / filename).write_bytes(data)
+    base_url = os.getenv("PUBLIC_BASE_URL", "http://127.0.0.1:8000").rstrip("/")
+    return f"{base_url}/static/uploads/{filename}"
+
+
 @router.post("/upload", status_code=status.HTTP_201_CREATED)
 async def upload_image(
     image: UploadFile = File(...),
@@ -46,12 +71,9 @@ async def upload_image(
     except (UnidentifiedImageError, OSError) as exc:
         raise HTTPException(400, "Invalid image") from exc
 
-    upload_dir = Path(os.getenv("UPLOAD_DIR", "static/uploads"))
-    upload_dir.mkdir(parents=True, exist_ok=True)
     filename = f"{uuid4().hex}.{extension}"
-    (upload_dir / filename).write_bytes(data)
-    base_url = os.getenv("PUBLIC_BASE_URL", "http://127.0.0.1:8000").rstrip("/")
-    return {"url": f"{base_url}/static/uploads/{filename}", "filename": filename}
+    image_url = await _store_image(data, filename, image.content_type)
+    return {"url": image_url, "filename": filename}
 
 
 @router.post("/items/lost", response_model=ItemResponse, status_code=status.HTTP_201_CREATED)
