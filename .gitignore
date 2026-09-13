@@ -1,0 +1,46 @@
+# Local secrets and machine-specific configuration
+local.properties
+gradle.properties
+*.jks
+*.keystore
+.env
+.env.*
+!.env.example
+
+# Android and Gradle outputs
+.gradle/
+build/
+app/build/
+captures/
+
+# IDE and operating-system files
+.idea/
+.DS_Store
+
+# Python environments and generated files
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Runtime uploads
+static/uploads/*
+!static/uploads/.gitkeep*.iml
+.gradle
+/local.properties
+/.idea/caches
+/.idea/libraries
+/.idea/modules.xml
+/.idea/workspace.xml
+/.idea/navEditor.xml
+/.idea/assetWizardSettings.xml
+.DS_Store
+/build
+/captures
+.externalNativeBuild
+.cxx
+local.properties
+gradle.properties
+*.jks
+*.keystore
