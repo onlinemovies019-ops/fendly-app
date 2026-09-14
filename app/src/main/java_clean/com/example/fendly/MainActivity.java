@@ -7,7 +7,6 @@ import android.graphics.Color;
 import android.os.Build;
 import android.os.Bundle;
 import android.view.Gravity;
-import android.widget.Button;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.TextView;
@@ -41,14 +40,14 @@ public final class MainActivity extends Activity {
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
         root.setGravity(Gravity.CENTER_HORIZONTAL);
-        root.setPadding(66, 54, 66, 32);
+        root.setPadding(66, 111, 66, 32);
         root.setBackgroundColor(BACKGROUND);
 
         ImageView logo = new ImageView(this);
         logo.setImageResource(R.drawable.fendly_brand);
         logo.setAdjustViewBounds(true);
         logo.setContentDescription("Fendly");
-        LinearLayout.LayoutParams logoParams = new LinearLayout.LayoutParams(760, 570);
+        LinearLayout.LayoutParams logoParams = new LinearLayout.LayoutParams(760, 535);
         root.addView(logo, logoParams);
 
         TextView tagline = new TextView(this);
@@ -60,43 +59,41 @@ public final class MainActivity extends Activity {
 
         status = new TextView(this);
         status.setText("Help is right here - get started.");
-        status.setTextSize(24);
-        status.setTextColor(Color.WHITE);
-        status.setTypeface(null, android.graphics.Typeface.BOLD);
-        status.setGravity(Gravity.START);
+        status.setTextSize(25);
+        status.setTextColor(SILVER);
+        status.setTypeface(null, android.graphics.Typeface.NORMAL);
+        status.setGravity(Gravity.CENTER);
         LinearLayout.LayoutParams statusParams = new LinearLayout.LayoutParams(-1, -2);
-        statusParams.setMargins(0, 82, 0, 42);
+        statusParams.setMargins(0, 126, 0, 66);
         root.addView(status, statusParams);
 
-        Button createProfile = new Button(this);
+        TextView createProfile = new TextView(this);
         createProfile.setText("Create my profile");
         createProfile.setTextColor(Color.WHITE);
         createProfile.setTextSize(20);
-        createProfile.setAllCaps(false);
         createProfile.setTypeface(null, android.graphics.Typeface.BOLD);
+        createProfile.setGravity(Gravity.CENTER);
         createProfile.setBackground(goldButton());
-        createProfile.setBackgroundTintList(null);
         createProfile.setOnClickListener(view -> FirebaseAuth.getInstance().signInAnonymously()
                 .addOnSuccessListener(result -> {
                     status.setText("Profile started. Push notifications are enabled.");
                     FcmRegistration.registerCurrentToken();
                 })
                 .addOnFailureListener(error -> status.setText("Connection failed: " + error.getMessage())));
-        root.addView(createProfile, new LinearLayout.LayoutParams(-1, -2));
+        root.addView(createProfile, new LinearLayout.LayoutParams(-1, 150));
 
-        Button pinLogin = new Button(this);
+        TextView pinLogin = new TextView(this);
         pinLogin.setText("Login with PIN");
         pinLogin.setTextColor(Color.WHITE);
         pinLogin.setTextSize(20);
-        pinLogin.setAllCaps(false);
+        pinLogin.setGravity(Gravity.CENTER);
         pinLogin.setBackground(outlineButton());
-        pinLogin.setBackgroundTintList(null);
         pinLogin.setOnClickListener(view -> status.setText("PIN login will be available after profile setup."));
-        LinearLayout.LayoutParams pinParams = new LinearLayout.LayoutParams(-1, -2);
+        LinearLayout.LayoutParams pinParams = new LinearLayout.LayoutParams(-1, 150);
         pinParams.setMargins(0, 24, 0, 0);
         root.addView(pinLogin, pinParams);
 
-        TextView continueText = actionText("Continue to app", SILVER);
+        TextView continueText = actionText("Continue to app", Color.rgb(247, 231, 161));
         continueText.setOnClickListener(view -> status.setText("Sign in or create a profile to continue."));
         LinearLayout.LayoutParams continueParams = new LinearLayout.LayoutParams(-1, -2);
         continueParams.setMargins(0, 68, 0, 0);
@@ -105,7 +102,7 @@ public final class MainActivity extends Activity {
         TextView adminText = actionText("Admin Login", GOLD);
         adminText.setOnClickListener(view -> status.setText("Admin access is available to authorized staff."));
         LinearLayout.LayoutParams adminParams = new LinearLayout.LayoutParams(-1, -2);
-        adminParams.setMargins(0, 84, 0, 0);
+        adminParams.setMargins(0, 118, 0, 0);
         root.addView(adminText, adminParams);
         setContentView(root);
     }
@@ -122,7 +119,7 @@ public final class MainActivity extends Activity {
 
     private GradientDrawable goldButton() {
         GradientDrawable button = new GradientDrawable(
-                GradientDrawable.Orientation.LEFT_RIGHT, new int[]{GOLD_DARK, GOLD, Color.rgb(247, 231, 161)});
+            GradientDrawable.Orientation.LEFT_RIGHT, new int[]{Color.rgb(169, 129, 31), GOLD, GOLD});
         button.setCornerRadius(28);
         button.setStroke(3, Color.rgb(255, 237, 157));
         return button;

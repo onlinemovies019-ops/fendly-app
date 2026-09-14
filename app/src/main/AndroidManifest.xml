@@ -20,7 +20,7 @@
     <permission android:name="com.example.fendly.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION" android:protectionLevel="signature"/>
     <uses-permission android:name="com.example.fendly.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION"/>
     <application android:allowBackup="true" android:appComponentFactory="androidx.core.app.CoreComponentFactory" android:dataExtractionRules="@xml/data_extraction_rules" android:extractNativeLibs="false" android:fullBackupContent="@xml/backup_rules" android:icon="@drawable/fendly_logo" android:label="@string/app_name" android:name="com.example.fendly.AppContext" android:roundIcon="@drawable/fendly_logo" android:supportsRtl="true" android:theme="@style/Theme.Fendly">
-        <activity android:exported="true" android:label="@string/app_name" android:name="com.example.fendly.MainActivity" android:theme="@style/Theme.Fendly" android:windowSoftInputMode="adjustResize">
+        <activity android:exported="true" android:label="@string/app_name" android:name="com.example.fendly.MainActivity" android:screenOrientation="portrait" android:theme="@style/Theme.Fendly" android:windowSoftInputMode="adjustResize">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN"/>
                 <category android:name="android.intent.category.LAUNCHER"/>
