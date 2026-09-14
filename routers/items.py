@@ -98,6 +98,32 @@ async def create_found_item(
     return await _save_item(payload, session, uid, FoundItem)
 
 
+@router.get("/items/mine")
+async def list_my_items(
+    session: Session = Depends(get_db),
+    uid: str = Depends(get_current_user),
+) -> list[dict[str, object]]:
+    lost_items = session.scalars(select(LostItem).where(LostItem.created_by == uid)).all()
+    found_items = session.scalars(select(FoundItem).where(FoundItem.created_by == uid)).all()
+    items = [("LOST", item) for item in lost_items] + [("FOUND", item) for item in found_items]
+    items.sort(key=lambda pair: pair[1].created_at.timestamp() if pair[1].created_at else 0, reverse=True)
+    return [
+        {
+            "id": item.id,
+            "type": item_type,
+            "title": item.title,
+            "description": item.description,
+            "category": item.category,
+            "lat": item.lat,
+            "lng": item.lng,
+            "image_url": item.image_url,
+            "created_at": item.created_at,
+            "status": "Active" if item_type == "LOST" else "Published",
+        }
+        for item_type, item in items
+    ]
+
+
 @router.post("/items/match", response_model=list[MatchResponse])
 async def match_items(
     request: MatchRequest,
