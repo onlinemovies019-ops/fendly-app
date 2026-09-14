@@ -17,6 +17,12 @@ services:
         value: uploads
       - key: CORS_ORIGINS
         value: "*"
+      - key: ADMIN_FIREBASE_UIDS
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: OPENAI_MODERATION_MODEL
+        value: omni-moderation-latest
       - key: PUBLIC_BASE_URL
         value: https://fendly-api.onrender.com
       - key: UPLOAD_DIR

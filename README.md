@@ -36,8 +36,17 @@ development writes to `static/uploads`; Render's free filesystem is ephemeral.
 - `POST /api/upload`
 - `POST /api/items/lost`
 - `POST /api/items/found`
+- `GET /api/items/mine`
 - `POST /api/items/match`
+- `GET /api/users/username/{username}`
+- `POST /api/users/username`
+- `GET /api/admin/items`
+- `GET /api/admin/matches/{found_item_id}`
+- `POST /api/admin/matches/{found_item_id}/notify`
 - `POST /api/devices/fcm-token`
 - `DELETE /api/devices/fcm-token`
 
 All `/api` endpoints require `Authorization: Bearer <Firebase ID token>`.
+Admin endpoints additionally require the Firebase UID to be listed in
+`ADMIN_FIREBASE_UIDS`. Set `OPENAI_API_KEY` to enable provider-backed moderation;
+without it, the backend uses its local safety blocklist.
