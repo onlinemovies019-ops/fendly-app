@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 from ai_matching import create_embedding, item_text
 from auth import get_current_user
 from database import get_db
+from moderation import moderate_content
 from models import FoundItem, LostItem
 from notifications import send_match_notifications
 from schemas import ItemCreate, ItemResponse, MatchRequest, MatchResponse
@@ -26,6 +27,9 @@ WORD_PATTERN = re.compile(r"[a-z0-9]+")
 
 
 async def _save_item(payload: ItemCreate, session: Session, uid: str, model: type[LostItem] | type[FoundItem]):
+    rejection_reason = await moderate_content(payload.title, payload.description)
+    if rejection_reason:
+        raise HTTPException(status_code=422, detail=rejection_reason)
     embedding = await create_embedding(item_text(payload.title, payload.description, payload.category))
     record = model(**payload.model_dump(), created_by=uid, embedding=embedding)
     session.add(record)

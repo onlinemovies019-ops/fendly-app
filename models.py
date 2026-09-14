@@ -18,6 +18,14 @@ class User(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
+class UsernameReservation(Base):
+    __tablename__ = "username_reservations"
+
+    username: Mapped[str] = mapped_column(String(32), primary_key=True)
+    firebase_uid: Mapped[str] = mapped_column(String(128), unique=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
 class DeviceToken(Base):
     __tablename__ = "device_tokens"
     __table_args__ = (UniqueConstraint("token", name="uq_device_tokens_token"),)

@@ -37,6 +37,10 @@ import android.app.AlertDialog;
 import android.content.SharedPreferences;
 import com.example.fendly.notifications.FcmRegistration;
 import com.google.firebase.auth.FirebaseAuth;
+import com.google.firebase.auth.EmailAuthProvider;
+import com.google.firebase.auth.PhoneAuthCredential;
+import com.google.firebase.auth.PhoneAuthOptions;
+import com.google.firebase.auth.PhoneAuthProvider;
 import android.net.Uri;
 import android.location.Location;
 import android.location.LocationManager;
@@ -45,6 +49,7 @@ import org.json.JSONObject;
 import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
 import java.util.Locale;
+import java.util.concurrent.TimeUnit;
 
 public final class MainActivity extends Activity {
     private static final int BACKGROUND = Color.rgb(13, 12, 9);
@@ -61,6 +66,8 @@ public final class MainActivity extends Activity {
     private double currentLat;
     private double currentLng;
     private boolean hasLocation;
+    private String phoneVerificationId;
+    private boolean phoneVerificationHandled;
     private String currentReportType;
     private Handler adminPressHandler = new Handler();
     private boolean accountCreated;
@@ -191,7 +198,7 @@ public final class MainActivity extends Activity {
         pinLogin.setTextSize(16);
         pinLogin.setGravity(Gravity.CENTER);
         pinLogin.setBackground(outlineButton());
-        pinLogin.setOnClickListener(view -> status.setText("PIN login will be available after profile setup."));
+        pinLogin.setOnClickListener(view -> showPinLogin());
         LinearLayout.LayoutParams pinParams = new LinearLayout.LayoutParams(-1, 56);
         pinParams.setMargins(0, 28, 0, 0);
         root.addView(pinLogin, pinParams);
@@ -228,12 +235,183 @@ public final class MainActivity extends Activity {
             } else if (!validEmail(email.getText().toString())) {
                 email.setError("Use Gmail, Yahoo, or Hotmail");
             } else {
-                getSharedPreferences("fendly_account", MODE_PRIVATE).edit().putBoolean("created", true).putString("username", username.getText().toString().trim()).apply();
-                accountCreated = true;
-                showHome();
+                startPhoneVerification(mobile.getText().toString().trim(), username.getText().toString().trim(), pin.getText().toString(), save);
             }
         });
         addField(root, save);
+    }
+
+    private void startPhoneVerification(String mobile, String username, String pin, TextView save) {
+        FirebaseAuth auth = FirebaseAuth.getInstance();
+        if (auth.getCurrentUser() == null) {
+            save.setText("Sign in first");
+            return;
+        }
+        phoneVerificationHandled = false;
+        save.setText("Sending verification code...");
+        save.setEnabled(false);
+        PhoneAuthProvider.verifyPhoneNumber(PhoneAuthOptions.newBuilder(auth)
+                .setPhoneNumber("+91" + mobile)
+                .setTimeout(60L, TimeUnit.SECONDS)
+                .setActivity(this)
+                .setCallbacks(new PhoneAuthProvider.OnVerificationStateChangedCallbacks() {
+                    @Override
+                    public void onVerificationCompleted(PhoneAuthCredential credential) {
+                        completePhoneVerification(credential, username, pin, save);
+                    }
+
+                    @Override
+                    public void onVerificationFailed(com.google.firebase.FirebaseException error) {
+                        save.setText("SMS verification unavailable");
+                        save.setEnabled(true);
+                        Toast.makeText(MainActivity.this, error.getMessage(), Toast.LENGTH_LONG).show();
+                    }
+
+                    @Override
+                    public void onCodeSent(String verificationId, PhoneAuthProvider.ForceResendingToken token) {
+                        phoneVerificationId = verificationId;
+                        save.setText("Enter SMS code");
+                        showOtpDialog(username, pin, save);
+                    }
+                }).build());
+    }
+
+    private void showOtpDialog(String username, String pin, TextView save) {
+        EditText code = field("6-digit SMS code");
+        new AlertDialog.Builder(this)
+                .setTitle("Verify your mobile")
+                .setMessage("Enter the code sent to your mobile number.")
+                .setView(code)
+                .setPositiveButton("Verify", (dialog, which) -> {
+                    if (phoneVerificationId == null || code.getText().toString().trim().length() != 6) {
+                        save.setText("Invalid SMS code");
+                        save.setEnabled(true);
+                        return;
+                    }
+                    completePhoneVerification(PhoneAuthProvider.getCredential(phoneVerificationId, code.getText().toString().trim()), username, pin, save);
+                })
+                .setNegativeButton("Cancel", (dialog, which) -> {
+                    save.setText("Save and continue");
+                    save.setEnabled(true);
+                })
+                .show();
+    }
+
+    private void completePhoneVerification(PhoneAuthCredential credential, String username, String pin, TextView save) {
+        if (phoneVerificationHandled) return;
+        phoneVerificationHandled = true;
+        FirebaseAuth.getInstance().getCurrentUser().linkWithCredential(credential)
+                .addOnSuccessListener(result -> finishProfileSetup(username, pin, save))
+                .addOnFailureListener(error -> {
+                    phoneVerificationHandled = false;
+                    save.setText("SMS verification failed");
+                    save.setEnabled(true);
+                    Toast.makeText(this, "Could not verify mobile number", Toast.LENGTH_LONG).show();
+                });
+    }
+
+    private void finishProfileSetup(String username, String pin, TextView save) {
+        FirebaseAuth auth = FirebaseAuth.getInstance();
+        if (auth.getCurrentUser() == null) {
+            save.setText("Sign in first");
+            return;
+        }
+        save.setText("Checking username...");
+        save.setEnabled(false);
+        auth.getCurrentUser().getIdToken(false).addOnSuccessListener(token -> network.execute(() -> {
+            int reservationCode = reserveUsername(username, token.getToken());
+            runOnUiThread(() -> {
+                if (reservationCode != 201 && reservationCode != 200) {
+                    save.setText("Username unavailable");
+                    save.setEnabled(true);
+                    Toast.makeText(this, "Choose another username", Toast.LENGTH_LONG).show();
+                    return;
+                }
+                saveFirebaseCredential(username, pin, save);
+            });
+        })).addOnFailureListener(error -> {
+            save.setText("Authentication unavailable");
+            save.setEnabled(true);
+        });
+    }
+
+    private int reserveUsername(String username, String idToken) {
+        HttpURLConnection connection = null;
+        try {
+            connection = (HttpURLConnection) new URL(API_BASE + "/api/users/username").openConnection();
+            connection.setRequestMethod("POST");
+            connection.setConnectTimeout(15000);
+            connection.setReadTimeout(30000);
+            connection.setDoOutput(true);
+            connection.setRequestProperty("Authorization", "Bearer " + idToken);
+            connection.setRequestProperty("Content-Type", "application/json; charset=UTF-8");
+            String body = "{\"username\":\"" + escapeJson(username) + "\"}";
+            try (OutputStream output = connection.getOutputStream()) {
+                output.write(body.getBytes(StandardCharsets.UTF_8));
+            }
+            return connection.getResponseCode();
+        } catch (Exception error) {
+            return -1;
+        } finally {
+            if (connection != null) connection.disconnect();
+        }
+    }
+
+    private void saveFirebaseCredential(String username, String pin, TextView save) {
+        String email = credentialEmail(username);
+        String password = credentialPassword(username, pin);
+        FirebaseAuth.getInstance().getCurrentUser().linkWithCredential(EmailAuthProvider.getCredential(email, password))
+                .addOnSuccessListener(result -> {
+                    getSharedPreferences("fendly_account", MODE_PRIVATE).edit().putBoolean("created", true).putString("username", username).apply();
+                    accountCreated = true;
+                    showHome();
+                })
+                .addOnFailureListener(error -> {
+                    save.setText("Could not secure account");
+                    save.setEnabled(true);
+                    Toast.makeText(this, error.getMessage(), Toast.LENGTH_LONG).show();
+                });
+    }
+
+    private String credentialEmail(String username) {
+        return username.trim().toLowerCase(Locale.US) + "@login.fendly.app";
+    }
+
+    private String credentialPassword(String username, String pin) {
+        return "Fendly!" + username.trim().toLowerCase(Locale.US) + "#" + pin;
+    }
+
+    private void showPinLogin() {
+        LinearLayout root = screenBase("Login with PIN");
+        addHeading("Welcome back.", "Use the username and PIN from your Fendly profile.");
+        EditText username = field("Username");
+        EditText pin = field("4-digit PIN");
+        pin.setInputType(InputType.TYPE_CLASS_NUMBER | InputType.TYPE_NUMBER_VARIATION_PASSWORD);
+        addField(root, username);
+        addField(root, pin);
+        TextView login = actionButton("Log in", true);
+        login.setOnClickListener(view -> {
+            String name = username.getText().toString().trim();
+            String code = pin.getText().toString();
+            if (name.length() < 3 || code.length() != 4) {
+                Toast.makeText(this, "Enter a valid username and 4-digit PIN", Toast.LENGTH_LONG).show();
+                return;
+            }
+            login.setText("Signing in...");
+            login.setEnabled(false);
+            FirebaseAuth.getInstance().signInWithEmailAndPassword(credentialEmail(name), credentialPassword(name, code))
+                    .addOnSuccessListener(result -> {
+                        accountCreated = true;
+                        getSharedPreferences("fendly_account", MODE_PRIVATE).edit().putBoolean("created", true).putString("username", name).apply();
+                        showHome();
+                    })
+                    .addOnFailureListener(error -> {
+                        login.setText("Try again");
+                        login.setEnabled(true);
+                        Toast.makeText(this, "Incorrect username or PIN", Toast.LENGTH_LONG).show();
+                    });
+        });
+        addField(root, login);
     }
 
     private boolean validEmail(String value) {

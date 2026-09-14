@@ -33,3 +33,7 @@ class MatchResponse(BaseModel):
 class FcmTokenRequest(BaseModel):
     token: str = Field(min_length=20, max_length=4096)
     platform: str = Field(default="android", min_length=1, max_length=32)
+
+
+class UsernameRequest(BaseModel):
+    username: str = Field(min_length=3, max_length=32, pattern=r"^[A-Za-z0-9_]+$")
