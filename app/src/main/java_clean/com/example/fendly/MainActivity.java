@@ -746,13 +746,13 @@ public final class MainActivity extends Activity {
     }
 
     private void addHeading(String title, String subtitle) {
-        activeContent.addView(text(title, 31, darkMode ? Color.WHITE : Color.BLACK, android.graphics.Typeface.BOLD));
-        addField(activeContent, text(subtitle, 16, secondaryTextColor(), android.graphics.Typeface.NORMAL));
+        activeContent.addView(text(translate(title), 31, darkMode ? Color.WHITE : Color.BLACK, android.graphics.Typeface.BOLD));
+        addField(activeContent, text(translate(subtitle), 16, secondaryTextColor(), android.graphics.Typeface.NORMAL));
     }
 
     private EditText field(String hint) {
         EditText input = new EditText(this);
-        input.setHint(hint);
+        input.setHint(translate(hint));
         input.setTextSize(16);
         input.setTextColor(darkMode ? Color.WHITE : Color.BLACK);
         input.setHintTextColor(secondaryTextColor());
@@ -762,8 +762,8 @@ public final class MainActivity extends Activity {
     }
 
     private TextView actionButton(String label, boolean primary) {
-        TextView button = text(label, 16, primary || darkMode ? Color.WHITE : Color.BLACK, android.graphics.Typeface.BOLD);
-        button.setText(label);
+        TextView button = text(translate(label), 16, primary || darkMode ? Color.WHITE : Color.BLACK, android.graphics.Typeface.BOLD);
+        button.setText(translate(label));
         button.setGravity(Gravity.CENTER);
         button.setBackground(primary ? goldButton() : outlineButton());
         return button;
@@ -932,7 +932,7 @@ public final class MainActivity extends Activity {
 
     private TextView text(String value, float size, int color, int style) {
         TextView view = new TextView(this);
-        view.setText(value);
+        view.setText(translate(value));
         view.setTextSize(size);
         view.setTextColor(color);
         view.setTypeface(null, style);
@@ -999,6 +999,37 @@ public final class MainActivity extends Activity {
         if ("create_profile".equals(key)) return values[language][2];
         if ("pin_login".equals(key)) return values[language][3];
         return values[language][4];
+    }
+
+    private String translate(String value) {
+        String[] english = {
+                "Complete your profile", "A little about you", "This helps neighbours know who they are helping.", "Save and continue",
+                "Login with PIN", "Welcome back.", "Use the username and PIN from your Fendly profile.", "Log in",
+                "Home", "Find what matters.", "Lost nearby? Found something? Start here.", "LOST", "FOUND", "My reports", "My profile",
+                "Post found item", "Report lost item", "Help it get home.", "Let's find it.", "Add clear details so the right person can recognise it.",
+                "Item name", "Description and identifying details", "Location or landmark", "Date and time", "Upload item image", "Image selected",
+                "Take photo with camera", "Use current location", "Publish found item", "Publish lost item", "Fendly Plus",
+                "Unlock lost-item submissions.", "Found-item reports stay free forever. Lost-item submissions are Rs 99 per year.",
+                "Pay and submit lost report", "Back to report", "Your reports", "Keep track of items you are helping to reunite.", "Back home",
+                "Dummy user", "Your account details and preferences.", "Admin dashboard", "Private moderation workspace", "English only · confidential user details",
+                "Loading live admin data...", "Review AI match", "Confirm and notify owner", "Exit admin"
+        };
+        String[][] translations = {
+                english,
+                {"अपनी प्रोफ़ाइल पूरी करें", "आपके बारे में थोड़ा", "इससे पड़ोसियों को पता चलेगा कि वे किसकी मदद कर रहे हैं।", "सहेजें और जारी रखें", "पिन से लॉगिन", "वापसी पर स्वागत है।", "अपने Fendly उपयोगकर्ता नाम और पिन का उपयोग करें।", "लॉगिन", "होम", "जो महत्वपूर्ण है उसे खोजें।", "पास में कुछ खोया? कुछ मिला? यहां से शुरू करें।", "खोया", "मिला", "मेरी रिपोर्ट", "मेरी प्रोफ़ाइल", "मिली वस्तु पोस्ट करें", "खोई वस्तु रिपोर्ट करें", "इसे घर पहुंचाने में मदद करें।", "आइए इसे खोजें।", "स्पष्ट विवरण जोड़ें ताकि सही व्यक्ति पहचान सके।", "वस्तु का नाम", "विवरण और पहचान की जानकारी", "स्थान या पहचान चिन्ह", "दिनांक और समय", "वस्तु की तस्वीर अपलोड करें", "तस्वीर चुनी गई", "कैमरे से तस्वीर लें", "वर्तमान स्थान उपयोग करें", "मिली वस्तु प्रकाशित करें", "खोई वस्तु प्रकाशित करें", "Fendly Plus", "खोई वस्तु की रिपोर्ट अनलॉक करें।", "मिली वस्तु की रिपोर्ट हमेशा निःशुल्क है। खोई वस्तु की रिपोर्ट Rs 99 प्रति वर्ष है।", "भुगतान करें और खोई रिपोर्ट भेजें", "रिपोर्ट पर वापस जाएं", "मेरी रिपोर्ट", "जिन वस्तुओं को मिलाने में मदद कर रहे हैं उनका रिकॉर्ड रखें।", "होम पर वापस जाएं", "डमी उपयोगकर्ता", "आपके खाते का विवरण और प्राथमिकताएं।", "एडमिन डैशबोर्ड", "निजी मॉडरेशन कार्यक्षेत्र", "केवल अंग्रेज़ी · गोपनीय उपयोगकर्ता विवरण", "लाइव एडमिन डेटा लोड हो रहा है...", "AI मिलान देखें", "पुष्टि करें और मालिक को सूचित करें", "एडमिन से बाहर निकलें"},
+                {"पूर्ण प्रोफाइल", "तुमच्याबद्दल थोडे", "यामुळे शेजाऱ्यांना ते कोणाला मदत करत आहेत हे समजेल.", "जतन करा आणि पुढे जा", "पिनने लॉगिन", "पुन्हा स्वागत आहे.", "तुमचे Fendly वापरकर्तानाव आणि पिन वापरा.", "लॉगिन", "मुख्यपृष्ठ", "महत्त्वाचे शोधा.", "जवळ काही हरवले? काही सापडले? इथून सुरुवात करा.", "हरवले", "सापडले", "माझे अहवाल", "माझे प्रोफाइल", "सापडलेली वस्तू पोस्ट करा", "हरवलेली वस्तू नोंदवा", "ते घरी पोहोचवण्यास मदत करा.", "चला ते शोधूया.", "योग्य व्यक्ती ओळखू शकेल असे स्पष्ट तपशील जोडा.", "वस्तूचे नाव", "वर्णन आणि ओळख तपशील", "ठिकाण किंवा खूण", "दिनांक आणि वेळ", "वस्तूचा फोटो अपलोड करा", "फोटो निवडला", "कॅमेऱ्याने फोटो घ्या", "सध्याचे स्थान वापरा", "सापडलेली वस्तू प्रकाशित करा", "हरवलेली वस्तू प्रकाशित करा", "Fendly Plus", "हरवलेल्या वस्तूंचे अहवाल सुरू करा.", "सापडलेल्या वस्तूंचे अहवाल कायम विनामूल्य आहेत. हरवलेल्या वस्तूंचे अहवाल वर्षाला Rs 99 आहेत.", "भरणा करून हरवलेला अहवाल पाठवा", "अहवालाकडे परत जा", "माझे अहवाल", "तुम्ही पुन्हा जोडण्यास मदत करत असलेल्या वस्तूंचा मागोवा ठेवा.", "मुख्यपृष्ठावर परत जा", "डमी वापरकर्ता", "तुमच्या खात्याचे तपशील आणि प्राधान्ये.", "अॅडमिन डॅशबोर्ड", "खासगी मॉडरेशन कार्यक्षेत्र", "फक्त इंग्रजी · गोपनीय वापरकर्ता तपशील", "लाइव्ह अॅडमिन डेटा लोड होत आहे...", "AI जुळणी पाहा", "पुष्टी करून मालकाला कळवा", "अॅडमिनमधून बाहेर पडा"},
+                {"اپنی پروفائل مکمل کریں", "آپ کے بارے میں کچھ", "اس سے پڑوسیوں کو معلوم ہوگا کہ وہ کس کی مدد کر رہے ہیں۔", "محفوظ کریں اور جاری رکھیں", "پن سے لاگ ان", "خوش آمدید۔", "اپنا Fendly صارف نام اور پن استعمال کریں۔", "لاگ ان", "ہوم", "اہم چیز تلاش کریں۔", "قریب کچھ گم ہوا؟ کچھ ملا؟ یہاں سے شروع کریں۔", "گمشدہ", "ملا", "میری رپورٹس", "میری پروفائل", "ملی ہوئی چیز پوسٹ کریں", "گمشدہ چیز رپورٹ کریں", "اسے گھر پہنچانے میں مدد کریں۔", "آئیے اسے تلاش کریں۔", "واضح تفصیلات شامل کریں تاکہ صحیح شخص شناخت کر سکے۔", "چیز کا نام", "تفصیل اور شناختی معلومات", "مقام یا نشانی", "تاریخ اور وقت", "چیز کی تصویر اپ لوڈ کریں", "تصویر منتخب ہے", "کیمرے سے تصویر لیں", "موجودہ مقام استعمال کریں", "ملی ہوئی چیز شائع کریں", "گمشدہ چیز شائع کریں", "Fendly Plus", "گمشدہ چیز کی رپورٹس کھولیں۔", "ملی ہوئی چیز کی رپورٹس ہمیشہ مفت ہیں۔ گمشدہ چیز کی رپورٹس سالانہ Rs 99 ہیں۔", "ادائیگی کریں اور گمشدہ رپورٹ بھیجیں", "رپورٹ پر واپس جائیں", "میری رپورٹس", "جن چیزوں کو ملانے میں مدد کر رہے ہیں ان کا ریکارڈ رکھیں۔", "ہوم پر واپس جائیں", "نمونہ صارف", "آپ کے اکاؤنٹ کی تفصیلات اور ترجیحات۔", "ایڈمن ڈیش بورڈ", "نجی نگرانی کا ورک اسپیس", "صرف انگریزی · خفیہ صارف کی تفصیلات", "لائیو ایڈمن ڈیٹا لوڈ ہو رہا ہے...", "AI میچ دیکھیں", "تصدیق کریں اور مالک کو اطلاع دیں", "ایڈمن سے باہر نکلیں"},
+                {"Complete o seu perfil", "Sobre você", "Isto ajuda os vizinhos a saberem quem estão ajudando.", "Salvar e continuar", "Entrar com PIN", "Bem-vindo de volta.", "Use seu nome de usuário e PIN Fendly.", "Entrar", "Início", "Encontre o que importa.", "Perdeu algo perto? Encontrou algo? Comece aqui.", "PERDIDO", "ENCONTRADO", "Meus relatórios", "Meu perfil", "Publicar item encontrado", "Relatar item perdido", "Ajude-o a voltar para casa.", "Vamos encontrá-lo.", "Adicione detalhes claros para que a pessoa certa o reconheça.", "Nome do item", "Descrição e detalhes de identificação", "Local ou referência", "Data e hora", "Enviar imagem do item", "Imagem selecionada", "Tirar foto com câmera", "Usar localização atual", "Publicar item encontrado", "Publicar item perdido", "Fendly Plus", "Desbloqueie relatórios de itens perdidos.", "Relatórios de itens encontrados são sempre gratuitos. Itens perdidos custam Rs 99 por ano.", "Pagar e enviar relatório", "Voltar ao relatório", "Meus relatórios", "Acompanhe os itens que você ajuda a reunir.", "Voltar ao início", "Usuário de teste", "Detalhes e preferências da sua conta.", "Painel administrativo", "Área privada de moderação", "Somente inglês · dados confidenciais", "Carregando dados administrativos...", "Ver correspondência de IA", "Confirmar e notificar proprietário", "Sair do administrador"},
+                english,
+                english,
+                english,
+                english
+        };
+        int language = Math.max(0, Math.min(selectedLanguage, translations.length - 1));
+        for (int index = 0; index < english.length; index++) {
+            if (english[index].equals(value)) return translations[language][index];
+        }
+        return value;
     }
 
     private GradientDrawable goldButton() {
