@@ -10,6 +10,7 @@ from models import Base
 from routers.items import router as items_router
 from routers.notifications import router as notifications_router
 from routers.users import router as users_router
+from routers.admin import router as admin_router
 
 
 @asynccontextmanager
@@ -32,6 +33,7 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 app.include_router(items_router)
 app.include_router(notifications_router)
 app.include_router(users_router)
+app.include_router(admin_router)
 
 
 @app.get("/health")

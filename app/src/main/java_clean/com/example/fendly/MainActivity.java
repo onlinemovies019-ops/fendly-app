@@ -853,18 +853,81 @@ public final class MainActivity extends Activity {
     private void showAdminDashboard() {
         LinearLayout root = screenBase("Admin dashboard");
         addHeading("Private moderation workspace", "English only · confidential user details");
-        addField(root, reportRow("AI match queue", "2 possible matches awaiting manual review"));
-        addField(root, reportRow("Lost reports", "12 active requests · user details protected"));
-        addField(root, reportRow("Found reports", "9 active items · images and locations available"));
+        TextView loading = text("Loading live admin data...", 16, secondaryTextColor(), android.graphics.Typeface.NORMAL);
+        addField(root, loading);
+        String[] firstFoundId = new String[1];
         TextView match = actionButton("Review AI match", true);
-        match.setOnClickListener(view -> Toast.makeText(this, "Manual review opened", Toast.LENGTH_SHORT).show());
+        match.setOnClickListener(view -> {
+            if (firstFoundId[0] == null) {
+                Toast.makeText(this, "No found item available", Toast.LENGTH_LONG).show();
+                return;
+            }
+            FirebaseAuth.getInstance().getCurrentUser().getIdToken(false).addOnSuccessListener(token -> network.execute(() -> {
+                String response = fetchAdminMatches(firstFoundId[0], token.getToken());
+                runOnUiThread(() -> Toast.makeText(this, response == null ? "Admin access unavailable" : "AI match results loaded", Toast.LENGTH_LONG).show());
+            }));
+        });
         addField(root, match);
         TextView notify = actionButton("Confirm and notify owner", false);
-        notify.setOnClickListener(view -> Toast.makeText(this, "Owner notification sent", Toast.LENGTH_SHORT).show());
+        notify.setOnClickListener(view -> Toast.makeText(this, "Select a match before notifying an owner", Toast.LENGTH_LONG).show());
         addField(root, notify);
         TextView exit = actionButton("Exit admin", false);
         exit.setOnClickListener(view -> buildScreen());
         addField(root, exit);
+        FirebaseAuth.getInstance().getCurrentUser().getIdToken(false).addOnSuccessListener(token -> network.execute(() -> {
+            String response = fetchAdminItems(token.getToken());
+            runOnUiThread(() -> {
+                if (response == null) {
+                    loading.setText("Admin access unavailable.");
+                    return;
+                }
+                activeContent.removeView(loading);
+                try {
+                    JSONArray items = new JSONArray(response);
+                    int lost = 0;
+                    int found = 0;
+                    for (int index = 0; index < items.length(); index++) {
+                        JSONObject item = items.getJSONObject(index);
+                        String type = item.optString("type", "ITEM");
+                        if ("FOUND".equals(type)) {
+                            found++;
+                            if (firstFoundId[0] == null) firstFoundId[0] = item.optString("id", null);
+                        } else {
+                            lost++;
+                        }
+                    }
+                    addField(activeContent, reportRow("Lost reports", lost + " live requests"));
+                    addField(activeContent, reportRow("Found reports", found + " live items"));
+                } catch (Exception error) {
+                    loading.setText("Admin data could not be read.");
+                }
+            });
+        }));
+    }
+
+    private String fetchAdminItems(String idToken) {
+        return getAuthorized("/api/admin/items", idToken);
+    }
+
+    private String fetchAdminMatches(String foundItemId, String idToken) {
+        return getAuthorized("/api/admin/matches/" + foundItemId, idToken);
+    }
+
+    private String getAuthorized(String path, String idToken) {
+        HttpURLConnection connection = null;
+        try {
+            connection = (HttpURLConnection) new URL(API_BASE + path).openConnection();
+            connection.setRequestMethod("GET");
+            connection.setConnectTimeout(15000);
+            connection.setReadTimeout(30000);
+            connection.setRequestProperty("Authorization", "Bearer " + idToken);
+            if (connection.getResponseCode() < 200 || connection.getResponseCode() >= 300) return null;
+            return readStream(connection.getInputStream());
+        } catch (Exception error) {
+            return null;
+        } finally {
+            if (connection != null) connection.disconnect();
+        }
     }
 
     private TextView text(String value, float size, int color, int style) {
