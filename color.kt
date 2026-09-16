@@ -9,7 +9,7 @@ val DarkBlue = Color(0xFF121319)
 val LightBlue = Color(0xFF272836)
 val Gold = Color(0xFFE8B24A)
 val GoldOn = Color(0xFF2B1D05)
-val LostGreen = Color(0x0B5D45)
+val LostGreen = Color(0xFF0B5D45)
 val LostGreenOn = Color(0xECEFF1)
 val FoundGold = Color(0xC9A24C)
 
