@@ -55,6 +55,9 @@ async def _store_image(data: bytes, filename: str, content_type: str) -> str:
             raise HTTPException(502, "Image storage upload failed")
         return f"{supabase_url}/storage/v1/object/public/{bucket}/{filename}"
 
+    if os.getenv("ENVIRONMENT", "development").lower() == "production":
+        raise HTTPException(503, "Persistent image storage is not configured")
+
     upload_dir = Path(os.getenv("UPLOAD_DIR", "static/uploads"))
     upload_dir.mkdir(parents=True, exist_ok=True)
     (upload_dir / filename).write_bytes(data)
