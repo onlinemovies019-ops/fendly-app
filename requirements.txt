@@ -7,3 +7,5 @@ python-multipart==0.0.20
 Pillow==11.3.0
 pgvector==0.4.1
 httpx==0.28.1
+razorpay==1.4.2
+setuptools<81

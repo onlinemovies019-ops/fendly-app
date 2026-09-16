@@ -11,6 +11,7 @@ from routers.items import router as items_router
 from routers.notifications import router as notifications_router
 from routers.users import router as users_router
 from routers.admin import router as admin_router
+from routers.payments import router as payments_router
 
 
 def _validate_production_config() -> None:
@@ -22,6 +23,8 @@ def _validate_production_config() -> None:
         "SUPABASE_URL",
         "SUPABASE_SERVICE_ROLE_KEY",
         "OPENAI_API_KEY",
+        "RAZORPAY_KEY_ID",
+        "RAZORPAY_KEY_SECRET",
     )
     missing = [name for name in required if not os.getenv(name)]
     if missing:
@@ -50,6 +53,7 @@ app.include_router(items_router)
 app.include_router(notifications_router)
 app.include_router(users_router)
 app.include_router(admin_router)
+app.include_router(payments_router)
 
 
 @app.get("/health")
