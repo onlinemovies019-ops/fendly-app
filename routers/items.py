@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 from ai_matching import create_embedding, item_text
 from auth import get_current_user
 from database import get_db
+from image_matching import cosine_similarity, create_image_embedding
 from moderation import moderate_content
 from models import FoundItem, LostItem
 from notifications import send_match_notifications
@@ -36,8 +37,9 @@ async def _save_item(payload: ItemCreate, session: Session, uid: str, model: typ
     if rejection_reason:
         raise HTTPException(status_code=422, detail=rejection_reason)
     embedding = await create_embedding(item_text(payload.title, payload.description, payload.category))
+    image_embedding = await create_image_embedding(payload.image_url)
     item_values = payload.model_dump(exclude={"payment_id"})
-    record = model(**item_values, created_by=uid, embedding=embedding)
+    record = model(**item_values, created_by=uid, embedding=embedding, image_embedding=image_embedding)
     session.add(record)
     session.commit()
     session.refresh(record)
@@ -156,6 +158,7 @@ async def match_items(
     found_embedding = found_item.embedding or await create_embedding(
         item_text(found_item.title, found_item.description, found_item.category)
     )
+    found_image_embedding = found_item.image_embedding or await create_image_embedding(found_item.image_url)
     found_words = set(WORD_PATTERN.findall(f"{found_item.title} {found_item.description}".lower()))
     results = []
     for item in candidates:
@@ -168,9 +171,14 @@ async def match_items(
             item_norm = math.sqrt(sum(value * value for value in item.embedding))
             if found_norm and item_norm:
                 semantic_score = max(0.0, min(1.0, dot_product / (found_norm * item_norm)))
+        image_score = cosine_similarity(found_image_embedding, item.image_embedding)
         distance = abs(item.lat - found_item.lat) + abs(item.lng - found_item.lng)
         location_score = max(0.0, 1 - distance / (2 * request.radius_degrees))
-        results.append({"item": item, "score": round(semantic_score * 0.7 + location_score * 0.3, 4)})
+        if image_score is None:
+            score = semantic_score * 0.7 + location_score * 0.3
+        else:
+            score = semantic_score * 0.3 + image_score * 0.45 + keyword_score * 0.1 + location_score * 0.15
+        results.append({"item": item, "score": round(score, 4)})
     ranked_results = sorted(results, key=lambda result: float(result["score"]), reverse=True)[:25]
     notified_uids = {
         item.created_by

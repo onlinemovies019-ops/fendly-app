@@ -48,6 +48,7 @@ class LostItem(Base):
     lat: Mapped[float] = mapped_column(Float, index=True)
     lng: Mapped[float] = mapped_column(Float, index=True)
     image_url: Mapped[str | None] = mapped_column(String(1000))
+    image_embedding: Mapped[list[float] | None] = mapped_column(Vector(512))
     embedding: Mapped[list[float] | None] = mapped_column(Vector(1536))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
@@ -63,5 +64,6 @@ class FoundItem(Base):
     lat: Mapped[float] = mapped_column(Float, index=True)
     lng: Mapped[float] = mapped_column(Float, index=True)
     image_url: Mapped[str | None] = mapped_column(String(1000))
+    image_embedding: Mapped[list[float] | None] = mapped_column(Vector(512))
     embedding: Mapped[list[float] | None] = mapped_column(Vector(1536))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

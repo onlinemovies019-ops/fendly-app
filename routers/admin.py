@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 from ai_matching import create_embedding, item_text
 from auth import get_current_user
 from database import get_db
+from image_matching import cosine_similarity, create_image_embedding
 from models import FoundItem, LostItem
 from notifications import send_match_notifications
 
@@ -71,6 +72,7 @@ async def find_matches(
     found_embedding = found_item.embedding or await create_embedding(
         item_text(found_item.title, found_item.description, found_item.category)
     )
+    found_image_embedding = found_item.image_embedding or await create_image_embedding(found_item.image_url)
     matches = []
     for item in session.scalars(select(LostItem)).all():
         lost_words = set(WORD_PATTERN.findall(f"{item.title} {item.description}".lower()))
@@ -82,9 +84,14 @@ async def find_matches(
             item_norm = math.sqrt(sum(value * value for value in item.embedding))
             if found_norm and item_norm:
                 semantic_score = max(0.0, min(1.0, dot / (found_norm * item_norm)))
+        image_score = cosine_similarity(found_image_embedding, item.image_embedding)
         distance = abs(item.lat - found_item.lat) + abs(item.lng - found_item.lng)
         location_score = max(0.0, 1 - distance / 0.5)
-        score = round(semantic_score * 0.7 + location_score * 0.3, 4)
+        if image_score is None:
+            score = semantic_score * 0.7 + location_score * 0.3
+        else:
+            score = semantic_score * 0.3 + image_score * 0.45 + keyword_score * 0.1 + location_score * 0.15
+        score = round(score, 4)
         matches.append({"item": item, "score": score})
     return sorted(matches, key=lambda result: float(result["score"]), reverse=True)[:25]
 
