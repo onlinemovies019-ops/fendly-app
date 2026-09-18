@@ -15,6 +15,10 @@ class User(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
     firebase_uid: Mapped[str] = mapped_column(String(128), unique=True, index=True)
+    username: Mapped[str | None] = mapped_column(String(32), index=True)
+    full_name: Mapped[str | None] = mapped_column(String(160), index=True)
+    email: Mapped[str | None] = mapped_column(String(320), index=True)
+    mobile: Mapped[str | None] = mapped_column(String(32), index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
@@ -47,7 +51,10 @@ class LostItem(Base):
     category: Mapped[str] = mapped_column(String(80), default="other", index=True)
     lat: Mapped[float] = mapped_column(Float, index=True)
     lng: Mapped[float] = mapped_column(Float, index=True)
+    report_date: Mapped[str | None] = mapped_column(String(32))
+    report_location: Mapped[str | None] = mapped_column(String(500))
     image_url: Mapped[str | None] = mapped_column(String(1000))
+    edit_count: Mapped[int] = mapped_column(default=0)
     image_embedding: Mapped[list[float] | None] = mapped_column(Vector(512))
     embedding: Mapped[list[float] | None] = mapped_column(Vector(1536))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
@@ -63,7 +70,10 @@ class FoundItem(Base):
     category: Mapped[str] = mapped_column(String(80), default="other", index=True)
     lat: Mapped[float] = mapped_column(Float, index=True)
     lng: Mapped[float] = mapped_column(Float, index=True)
+    report_date: Mapped[str | None] = mapped_column(String(32))
+    report_location: Mapped[str | None] = mapped_column(String(500))
     image_url: Mapped[str | None] = mapped_column(String(1000))
+    edit_count: Mapped[int] = mapped_column(default=0)
     image_embedding: Mapped[list[float] | None] = mapped_column(Vector(512))
     embedding: Mapped[list[float] | None] = mapped_column(Vector(1536))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

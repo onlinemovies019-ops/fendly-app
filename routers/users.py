@@ -5,8 +5,8 @@ from sqlalchemy.orm import Session
 
 from auth import get_current_user
 from database import get_db
-from models import UsernameReservation
-from schemas import UsernameRequest
+from models import User, UsernameReservation
+from schemas import ProfileUpdate, UsernameRequest
 
 
 router = APIRouter(prefix="/api/users", tags=["users"])
@@ -51,3 +51,25 @@ def reserve_username(
             session.rollback()
             raise HTTPException(409, "Username is already taken") from exc
     return {"username": normalized, "status": "reserved"}
+
+
+@router.put("/profile")
+def update_profile(
+    payload: ProfileUpdate,
+    session: Session = Depends(get_db),
+    uid: str = Depends(get_current_user),
+) -> dict[str, str]:
+    normalized = normalize_username(payload.username)
+    reservation = session.get(UsernameReservation, normalized)
+    if reservation is not None and reservation.firebase_uid != uid:
+        raise HTTPException(409, "Username is already taken")
+    user = session.scalar(select(User).where(User.firebase_uid == uid))
+    if user is None:
+        user = User(firebase_uid=uid)
+        session.add(user)
+    user.username = normalized
+    user.full_name = payload.full_name.strip()
+    user.email = payload.email.strip().lower()
+    user.mobile = payload.mobile.strip()
+    session.commit()
+    return {"status": "saved"}

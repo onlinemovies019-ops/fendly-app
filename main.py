@@ -37,8 +37,18 @@ async def lifespan(_: FastAPI):
     if engine is not None:
         with engine.begin() as connection:
             connection.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+            connection.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS username varchar(32)"))
+            connection.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS full_name varchar(160)"))
+            connection.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS email varchar(320)"))
+            connection.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS mobile varchar(32)"))
             connection.execute(text("ALTER TABLE lost_items ADD COLUMN IF NOT EXISTS image_embedding vector(512)"))
             connection.execute(text("ALTER TABLE found_items ADD COLUMN IF NOT EXISTS image_embedding vector(512)"))
+            connection.execute(text("ALTER TABLE lost_items ADD COLUMN IF NOT EXISTS report_date varchar(32)"))
+            connection.execute(text("ALTER TABLE lost_items ADD COLUMN IF NOT EXISTS report_location varchar(500)"))
+            connection.execute(text("ALTER TABLE lost_items ADD COLUMN IF NOT EXISTS edit_count integer NOT NULL DEFAULT 0"))
+            connection.execute(text("ALTER TABLE found_items ADD COLUMN IF NOT EXISTS report_date varchar(32)"))
+            connection.execute(text("ALTER TABLE found_items ADD COLUMN IF NOT EXISTS report_location varchar(500)"))
+            connection.execute(text("ALTER TABLE found_items ADD COLUMN IF NOT EXISTS edit_count integer NOT NULL DEFAULT 0"))
             Base.metadata.create_all(bind=connection)
     yield
 

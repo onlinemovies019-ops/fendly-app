@@ -8,9 +8,22 @@ class ItemCreate(BaseModel):
     description: str = Field(min_length=1, max_length=5000)
     lat: float = Field(ge=-90, le=90)
     lng: float = Field(ge=-180, le=180)
+    report_date: str | None = Field(default=None, max_length=32)
+    report_location: str | None = Field(default=None, max_length=500)
     image_url: str | None = Field(default=None, max_length=1000)
     category: str = Field(default="other", min_length=1, max_length=80)
     payment_id: str | None = Field(default=None, max_length=128)
+
+
+class ItemUpdate(BaseModel):
+    title: str = Field(min_length=1, max_length=160)
+    description: str = Field(min_length=1, max_length=5000)
+    lat: float = Field(ge=-90, le=90)
+    lng: float = Field(ge=-180, le=180)
+    report_date: str | None = Field(default=None, max_length=32)
+    report_location: str | None = Field(default=None, max_length=500)
+    image_url: str | None = Field(default=None, max_length=1000)
+    category: str = Field(default="other", min_length=1, max_length=80)
 
 
 class ItemResponse(ItemCreate):
@@ -19,6 +32,7 @@ class ItemResponse(ItemCreate):
     id: str
     created_by: str
     created_at: datetime | None = None
+    edit_count: int = 0
 
 
 class MatchRequest(BaseModel):
@@ -38,3 +52,10 @@ class FcmTokenRequest(BaseModel):
 
 class UsernameRequest(BaseModel):
     username: str = Field(min_length=3, max_length=32, pattern=r"^[A-Za-z0-9_]+$")
+
+
+class ProfileUpdate(BaseModel):
+    username: str = Field(min_length=3, max_length=32, pattern=r"^[A-Za-z0-9_]+$")
+    full_name: str = Field(min_length=1, max_length=160)
+    email: str = Field(min_length=3, max_length=320)
+    mobile: str = Field(min_length=10, max_length=32)

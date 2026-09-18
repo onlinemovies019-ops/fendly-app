@@ -19,13 +19,20 @@ from moderation import moderate_content
 from models import FoundItem, LostItem
 from notifications import send_match_notifications
 from routers.payments import verify_captured_payment
-from schemas import ItemCreate, ItemResponse, MatchRequest, MatchResponse
+from schemas import ItemCreate, ItemResponse, ItemUpdate, MatchRequest, MatchResponse
 
 
 router = APIRouter(prefix="/api", tags=["items"])
 MAX_IMAGE_BYTES = 10 * 1024 * 1024
 ALLOWED_IMAGE_TYPES = {"image/jpeg", "image/png", "image/webp"}
 WORD_PATTERN = re.compile(r"[a-z0-9]+")
+
+
+def _stored_report_field(value: str | None, label: str) -> str | None:
+    if not value:
+        return None
+    match = re.search(rf"\s+{label}:\s*(.*?)(?=\s+(?:Location|Date):|$)", value)
+    return match.group(1).strip() if match else None
 
 
 async def _save_item(payload: ItemCreate, session: Session, uid: str, model: type[LostItem] | type[FoundItem]):
@@ -131,12 +138,50 @@ async def list_my_items(
             "category": item.category,
             "lat": item.lat,
             "lng": item.lng,
+            "report_date": item.report_date or _stored_report_field(item.description, "Date"),
+            "report_location": item.report_location or _stored_report_field(item.description, "Location"),
             "image_url": item.image_url,
+            "edit_count": item.edit_count,
             "created_at": item.created_at,
             "status": "Active" if item_type == "LOST" else "Published",
         }
         for item_type, item in items
     ]
+
+
+@router.put("/items/{item_type}/{item_id}", response_model=ItemResponse)
+async def update_item(
+    item_type: str,
+    item_id: str,
+    payload: ItemUpdate,
+    session: Session = Depends(get_db),
+    uid: str = Depends(get_current_user),
+) -> LostItem | FoundItem:
+    model = LostItem if item_type.lower() == "lost" else FoundItem if item_type.lower() == "found" else None
+    if model is None:
+        raise HTTPException(400, "Invalid item type")
+    record = session.scalar(select(model).where(model.id == item_id, model.created_by == uid))
+    if record is None:
+        raise HTTPException(404, "Report not found")
+    if record.edit_count >= 1:
+        raise HTTPException(409, "This report can only be edited once")
+    rejection_reason = await moderate_content(payload.title, payload.description)
+    if rejection_reason:
+        raise HTTPException(status_code=422, detail=rejection_reason)
+    record.title = payload.title
+    record.description = payload.description
+    record.category = payload.category
+    record.lat = payload.lat
+    record.lng = payload.lng
+    record.report_date = payload.report_date
+    record.report_location = payload.report_location
+    record.image_url = payload.image_url
+    record.edit_count += 1
+    record.embedding = await create_embedding(item_text(payload.title, payload.description, payload.category))
+    record.image_embedding = await create_image_embedding(payload.image_url)
+    session.commit()
+    session.refresh(record)
+    return record
 
 
 @router.post("/items/match", response_model=list[MatchResponse])

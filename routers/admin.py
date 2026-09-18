@@ -4,14 +4,14 @@ import re
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from ai_matching import create_embedding, item_text
 from auth import get_current_user
 from database import get_db
 from image_matching import cosine_similarity, create_image_embedding
-from models import FoundItem, LostItem
+from models import FoundItem, LostItem, User
 from notifications import send_match_notifications
 
 
@@ -57,6 +57,42 @@ def list_all_items(
         }
         for item_type, item in items
     ]
+
+
+@router.get("/search")
+def search_users_and_reports(
+    q: str,
+    session: Session = Depends(get_db),
+    _: str = Depends(require_admin),
+) -> list[dict[str, object]]:
+    query = q.strip().lower()
+    if len(query) < 2:
+        return []
+    users = session.scalars(select(User).where(
+        or_(User.username.ilike(f"%{query}%"), User.full_name.ilike(f"%{query}%"), User.email.ilike(f"%{query}%"), User.mobile.ilike(f"%{query}%"))
+    )).all()
+    results = []
+    for user in users:
+        reports = []
+        for item_type, model in (("LOST", LostItem), ("FOUND", FoundItem)):
+            items = session.scalars(select(model).where(model.created_by == user.firebase_uid)).all()
+            reports.extend({
+                "id": item.id,
+                "type": item_type,
+                "title": item.title,
+                "description": item.description,
+                "category": item.category,
+                "lat": item.lat,
+                "lng": item.lng,
+                "image_url": item.image_url,
+                "created_at": item.created_at,
+            } for item in items)
+        reports.sort(key=lambda item: item["created_at"].timestamp() if item["created_at"] else 0, reverse=True)
+        results.append({
+            "user": {"uid": user.firebase_uid, "username": user.username, "full_name": user.full_name, "email": user.email, "mobile": user.mobile},
+            "reports": reports,
+        })
+    return results
 
 
 @router.get("/matches/{found_item_id}")
