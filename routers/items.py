@@ -185,6 +185,23 @@ async def update_item(
     return record
 
 
+@router.delete("/items/{item_type}/{item_id}", status_code=204)
+def delete_item(
+    item_type: str,
+    item_id: str,
+    session: Session = Depends(get_db),
+    uid: str = Depends(get_current_user),
+) -> None:
+    model = LostItem if item_type.lower() == "lost" else FoundItem if item_type.lower() == "found" else None
+    if model is None:
+        raise HTTPException(400, "Invalid item type")
+    record = session.scalar(select(model).where(model.id == item_id, model.created_by == uid))
+    if record is None:
+        raise HTTPException(404, "Report not found")
+    session.delete(record)
+    session.commit()
+
+
 @router.post("/items/match", response_model=list[MatchResponse])
 async def match_items(
     request: MatchRequest,

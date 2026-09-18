@@ -2486,7 +2486,7 @@ public final class MainActivity extends Activity implements PaymentResultWithDat
                             Arrays.fill(reportImages, null);
                             Arrays.fill(reportCameraImages, null);
                             showReport(type);
-                        }, canEdit));
+                        }, canEdit, () -> deleteReport(reportId, type)));
                     }
                     if (reports.length() == 0) {
                         addField(activeContent, text("No reports yet.", 16, secondaryTextColor(), Typeface.NORMAL));
@@ -2510,6 +2510,41 @@ public final class MainActivity extends Activity implements PaymentResultWithDat
             return readStream(connection.getInputStream());
         } catch (Exception error) {
             return null;
+        } finally {
+            if (connection != null) connection.disconnect();
+        }
+    }
+
+    private void deleteReport(String reportId, String type) {
+        new AlertDialog.Builder(this)
+                .setTitle("Delete report?")
+                .setMessage("This report will be permanently removed.")
+                .setNegativeButton("Cancel", null)
+                .setPositiveButton("Delete", (dialog, which) -> FirebaseAuth.getInstance().getCurrentUser().getIdToken(false).addOnSuccessListener(token -> network.execute(() -> {
+                    int code = deleteItem(type, reportId, token.getToken());
+                    runOnUiThread(() -> {
+                        if (code >= 200 && code < 300) {
+                            Toast.makeText(this, "Report deleted", Toast.LENGTH_SHORT).show();
+                            showReports();
+                        } else {
+                            Toast.makeText(this, "Could not delete report (" + code + ")", Toast.LENGTH_LONG).show();
+                        }
+                    });
+                })))
+                .show();
+    }
+
+    private int deleteItem(String type, String id, String idToken) {
+        HttpURLConnection connection = null;
+        try {
+            connection = (HttpURLConnection) new URL(API_BASE + "/api/items/" + type.toLowerCase(Locale.US) + "/" + id).openConnection();
+            connection.setRequestMethod("DELETE");
+            connection.setConnectTimeout(15000);
+            connection.setReadTimeout(60000);
+            connection.setRequestProperty("Authorization", "Bearer " + idToken);
+            return connection.getResponseCode();
+        } catch (Exception error) {
+            return -1;
         } finally {
             if (connection != null) connection.disconnect();
         }
@@ -3009,6 +3044,14 @@ public final class MainActivity extends Activity implements PaymentResultWithDat
     }
     private LinearLayout reportRow(String title, String detail, Runnable editAction, boolean showEdit) {
         return showEdit ? reportRow(title, detail, editAction) : reportRow(title, detail);
+    }
+
+    private LinearLayout reportRow(String title, String detail, Runnable editAction, boolean showEdit, Runnable deleteAction) {
+        LinearLayout row = reportRow(title, detail, editAction, showEdit);
+        TextView delete = actionButton("Delete", false);
+        delete.setOnClickListener(view -> deleteAction.run());
+        row.addView(delete, new LinearLayout.LayoutParams(dp(82), dp(40)));
+        return row;
     }
 
     private LinearLayout reportRow(String title, String detail, Runnable editAction) {
@@ -3825,6 +3868,29 @@ public final class MainActivity extends Activity implements PaymentResultWithDat
         getWindow().getDecorView().setSystemUiVisibility(darkMode ? 0 : View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR | View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR);
     }
 
+    private void applyThemeInPlace() {
+        applySystemBarColors();
+        View root = getWindow().getDecorView().getRootView();
+        root.setBackgroundColor(backgroundColor());
+        updateThemeView(root);
+    }
+
+    private void updateThemeView(View view) {
+        if (view instanceof TextView) {
+            TextView textView = (TextView) view;
+            textView.setTextColor(primaryTextColor());
+            if (textView instanceof EditText) {
+                textView.setHintTextColor(secondaryTextColor());
+                textView.setBackground(roundWithStroke(surfaceColor(), 10, fieldBorderColor()));
+            }
+        }
+        if (view instanceof ViewGroup) {
+            ViewGroup group = (ViewGroup) view;
+            if ("reportRow".equals(group.getTag())) group.setBackground(round(surfaceColor(), 18));
+            for (int index = 0; index < group.getChildCount(); index++) updateThemeView(group.getChildAt(index));
+        }
+    }
+
     private int backgroundColor() {
         return darkMode ? BACKGROUND : Color.rgb(250, 249, 246);
     }
@@ -3911,7 +3977,7 @@ public final class MainActivity extends Activity implements PaymentResultWithDat
                 darkMode = !darkMode;
                 getSharedPreferences("fendly_settings", MODE_PRIVATE).edit().putBoolean("dark_mode", darkMode).apply();
                 applySystemBarColors();
-                if (screenRenderer != null) screenRenderer.run();
+                applyThemeInPlace();
             });
             themeButton.setContentDescription(darkMode ? "Switch to light mode" : "Switch to dark mode");
 
@@ -3940,7 +4006,7 @@ public final class MainActivity extends Activity implements PaymentResultWithDat
             darkMode = !darkMode;
             getSharedPreferences("fendly_settings", MODE_PRIVATE).edit().putBoolean("dark_mode", darkMode).apply();
             applySystemBarColors();
-            if (screenRenderer != null) screenRenderer.run();
+            applyThemeInPlace();
         });
         themeButton.setContentDescription(darkMode ? "Switch to light mode" : "Switch to dark mode");
 
