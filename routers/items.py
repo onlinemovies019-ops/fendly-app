@@ -177,8 +177,9 @@ async def update_item(
     record.report_location = payload.report_location
     record.image_url = payload.image_url
     record.edit_count += 1
-    record.embedding = await create_embedding(item_text(payload.title, payload.description, payload.category))
-    record.image_embedding = await create_image_embedding(payload.image_url)
+    # Save the user edit immediately. Matching lazily rebuilds missing embeddings.
+    record.embedding = None
+    record.image_embedding = None
     session.commit()
     session.refresh(record)
     return record
