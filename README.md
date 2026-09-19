@@ -25,7 +25,8 @@ Required environment variables:
 	configure these to store uploads permanently in a public Supabase Storage
 	bucket. The service-role key must remain server-side only.
 - Matching is local and free: keyword similarity is combined with location
-	proximity. No paid AI API key is required.
+	proximity. OpenAI is optional; if absent, the app falls back to a local
+	free sentence-transformers model.
 
 Uploads use Supabase Storage when configured. Without those variables, local
 development writes to `static/uploads`; Render's free filesystem is ephemeral.

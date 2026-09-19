@@ -5,6 +5,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import text
+from auth import router as auth_router
 from database import engine
 from models import Base
 from routers.items import router as items_router
@@ -22,9 +23,9 @@ def _validate_production_config() -> None:
         "FIREBASE_SERVICE_ACCOUNT_JSON",
         "SUPABASE_URL",
         "SUPABASE_SERVICE_ROLE_KEY",
-        "OPENAI_API_KEY",
         "RAZORPAY_KEY_ID",
         "RAZORPAY_KEY_SECRET",
+        "TWOFACTOR_API_KEY",
     )
     missing = [name for name in required if not os.getenv(name)]
     if missing:
@@ -33,6 +34,8 @@ def _validate_production_config() -> None:
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
+    if os.getenv("ENVIRONMENT", "production").lower() != "production":
+        raise RuntimeError("Local backend runtime is disabled. Use the hosted Render backend only.")
     _validate_production_config()
     if engine is not None:
         with engine.begin() as connection:
@@ -61,6 +64,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 app.mount("/static", StaticFiles(directory="static"), name="static")
+app.include_router(auth_router)
 app.include_router(items_router)
 app.include_router(notifications_router)
 app.include_router(users_router)
