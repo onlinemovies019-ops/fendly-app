@@ -1,4 +1,5 @@
 import base64
+import asyncio
 import hashlib
 import hmac
 import json
@@ -94,7 +95,7 @@ def _send_email_otp_code(email: str, otp: str) -> None:
     smtp_host = os.getenv("SMTP_HOST")
     smtp_port = int(os.getenv("SMTP_PORT", "587"))
     smtp_username = os.getenv("SMTP_USERNAME")
-    smtp_password = os.getenv("SMTP_PASSWORD")
+    smtp_password = (os.getenv("SMTP_PASSWORD") or "").replace(" ", "")
     smtp_from = os.getenv("SMTP_FROM_EMAIL") or smtp_username or "noreply@localhost"
     if not smtp_host or not smtp_username or not smtp_password:
         raise RuntimeError("SMTP credentials are not configured")
@@ -108,7 +109,13 @@ def _send_email_otp_code(email: str, otp: str) -> None:
         "Do not share this code with anyone."
     )
 
-    with smtplib.SMTP(smtp_host, smtp_port) as server:
+    if smtp_port == 465:
+        with smtplib.SMTP_SSL(smtp_host, smtp_port, timeout=20) as server:
+            server.login(smtp_username, smtp_password)
+            server.send_message(msg)
+        return
+
+    with smtplib.SMTP(smtp_host, smtp_port, timeout=20) as server:
         server.starttls()
         server.login(smtp_username, smtp_password)
         server.send_message(msg)
@@ -188,7 +195,7 @@ async def send_email_otp(payload: SendEmailOtpRequest) -> dict[str, Any]:
         "expires_at": time.time() + _EMAIL_OTP_TTL_SECONDS,
     }
     try:
-        _send_email_otp_code(email, otp)
+        await asyncio.to_thread(_send_email_otp_code, email, otp)
     except Exception as exc:
         _EMAIL_OTP_STORE.pop(email, None)
         raise HTTPException(
