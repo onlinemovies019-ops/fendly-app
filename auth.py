@@ -3,6 +3,10 @@ import hashlib
 import hmac
 import json
 import os
+import random
+import smtplib
+import time
+from email.message import EmailMessage
 from typing import Any
 
 import firebase_admin
@@ -16,6 +20,8 @@ from pydantic import BaseModel, Field
 
 bearer_scheme = HTTPBearer(auto_error=False)
 router = APIRouter(prefix="/api/auth", tags=["auth"])
+_EMAIL_OTP_STORE: dict[str, dict[str, Any]] = {}
+_EMAIL_OTP_TTL_SECONDS = 300
 
 
 class SendOtpRequest(BaseModel):
@@ -24,6 +30,15 @@ class SendOtpRequest(BaseModel):
 
 class VerifyOtpRequest(BaseModel):
     session_id: str = Field(..., min_length=1)
+    otp: str = Field(..., min_length=4, max_length=8)
+
+
+class SendEmailOtpRequest(BaseModel):
+    email: str = Field(..., min_length=3)
+
+
+class VerifyEmailOtpRequest(BaseModel):
+    email: str = Field(..., min_length=3)
     otp: str = Field(..., min_length=4, max_length=8)
 
 
@@ -69,6 +84,34 @@ def verify_session_token(token: str) -> dict[str, Any]:
     if expires_at is not None and int(expires_at) < int(__import__("time").time()):
         raise ValueError("JWT expired")
     return payload
+
+
+def _generate_email_otp() -> str:
+    return "".join(str(random.randint(0, 9)) for _ in range(6))
+
+
+def _send_email_otp_code(email: str, otp: str) -> None:
+    smtp_host = os.getenv("SMTP_HOST")
+    smtp_port = int(os.getenv("SMTP_PORT", "587"))
+    smtp_username = os.getenv("SMTP_USERNAME")
+    smtp_password = os.getenv("SMTP_PASSWORD")
+    smtp_from = os.getenv("SMTP_FROM_EMAIL") or smtp_username or "noreply@localhost"
+    if not smtp_host or not smtp_username or not smtp_password:
+        raise RuntimeError("SMTP credentials are not configured")
+
+    msg = EmailMessage()
+    msg["Subject"] = "Fendly verification code"
+    msg["From"] = smtp_from
+    msg["To"] = email
+    msg.set_content(
+        f"Your Fendly verification code is {otp}. It is valid for 5 minutes. "
+        "Do not share this code with anyone."
+    )
+
+    with smtplib.SMTP(smtp_host, smtp_port) as server:
+        server.starttls()
+        server.login(smtp_username, smtp_password)
+        server.send_message(msg)
 
 
 def _firebase_app() -> firebase_admin.App:
@@ -130,6 +173,48 @@ async def verify_otp(payload: VerifyOtpRequest) -> dict[str, Any]:
 
     subject = f"2factor:{session_id}"
     token = create_session_token(subject, {"session_id": session_id})
+    return {"success": True, "token": token}
+
+
+@router.post("/send-email-otp")
+async def send_email_otp(payload: SendEmailOtpRequest) -> dict[str, Any]:
+    email = payload.email.strip().lower()
+    if not email:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="email is required")
+
+    otp = _generate_email_otp()
+    _EMAIL_OTP_STORE[email] = {
+        "otp": otp,
+        "expires_at": time.time() + _EMAIL_OTP_TTL_SECONDS,
+    }
+    try:
+        _send_email_otp_code(email, otp)
+    except Exception as exc:
+        _EMAIL_OTP_STORE.pop(email, None)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Could not send verification email. Configure SMTP settings.",
+        ) from exc
+    return {"success": True, "message": "OTP sent to email", "expires_in_seconds": _EMAIL_OTP_TTL_SECONDS}
+
+
+@router.post("/verify-email-otp")
+async def verify_email_otp(payload: VerifyEmailOtpRequest) -> dict[str, Any]:
+    email = payload.email.strip().lower()
+    otp = payload.otp.strip()
+    if not email or not otp:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="email and otp are required")
+
+    stored = _EMAIL_OTP_STORE.get(email)
+    if not stored or stored["expires_at"] < time.time():
+        _EMAIL_OTP_STORE.pop(email, None)
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid or expired OTP")
+
+    if stored["otp"] != otp:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid or expired OTP")
+
+    _EMAIL_OTP_STORE.pop(email, None)
+    token = create_session_token(f"email:{email}", {"email": email})
     return {"success": True, "token": token}
 
 
