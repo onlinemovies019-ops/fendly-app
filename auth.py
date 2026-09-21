@@ -102,6 +102,25 @@ def _email_otp_debug_mode_enabled() -> bool:
 
 
 def _send_email_otp_code(email: str, otp: str) -> None:
+    resend_api_key = (os.getenv("RESEND_API_KEY") or "").strip()
+    if resend_api_key:
+        resend_from = (os.getenv("EMAIL_FROM") or os.getenv("SMTP_FROM_EMAIL") or "").strip()
+        if not resend_from:
+            raise RuntimeError("EMAIL_FROM is not configured")
+        response = httpx.post(
+            "https://api.resend.com/emails",
+            headers={"Authorization": f"Bearer {resend_api_key}"},
+            json={
+                "from": resend_from,
+                "to": [email],
+                "subject": "Fendly verification code",
+                "text": f"Your Fendly verification code is {otp}. It is valid for 5 minutes.",
+            },
+            timeout=20.0,
+        )
+        response.raise_for_status()
+        return
+
     smtp_host = (os.getenv("SMTP_HOST") or "").strip()
     smtp_port = int((os.getenv("SMTP_PORT") or "587").strip())
     smtp_username = (os.getenv("SMTP_USERNAME") or "").strip()
