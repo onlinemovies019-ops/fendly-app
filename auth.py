@@ -5,7 +5,9 @@ import hmac
 import json
 import os
 import random
+import logging
 import smtplib
+import ssl
 import time
 from email.message import EmailMessage
 from typing import Any
@@ -21,6 +23,7 @@ from pydantic import BaseModel, Field
 
 bearer_scheme = HTTPBearer(auto_error=False)
 router = APIRouter(prefix="/api/auth", tags=["auth"])
+logger = logging.getLogger(__name__)
 _EMAIL_OTP_STORE: dict[str, dict[str, Any]] = {}
 _EMAIL_OTP_TTL_SECONDS = 300
 
@@ -91,13 +94,23 @@ def _generate_email_otp() -> str:
     return "".join(str(random.randint(0, 9)) for _ in range(6))
 
 
+def _email_otp_debug_mode_enabled() -> bool:
+    if os.getenv("EMAIL_OTP_DEBUG_MODE", "").strip().lower() == "true":
+        return True
+    environment = (os.getenv("ENVIRONMENT") or "").strip().lower()
+    return environment not in {"", "production", "prod"}
+
+
 def _send_email_otp_code(email: str, otp: str) -> None:
-    smtp_host = os.getenv("SMTP_HOST")
-    smtp_port = int(os.getenv("SMTP_PORT", "587"))
-    smtp_username = os.getenv("SMTP_USERNAME")
+    smtp_host = (os.getenv("SMTP_HOST") or "").strip()
+    smtp_port = int((os.getenv("SMTP_PORT") or "587").strip())
+    smtp_username = (os.getenv("SMTP_USERNAME") or "").strip()
     smtp_password = (os.getenv("SMTP_PASSWORD") or "").replace(" ", "")
-    smtp_from = os.getenv("SMTP_FROM_EMAIL") or smtp_username or "noreply@localhost"
+    smtp_from = (os.getenv("SMTP_FROM_EMAIL") or smtp_username or "noreply@localhost").strip()
+
     if not smtp_host or not smtp_username or not smtp_password:
+        if _email_otp_debug_mode_enabled():
+            return
         raise RuntimeError("SMTP credentials are not configured")
 
     msg = EmailMessage()
@@ -109,14 +122,18 @@ def _send_email_otp_code(email: str, otp: str) -> None:
         "Do not share this code with anyone."
     )
 
+    tls_context = ssl.create_default_context()
     if smtp_port == 465:
         with smtplib.SMTP_SSL(smtp_host, smtp_port, timeout=20) as server:
+            server.ehlo()
             server.login(smtp_username, smtp_password)
             server.send_message(msg)
         return
 
     with smtplib.SMTP(smtp_host, smtp_port, timeout=20) as server:
-        server.starttls()
+        server.ehlo()
+        server.starttls(context=tls_context)
+        server.ehlo()
         server.login(smtp_username, smtp_password)
         server.send_message(msg)
 
@@ -198,10 +215,20 @@ async def send_email_otp(payload: SendEmailOtpRequest) -> dict[str, Any]:
         await asyncio.to_thread(_send_email_otp_code, email, otp)
     except Exception as exc:
         _EMAIL_OTP_STORE.pop(email, None)
+        logger.exception("Email OTP delivery failed for %s", email)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Could not send verification email. Configure SMTP settings.",
+            detail=f"Email delivery failed: {type(exc).__name__}: {str(exc)[:180]}",
         ) from exc
+
+    if _email_otp_debug_mode_enabled() and (not os.getenv("SMTP_HOST") or not os.getenv("SMTP_USERNAME") or not os.getenv("SMTP_PASSWORD")):
+        return {
+            "success": True,
+            "message": "OTP sent to email (debug mode)",
+            "expires_in_seconds": _EMAIL_OTP_TTL_SECONDS,
+            "debug_otp": otp,
+        }
+
     return {"success": True, "message": "OTP sent to email", "expires_in_seconds": _EMAIL_OTP_TTL_SECONDS}
 
 
