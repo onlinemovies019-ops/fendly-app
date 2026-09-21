@@ -103,8 +103,12 @@ def _email_otp_debug_mode_enabled() -> bool:
 
 def _send_email_otp_code(email: str, otp: str) -> None:
     resend_api_key = (os.getenv("RESEND_API_KEY") or "").strip()
+    if resend_api_key.startswith("RESEND_API_KEY="):
+        resend_api_key = resend_api_key.split("=", 1)[1].strip().strip('"\'')
     if resend_api_key:
         resend_from = (os.getenv("EMAIL_FROM") or os.getenv("SMTP_FROM_EMAIL") or "").strip()
+        if resend_from.startswith("EMAIL_FROM="):
+            resend_from = resend_from.split("=", 1)[1].strip().strip('"\'')
         if not resend_from:
             raise RuntimeError("EMAIL_FROM is not configured")
         response = httpx.post(
@@ -118,7 +122,9 @@ def _send_email_otp_code(email: str, otp: str) -> None:
             },
             timeout=20.0,
         )
-        response.raise_for_status()
+        if response.is_error:
+            detail = response.text[:300].replace("\n", " ")
+            raise RuntimeError(f"Resend rejected email ({response.status_code}): {detail}")
         return
 
     smtp_host = (os.getenv("SMTP_HOST") or "").strip()
