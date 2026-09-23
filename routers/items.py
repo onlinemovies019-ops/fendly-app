@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 
 from ai_matching import create_embedding, item_text
 from auth import get_current_user
-from database import get_db
+from database import SessionLocal, get_db
 from image_matching import cosine_similarity, create_image_embedding
 from moderation import moderate_content
 from models import FoundItem, LostItem
@@ -26,6 +26,12 @@ router = APIRouter(prefix="/api", tags=["items"])
 MAX_IMAGE_BYTES = 10 * 1024 * 1024
 ALLOWED_IMAGE_TYPES = {"image/jpeg", "image/png", "image/webp"}
 WORD_PATTERN = re.compile(r"[a-z0-9]+")
+
+
+def _require_db_session(session: Session | None) -> Session:
+    if session is None:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "Database is not configured")
+    return session
 
 
 def _stored_report_field(value: str | None, label: str) -> str | None:
@@ -64,19 +70,20 @@ async def _store_image(data: bytes, filename: str, content_type: str) -> str:
             "Content-Type": content_type,
             "x-upsert": "false",
         }
-        async with httpx.AsyncClient(timeout=30) as client:
-            response = await client.post(endpoint, content=data, headers=headers)
+        try:
+            async with httpx.AsyncClient(timeout=30) as client:
+                response = await client.post(endpoint, content=data, headers=headers)
+        except httpx.HTTPError as exc:
+            raise HTTPException(502, f"Image storage connection failed: {type(exc).__name__}") from exc
         if response.is_error:
-            raise HTTPException(502, "Image storage upload failed")
+            detail = response.text[:240].replace("\n", " ").strip() or "no response details"
+            raise HTTPException(502, f"Image storage upload failed ({response.status_code}): {detail}")
         return f"{supabase_url}/storage/v1/object/public/{bucket}/{filename}"
-
-    if os.getenv("ENVIRONMENT", "development").lower() == "production":
-        raise HTTPException(503, "Persistent image storage is not configured")
 
     upload_dir = Path(os.getenv("UPLOAD_DIR", "static/uploads"))
     upload_dir.mkdir(parents=True, exist_ok=True)
     (upload_dir / filename).write_bytes(data)
-    base_url = os.getenv("PUBLIC_BASE_URL", "http://127.0.0.1:8000").rstrip("/")
+    base_url = os.getenv("PUBLIC_BASE_URL", "https://fendly-api.onrender.com").rstrip("/")
     return f"{base_url}/static/uploads/{filename}"
 
 
@@ -105,26 +112,29 @@ async def upload_image(
 @router.post("/items/lost", response_model=ItemResponse, status_code=status.HTTP_201_CREATED)
 async def create_lost_item(
     payload: ItemCreate,
-    session: Session = Depends(get_db),
+    session: Session | None = Depends(get_db),
     uid: str = Depends(get_current_user),
 ) -> LostItem:
+    session = _require_db_session(session)
     return await _save_item(payload, session, uid, LostItem)
 
 
 @router.post("/items/found", response_model=ItemResponse, status_code=status.HTTP_201_CREATED)
 async def create_found_item(
     payload: ItemCreate,
-    session: Session = Depends(get_db),
+    session: Session | None = Depends(get_db),
     uid: str = Depends(get_current_user),
 ) -> FoundItem:
+    session = _require_db_session(session)
     return await _save_item(payload, session, uid, FoundItem)
 
 
 @router.get("/items/mine")
 async def list_my_items(
-    session: Session = Depends(get_db),
+    session: Session | None = Depends(get_db),
     uid: str = Depends(get_current_user),
 ) -> list[dict[str, object]]:
+    session = _require_db_session(session)
     lost_items = session.scalars(select(LostItem).where(LostItem.created_by == uid)).all()
     found_items = session.scalars(select(FoundItem).where(FoundItem.created_by == uid)).all()
     items = [("LOST", item) for item in lost_items] + [("FOUND", item) for item in found_items]
@@ -154,9 +164,10 @@ async def update_item(
     item_type: str,
     item_id: str,
     payload: ItemUpdate,
-    session: Session = Depends(get_db),
+    session: Session | None = Depends(get_db),
     uid: str = Depends(get_current_user),
 ) -> LostItem | FoundItem:
+    session = _require_db_session(session)
     model = LostItem if item_type.lower() == "lost" else FoundItem if item_type.lower() == "found" else None
     if model is None:
         raise HTTPException(400, "Invalid item type")
@@ -189,9 +200,10 @@ async def update_item(
 def delete_item(
     item_type: str,
     item_id: str,
-    session: Session = Depends(get_db),
+    session: Session | None = Depends(get_db),
     uid: str = Depends(get_current_user),
 ) -> None:
+    session = _require_db_session(session)
     model = LostItem if item_type.lower() == "lost" else FoundItem if item_type.lower() == "found" else None
     if model is None:
         raise HTTPException(400, "Invalid item type")
@@ -205,9 +217,10 @@ def delete_item(
 @router.post("/items/match", response_model=list[MatchResponse])
 async def match_items(
     request: MatchRequest,
-    session: Session = Depends(get_db),
+    session: Session | None = Depends(get_db),
     _: str = Depends(get_current_user),
 ) -> list[dict[str, object]]:
+    session = _require_db_session(session)
     found_item = session.get(FoundItem, request.found_item_id)
     if found_item is None:
         raise HTTPException(404, "Found item not found")
