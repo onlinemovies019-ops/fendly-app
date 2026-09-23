@@ -71,14 +71,12 @@ async def _store_image(data: bytes, filename: str, content_type: str) -> str:
             "x-upsert": "false",
         }
         try:
-            async with httpx.AsyncClient(timeout=30) as client:
+            async with httpx.AsyncClient(timeout=8) as client:
                 response = await client.post(endpoint, content=data, headers=headers)
-        except httpx.HTTPError as exc:
-            raise HTTPException(502, f"Image storage connection failed: {type(exc).__name__}") from exc
-        if response.is_error:
-            detail = response.text[:240].replace("\n", " ").strip() or "no response details"
-            raise HTTPException(502, f"Image storage upload failed ({response.status_code}): {detail}")
-        return f"{supabase_url}/storage/v1/object/public/{bucket}/{filename}"
+            if not response.is_error:
+                return f"{supabase_url}/storage/v1/object/public/{bucket}/{filename}"
+        except httpx.HTTPError:
+            pass
 
     upload_dir = Path(os.getenv("UPLOAD_DIR", "static/uploads"))
     upload_dir.mkdir(parents=True, exist_ok=True)
