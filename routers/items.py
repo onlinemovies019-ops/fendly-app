@@ -1,3 +1,4 @@
+import asyncio
 import io
 import math
 import os
@@ -30,7 +31,8 @@ WORD_PATTERN = re.compile(r"[a-z0-9]+")
 
 def _require_db_session(session: Session | None) -> Session:
     if session is None:
-        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "Database is not configured")
+        from database import SessionLocal
+        return SessionLocal()
     return session
 
 
@@ -46,16 +48,25 @@ async def _save_item(payload: ItemCreate, session: Session, uid: str, model: typ
         if not payload.payment_id:
             raise HTTPException(status.HTTP_402_PAYMENT_REQUIRED, "A valid payment is required")
         verify_captured_payment(payload.payment_id, uid)
-    rejection_reason = await moderate_content(payload.title, payload.description)
+
+    mod_task = asyncio.create_task(moderate_content(payload.title, payload.description))
+    emb_task = asyncio.create_task(create_embedding(item_text(payload.title, payload.description, payload.category)))
+    img_task = asyncio.create_task(create_image_embedding(payload.image_url))
+
+    rejection_reason, embedding, image_embedding = await asyncio.gather(mod_task, emb_task, img_task)
+
     if rejection_reason:
         raise HTTPException(status_code=422, detail=rejection_reason)
-    embedding = await create_embedding(item_text(payload.title, payload.description, payload.category))
-    image_embedding = await create_image_embedding(payload.image_url)
+
     item_values = payload.model_dump(exclude={"payment_id"})
     record = model(**item_values, created_by=uid, embedding=embedding, image_embedding=image_embedding)
     session.add(record)
-    session.commit()
-    session.refresh(record)
+    try:
+        session.commit()
+        session.refresh(record)
+    except Exception as exc:
+        session.rollback()
+        raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, f"Failed to save report: {str(exc)}") from exc
     return record
 
 
@@ -113,8 +124,13 @@ async def create_lost_item(
     session: Session | None = Depends(get_db),
     uid: str = Depends(get_current_user),
 ) -> LostItem:
-    session = _require_db_session(session)
-    return await _save_item(payload, session, uid, LostItem)
+    try:
+        session = _require_db_session(session)
+        return await _save_item(payload, session, uid, LostItem)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, "Unable to create lost report") from exc
 
 
 @router.post("/items/found", response_model=ItemResponse, status_code=status.HTTP_201_CREATED)
@@ -123,8 +139,13 @@ async def create_found_item(
     session: Session | None = Depends(get_db),
     uid: str = Depends(get_current_user),
 ) -> FoundItem:
-    session = _require_db_session(session)
-    return await _save_item(payload, session, uid, FoundItem)
+    try:
+        session = _require_db_session(session)
+        return await _save_item(payload, session, uid, FoundItem)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, "Unable to create found report") from exc
 
 
 @router.get("/items/mine")
