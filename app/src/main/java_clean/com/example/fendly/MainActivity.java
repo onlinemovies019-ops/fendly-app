@@ -3309,106 +3309,35 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
     private void uploadProfilePhotoBackground(Uri imageUri, Bitmap cameraBitmap) {
         FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
         if (user == null) return;
-
-        Uri uploadSourceUri = imageUri;
-        if (uploadSourceUri == null && cameraBitmap != null) {
-            String savedPath = saveProfileBitmap(cameraBitmap);
-            if (savedPath != null) {
-                uploadSourceUri = Uri.fromFile(new File(savedPath));
+        user.getIdToken(false).addOnSuccessListener(token -> network.execute(() -> {
+            String imageUrl = uploadImage(imageUri, cameraBitmap, token != null ? token.getToken() : null);
+            if (imageUrl == null || imageUrl.trim().isEmpty()) {
+                if (cameraBitmap != null) {
+                    imageUrl = bitmapToBase64(cameraBitmap);
+                } else if (imageUri != null) {
+                    imageUrl = uriToBase64(imageUri);
+                }
             }
-        }
-        if (uploadSourceUri == null) return;
+            if (imageUrl == null || imageUrl.trim().isEmpty()) return;
 
-        try {
-            MediaManager.get().upload(uploadSourceUri)
-                    .callback(new UploadCallback() {
-                        @Override public void onStart(String requestId) {}
-                        @Override public void onProgress(String requestId, long bytes, long totalBytes) {}
-                        @Override
-                        public void onSuccess(String requestId, Map resultData) {
-                            String secureUrl = null;
-                            if (resultData != null) {
-                                secureUrl = (String) resultData.get("secure_url");
-                                if (secureUrl == null || secureUrl.trim().isEmpty()) {
-                                    secureUrl = (String) resultData.get("url");
-                                }
-                            }
-                            if (secureUrl == null || secureUrl.trim().isEmpty()) {
-                                String b64 = cameraBitmap != null ? bitmapToBase64(cameraBitmap) : uriToBase64(imageUri);
-                                if (!b64.isEmpty()) secureUrl = b64;
-                            } else {
-                                if (secureUrl.startsWith("http://")) {
-                                    secureUrl = "https://" + secureUrl.substring(7);
-                                }
-                            }
+            final String finalImageUrl = imageUrl;
+            SharedPreferences account = getSharedPreferences("fendly_account", MODE_PRIVATE);
+            account.edit().putString("profile_image_url", finalImageUrl).apply();
 
-                            final String finalUrl = secureUrl;
-                            if (finalUrl == null || finalUrl.trim().isEmpty()) return;
+            String username = account.getString("username", "");
+            String fullName = account.getString("full_name", "");
+            String email = account.getString("email", "");
+            String mobile = account.getString("mobile", "");
+            String state = account.getString("state", "");
+            String city = account.getString("city", "");
 
-                            SharedPreferences account = getSharedPreferences("fendly_account", MODE_PRIVATE);
-                            account.edit().putString("profile_image_url", finalUrl).apply();
+            saveCloudProfileDocument(user, username, fullName, email, mobile, state, city, finalImageUrl, null);
+            syncProfileToBackendApi(username, fullName, email, mobile, state, city);
 
-                            String username = account.getString("username", "");
-                            String fullName = account.getString("full_name", "");
-                            String email = account.getString("email", "");
-                            String mobile = account.getString("mobile", "");
-                            String state = account.getString("state", "");
-                            String city = account.getString("city", "");
-
-                            saveCloudProfileDocument(user, username, fullName, email, mobile, state, city, finalUrl, null);
-
-                            runOnUiThread(() -> {
-                                if (currentPage == PAGE_PROFILE) showProfile();
-                            });
-                        }
-
-                        @Override
-                        public void onError(String requestId, ErrorInfo error) {
-                            network.execute(() -> {
-                                String b64 = cameraBitmap != null ? bitmapToBase64(cameraBitmap) : uriToBase64(imageUri);
-                                if (b64.isEmpty()) return;
-                                SharedPreferences account = getSharedPreferences("fendly_account", MODE_PRIVATE);
-                                account.edit().putString("profile_image_url", b64).apply();
-
-                                String username = account.getString("username", "");
-                                String fullName = account.getString("full_name", "");
-                                String email = account.getString("email", "");
-                                String mobile = account.getString("mobile", "");
-                                String state = account.getString("state", "");
-                                String city = account.getString("city", "");
-
-                                saveCloudProfileDocument(user, username, fullName, email, mobile, state, city, b64, null);
-
-                                runOnUiThread(() -> {
-                                    if (currentPage == PAGE_PROFILE) showProfile();
-                                });
-                            });
-                        }
-
-                        @Override public void onReschedule(String requestId, ErrorInfo error) {}
-                    })
-                    .dispatch();
-        } catch (Exception e) {
-            network.execute(() -> {
-                String b64 = cameraBitmap != null ? bitmapToBase64(cameraBitmap) : uriToBase64(imageUri);
-                if (b64.isEmpty()) return;
-                SharedPreferences account = getSharedPreferences("fendly_account", MODE_PRIVATE);
-                account.edit().putString("profile_image_url", b64).apply();
-
-                String username = account.getString("username", "");
-                String fullName = account.getString("full_name", "");
-                String email = account.getString("email", "");
-                String mobile = account.getString("mobile", "");
-                String state = account.getString("state", "");
-                String city = account.getString("city", "");
-
-                saveCloudProfileDocument(user, username, fullName, email, mobile, state, city, b64, null);
-
-                runOnUiThread(() -> {
-                    if (currentPage == PAGE_PROFILE) showProfile();
-                });
+            runOnUiThread(() -> {
+                if (currentPage == PAGE_PROFILE) showProfile();
             });
-        }
+        }));
     }
 
     private void showProfilePhotoOptions() {
