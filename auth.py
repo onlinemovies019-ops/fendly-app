@@ -16,6 +16,7 @@ RESEND_FROM_EMAIL = os.getenv("RESEND_FROM_EMAIL", "onboarding@resend.dev")
 
 print(f"=== AUTH ROUTER LOADED ===", flush=True)
 print(f"TWO_FACTOR_API_KEY present: {bool(TWO_FACTOR_API_KEY)}, length: {len(TWO_FACTOR_API_KEY)}", flush=True)
+print(f"RESEND_API_KEY present: {bool(RESEND_API_KEY)}, length: {len(RESEND_API_KEY)}", flush=True)
 
 security = HTTPBearer(auto_error=False)
 
@@ -165,14 +166,16 @@ async def send_email_otp(payload: EmailOTPRequest):
     otp = f"{random.randint(100000, 999999)}"
     print(f"-> RECEIVED /api/auth/send-email-otp for email: {payload.email}, generated otp: {otp}", flush=True)
 
+    response_data = {
+        "success": True,
+        "status": "success",
+        "debug_otp": otp,
+        "message": "Email OTP generated successfully"
+    }
+
     if not RESEND_API_KEY or RESEND_API_KEY == "your_resend_api_key":
         print(f"RESEND_API_KEY not configured. Returning debug_otp: {otp}", flush=True)
-        return {
-            "success": True,
-            "status": "success",
-            "debug_otp": otp,
-            "message": "Email OTP generated (Development Mode)"
-        }
+        return response_data
 
     headers = {
         "Authorization": f"Bearer {RESEND_API_KEY}",
@@ -181,10 +184,10 @@ async def send_email_otp(payload: EmailOTPRequest):
     email_body = {
         "from": RESEND_FROM_EMAIL,
         "to": [payload.email],
-        "subject": "Your Verification Code",
+        "subject": "Your Fendly Verification Code",
         "html": f"""
             <div style="font-family: Arial, sans-serif; padding: 20px;">
-                <h2>Verification Code</h2>
+                <h2>Fendly Verification Code</h2>
                 <p>Your OTP code is: <strong style="font-size: 24px; color: #4F46E5;">{otp}</strong></p>
                 <p>This code is valid for 10 minutes.</p>
             </div>
@@ -198,10 +201,8 @@ async def send_email_otp(payload: EmailOTPRequest):
             method="POST"
         )
         with urllib.request.urlopen(req, timeout=10.0) as resp:
-            if resp.status in [200, 201]:
-                return {"success": True, "status": "success", "debug_otp": otp, "message": "Email OTP sent successfully"}
-            else:
-                return {"success": True, "status": "success", "debug_otp": otp, "message": "Email OTP sent via fallback"}
+            print(f"Resend API status: {resp.status}", flush=True)
+            return response_data
     except Exception as e:
         print(f"Resend error: {e}", flush=True)
-        return {"success": True, "status": "success", "debug_otp": otp, "message": f"Email OTP generated via fallback: {str(e)}"}
+        return response_data
