@@ -4866,12 +4866,14 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         if (pin != null && !pin.isEmpty()) {
             saveStoredAccountPin(pin);
         }
+        SharedPreferences account = getSharedPreferences("fendly_account", MODE_PRIVATE);
+        account.edit()
+                .putBoolean("created", true)
+                .putString("username", formatUsernameDisplay(username))
+                .apply();
+
         FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
         if (user == null) {
-            getSharedPreferences("fendly_account", MODE_PRIVATE).edit()
-                    .putBoolean("created", true)
-                    .putString("username", formatUsernameDisplay(username))
-                    .apply();
             if (onSuccess != null) onSuccess.run();
             return;
         }
@@ -4880,12 +4882,17 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         db.collection("users").document(getProfileDocumentKey())
                 .get(Source.SERVER)
                 .addOnSuccessListener(document -> {
-                    SharedPreferences.Editor editor = getSharedPreferences("fendly_account", MODE_PRIVATE).edit();
+                    SharedPreferences.Editor editor = account.edit();
                     boolean emailVerified = false;
                     boolean mobileVerified = false;
                     String email = "";
                     String mobile = "";
                     String fullName = "";
+                    String firstName = "";
+                    String surname = "";
+                    String state = "";
+                    String city = "";
+                    String imageUrl = "";
 
                     if (document != null && document.exists()) {
                         emailVerified = parseBooleanValue(document.get("emailVerified"))
@@ -4897,6 +4904,14 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                         email = document.getString("email");
                         mobile = document.getString("mobile");
                         fullName = document.getString("full_name");
+                        firstName = document.getString("first_name");
+                        surname = document.getString("surname");
+                        state = document.getString("state");
+                        city = document.getString("city");
+                        imageUrl = document.getString("imageUrl");
+                        if (imageUrl == null || imageUrl.trim().isEmpty()) {
+                            imageUrl = document.getString("profile_image_url");
+                        }
                     }
 
                     editor.putBoolean("email_verified", emailVerified);
@@ -4909,6 +4924,21 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                     }
                     if (fullName != null && !fullName.trim().isEmpty()) {
                         editor.putString("full_name", fullName.trim());
+                    }
+                    if (firstName != null && !firstName.trim().isEmpty()) {
+                        editor.putString("profile_first_name", firstName.trim());
+                    }
+                    if (surname != null && !surname.trim().isEmpty()) {
+                        editor.putString("profile_surname", surname.trim());
+                    }
+                    if (state != null && !state.trim().isEmpty()) {
+                        editor.putString("state", state.trim());
+                    }
+                    if (city != null && !city.trim().isEmpty()) {
+                        editor.putString("city", city.trim());
+                    }
+                    if (imageUrl != null && !imageUrl.trim().isEmpty()) {
+                        editor.putString("profile_image_url", imageUrl.trim());
                     }
                     editor.putBoolean("created", true);
                     editor.putString("username", formatUsernameDisplay(username));
