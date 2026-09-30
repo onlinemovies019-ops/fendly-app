@@ -1,6 +1,5 @@
 import os
 import json
-import random
 import urllib.request
 from fastapi import APIRouter, HTTPException, status, Depends
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
@@ -44,79 +43,95 @@ class EmailOTPRequest(BaseModel):
 
 @router.post("/send-otp")
 async def send_otp(payload: SendOTPRequest):
-    clean_phone = payload.phone_number.replace(" ", "").replace("-", "").replace("+", "")
-    dev_otp = f"{random.randint(100000, 999999)}"
-
     if not TWO_FACTOR_API_KEY or TWO_FACTOR_API_KEY == "your_2factor_api_key":
-        return {
-            "status": "success",
-            "session_id": f"dev_session_{clean_phone}",
-            "debug_otp": dev_otp,
-            "message": "OTP generated successfully (Development Mode)"
-        }
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="TWO_FACTOR_API_KEY is not configured in Render Environment Variables"
+        )
+
+    raw_phone = payload.phone_number.replace(" ", "").replace("-", "").replace("+", "")
+    if len(raw_phone) > 10 and raw_phone.startswith("91"):
+        clean_phone = raw_phone
+    elif len(raw_phone) == 10:
+        clean_phone = "91" + raw_phone
+    else:
+        clean_phone = raw_phone
 
     url = f"https://2factor.in/API/V1/{TWO_FACTOR_API_KEY}/SMS/{clean_phone}/AUTOGEN"
+    print(f"2Factor Send OTP URL: {url.replace(TWO_FACTOR_API_KEY, 'REDACTED')}")
 
     async with httpx.AsyncClient() as client:
         try:
-            response = await client.get(url, timeout=10.0)
+            response = await client.get(url, timeout=15.0)
             data = response.json()
+            print(f"2Factor Response: {data}")
+
             if data.get("Status") == "Success":
                 return {
                     "status": "success",
                     "session_id": data.get("Details"),
-                    "debug_otp": dev_otp,
-                    "message": "OTP sent successfully"
+                    "message": "OTP sent successfully via 2Factor"
                 }
             else:
-                return {
-                    "status": "success",
-                    "session_id": f"fallback_session_{clean_phone}",
-                    "debug_otp": dev_otp,
-                    "message": "OTP generated via fallback mode"
-                }
+                detail_msg = data.get("Details", "Failed to send OTP via 2Factor")
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"2Factor error: {detail_msg}"
+                )
+        except httpx.HTTPError as he:
+            print(f"2Factor HTTP Error: {he}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"2Factor network error: {str(e if 'e' in locals() else he)}"
+            )
         except Exception as e:
-            return {
-                "status": "success",
-                "session_id": f"error_session_{clean_phone}",
-                "debug_otp": dev_otp,
-                "message": f"OTP generated via fallback due to SMS error: {str(e)}"
-            }
+            print(f"2Factor Error: {e}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"SMS error: {str(e)}"
+            )
 
 @router.post("/verify-otp")
 async def verify_otp(payload: VerifyOTPRequest):
-    if payload.session_id and (
-        payload.session_id.startswith("dev_session_") or
-        payload.session_id.startswith("fallback_session_") or
-        payload.session_id.startswith("error_session_")
-    ):
-        return {"status": "success", "message": "OTP verified successfully"}
-
     if not TWO_FACTOR_API_KEY or TWO_FACTOR_API_KEY == "your_2factor_api_key":
-        return {"status": "success", "message": "OTP verified successfully"}
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="TWO_FACTOR_API_KEY is not configured in Render Environment Variables"
+        )
 
     url = f"https://2factor.in/API/V1/{TWO_FACTOR_API_KEY}/SMS/VERIFY/{payload.session_id}/{payload.otp}"
+    print(f"2Factor Verify URL: {url.replace(TWO_FACTOR_API_KEY, 'REDACTED')}")
 
     async with httpx.AsyncClient() as client:
         try:
-            response = await client.get(url, timeout=10.0)
+            response = await client.get(url, timeout=15.0)
             data = response.json()
-            if data.get("Status") == "Success" and data.get("Details") == "OTP Matched":
+            print(f"2Factor Verify Response: {data}")
+
+            if data.get("Status") == "Success" and (
+                data.get("Details") == "OTP Matched" or "Matched" in str(data.get("Details"))
+            ):
                 return {"status": "success", "message": "OTP verified successfully"}
             else:
-                return {"status": "success", "message": "OTP verified successfully"}
-        except Exception:
-            return {"status": "success", "message": "OTP verified successfully"}
+                detail_msg = data.get("Details", "Invalid or expired OTP")
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"2Factor verification error: {detail_msg}"
+                )
+        except Exception as e:
+            print(f"2Factor Verify Exception: {e}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Verification failed: {str(e)}"
+            )
 
 @router.post("/send-email-otp")
 async def send_email_otp(payload: EmailOTPRequest):
-    dev_otp = f"{random.randint(100000, 999999)}"
-    if not RESEND_API_KEY or RESEND_API_KEY == "your_resend_api_key":
-        return {
-            "status": "success",
-            "debug_otp": dev_otp,
-            "message": "Email OTP generated successfully (Development Mode)"
-        }
+    if not RESEND_API_KEY:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="RESEND_API_KEY is not configured on server"
+        )
     headers = {
         "Authorization": f"Bearer {RESEND_API_KEY}",
         "Content-Type": "application/json"
@@ -144,6 +159,12 @@ async def send_email_otp(payload: EmailOTPRequest):
             if resp.status in [200, 201]:
                 return {"status": "success", "message": "Email OTP sent successfully"}
             else:
-                return {"status": "success", "debug_otp": dev_otp, "message": "Email OTP generated via fallback"}
-    except Exception:
-        return {"status": "success", "debug_otp": dev_otp, "message": "Email OTP generated via fallback"}
+                raise HTTPException(
+                    status_code=resp.status,
+                    detail="Resend error"
+                )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to send email: {str(e)}"
+        )
