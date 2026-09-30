@@ -4876,7 +4876,6 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
 
     private void handleSuccessfulLogin(String username, String pin, Runnable onSuccess) {
         accountCreated = true;
-        clearAllLocalAccountData();
         if (pin != null && !pin.isEmpty()) {
             saveStoredAccountPin(pin);
         }
