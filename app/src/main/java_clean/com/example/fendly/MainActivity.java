@@ -4858,7 +4858,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         try {
             int width = sourceBitmap.getWidth();
             int height = sourceBitmap.getHeight();
-            int maxDimension = 300;
+            int maxDimension = 400;
             Bitmap bitmap = sourceBitmap;
             if (width > maxDimension || height > maxDimension) {
                 float ratio = Math.min((float) maxDimension / width, (float) maxDimension / height);
@@ -4867,7 +4867,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                 bitmap = Bitmap.createScaledBitmap(sourceBitmap, width, height, true);
             }
             ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
-            bitmap.compress(Bitmap.CompressFormat.JPEG, 80, outputStream);
+            bitmap.compress(Bitmap.CompressFormat.JPEG, 60, outputStream);
             byte[] bytes = outputStream.toByteArray();
             return "data:image/jpeg;base64," + Base64.encodeToString(bytes, Base64.NO_WRAP);
         } catch (Exception e) {
