@@ -11,3 +11,4 @@ razorpay>=1.6.0
 supabase
 resend
 pgvector
+email-validator
