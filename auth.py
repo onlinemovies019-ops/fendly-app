@@ -57,7 +57,9 @@ class EmailOTPRequest(BaseModel):
 
 @router.post("/send-otp")
 async def send_otp(payload: SendOTPRequest):
+    print(f"DEBUG: TWO_FACTOR_API_KEY loaded = {bool(TWO_FACTOR_API_KEY)}, length = {len(TWO_FACTOR_API_KEY)}, starts with = {TWO_FACTOR_API_KEY[:4] if TWO_FACTOR_API_KEY else 'EMPTY'}...", flush=True)
     if not TWO_FACTOR_API_KEY or TWO_FACTOR_API_KEY == "your_2factor_api_key":
+        print("ERROR: TWO_FACTOR_API_KEY is not configured or is placeholder!", flush=True)
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="TWO_FACTOR_API_KEY is not configured in Render Environment Variables."
@@ -72,17 +74,17 @@ async def send_otp(payload: SendOTPRequest):
         clean_phone = raw_phone
 
     url = f"https://2factor.in/API/V1/{TWO_FACTOR_API_KEY}/SMS/{clean_phone}/AUTOGEN"
-    print(f"Calling 2Factor API URL: {url.replace(TWO_FACTOR_API_KEY, 'REDACTED')}")
+    print(f"Calling 2Factor API URL: {url.replace(TWO_FACTOR_API_KEY, 'REDACTED')}", flush=True)
 
     async with httpx.AsyncClient() as client:
         try:
             response = await client.get(url, timeout=15.0)
-            print(f"2Factor HTTP Status: {response.status_code}")
+            print(f"2Factor HTTP Status: {response.status_code}", flush=True)
             try:
                 data = response.json()
             except Exception:
                 data = {"Status": "Error", "Details": f"Invalid JSON: {response.text}"}
-            print(f"2Factor JSON Response: {data}")
+            print(f"2Factor JSON Response: {data}", flush=True)
 
             if data.get("Status") == "Success":
                 return {
@@ -92,7 +94,7 @@ async def send_otp(payload: SendOTPRequest):
                 }
             else:
                 detail_msg = data.get("Details", data.get("Message", "Failed to send OTP"))
-                print(f"2Factor Rejected OTP Request: {detail_msg}")
+                print(f"2Factor Rejected OTP Request: {detail_msg}", flush=True)
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail=f"2Factor: {detail_msg}"
@@ -100,7 +102,7 @@ async def send_otp(payload: SendOTPRequest):
         except HTTPException as he:
             raise he
         except Exception as e:
-            print(f"2Factor Exception: {e}")
+            print(f"2Factor Exception: {e}", flush=True)
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"2Factor Error: {str(e)}"
@@ -115,13 +117,13 @@ async def verify_otp(payload: VerifyOTPRequest):
         )
 
     url = f"https://2factor.in/API/V1/{TWO_FACTOR_API_KEY}/SMS/VERIFY/{payload.session_id}/{payload.otp}"
-    print(f"Calling 2Factor Verify URL: {url.replace(TWO_FACTOR_API_KEY, 'REDACTED')}")
+    print(f"Calling 2Factor Verify URL: {url.replace(TWO_FACTOR_API_KEY, 'REDACTED')}", flush=True)
 
     async with httpx.AsyncClient() as client:
         try:
             response = await client.get(url, timeout=15.0)
             data = response.json()
-            print(f"2Factor Verify Response: {data}")
+            print(f"2Factor Verify Response: {data}", flush=True)
 
             if data.get("Status") == "Success" and (
                 data.get("Details") == "OTP Matched" or "Matched" in str(data.get("Details"))
@@ -136,7 +138,7 @@ async def verify_otp(payload: VerifyOTPRequest):
         except HTTPException as he:
             raise he
         except Exception as e:
-            print(f"2Factor Verify Exception: {e}")
+            print(f"2Factor Verify Exception: {e}", flush=True)
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Verification Error: {str(e)}"
