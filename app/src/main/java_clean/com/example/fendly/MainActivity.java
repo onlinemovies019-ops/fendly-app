@@ -4768,6 +4768,8 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             update.put("full_name", canonicalFull);
             update.put("first_name", canonicalFirst);
             update.put("surname", canonicalSur);
+            update.put("profile_first_name", canonicalFirst);
+            update.put("profile_surname", canonicalSur);
         }
         if (visibleEmail != null) {
             String emailText = visibleEmail.getText().toString().trim();
@@ -4781,10 +4783,22 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                 update.put("mobile", mobileText);
             }
         }
+        String currentImageUrl = getSharedPreferences("fendly_account", MODE_PRIVATE).getString("profile_image_url", "").trim();
+        if (!currentImageUrl.isEmpty()) {
+            update.put("imageUrl", currentImageUrl);
+            update.put("profile_image_url", currentImageUrl);
+        }
         if (update.isEmpty()) return;
-        FirebaseFirestore.getInstance().collection("users").document(getProfileDocumentKey())
+        FirebaseFirestore db = FirebaseFirestore.getInstance();
+        String docKey = getProfileDocumentKey();
+        db.collection("users").document(docKey)
                 .set(update, SetOptions.merge())
                 .addOnFailureListener(error -> Log.e("FIREBASE_ERROR", "Data fetch failed: ", error));
+        if (!user.getUid().equals(docKey)) {
+            db.collection("users").document(user.getUid())
+                    .set(update, SetOptions.merge())
+                    .addOnFailureListener(error -> Log.e("FIREBASE_ERROR", "Data fetch failed: ", error));
+        }
     }
 
     private void loadCloudProfileImage(ImageView avatar) {
