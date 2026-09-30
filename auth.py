@@ -1,197 +1,148 @@
 import os
+import random
 from typing import Optional
-from fastapi import APIRouter, Depends, HTTPException, Header, status
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from fastapi import APIRouter, HTTPException, status
+import httpx
 from pydantic import BaseModel, EmailStr
-from supabase import create_client, Client
 
-# Initialize Supabase Client
-SUPABASE_URL = os.getenv("SUPABASE_URL", "")
-SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY", os.getenv("SUPABASE_KEY", ""))
+router = APIRouter(prefix="/api/auth", tags=["Authentication"])
 
-supabase: Optional[Client] = None
-if SUPABASE_URL and SUPABASE_KEY:
-    supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+# API Keys from Render Environment Variables
+TWO_FACTOR_API_KEY = os.getenv("TWO_FACTOR_API_KEY", "")
+RESEND_API_KEY = os.getenv("RESEND_API_KEY", "")
+RESEND_FROM_EMAIL = os.getenv("RESEND_FROM_EMAIL", "onboarding@resend.dev")
 
-router = APIRouter(prefix="/api/users", tags=["Authentication & Profile"])
-security = HTTPBearer()
+# --- Schemas ---
 
-# --- Pydantic Schemas ---
+class MobileOTPRequest(BaseModel):
+    phone_number: str  # e.g., "+919876543210" or "9876543210"
 
-class ProfileUpdate(BaseModel):
-    first_name: Optional[str] = None
-    last_name: Optional[str] = None
-    surname: Optional[str] = None
-    mobile: Optional[str] = None
-    state: Optional[str] = None
-    city: Optional[str] = None
-    pincode: Optional[str] = None
+class MobileOTPVerifyRequest(BaseModel):
+    session_id: str
+    otp: str
 
+class EmailOTPRequest(BaseModel):
+    email: EmailStr
+    otp: str
 
-class ProfileResponse(BaseModel):
-    id: str
-    email: Optional[str] = None
-    mobile: Optional[str] = None
-    first_name: Optional[str] = None
-    last_name: Optional[str] = None
-    surname: Optional[str] = None
-    state: Optional[str] = None
-    city: Optional[str] = None
-    pincode: Optional[str] = None
-    is_verified: bool = True
-    email_verified: bool = True
+# --- Mobile OTP Endpoints (2Factor.in) ---
 
-
-# --- Auth Dependency ---
-
-async def get_current_user(
-    credentials: HTTPAuthorizationCredentials = Depends(security),
-) -> dict:
+@router.post("/send-otp")
+@router.post("/send-otp/")
+async def send_mobile_otp(payload: MobileOTPRequest):
     """
-    Extracts and verifies the user token.
-    Returns user data dictionary.
+    Triggers SMS OTP using 2Factor.in AUTOGEN API.
     """
-    token = credentials.credentials
-    if not token:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Missing authentication token",
-        )
-
-    # In production, verify JWT / Supabase / Firebase token here
-    try:
-        if supabase:
-            user_response = supabase.auth.get_user(token)
-            if user_response and user_response.user:
-                return {"id": user_response.user.id, "email": user_response.user.email}
-
-        # Fallback for authorization headers using raw user ID or test token
-        return {"id": token, "email": None}
-    except Exception as e:
-        # Return fallback token ID if token is user ID directly
-        return {"id": token, "email": None}
-
-
-# --- Endpoints ---
-
-@router.get("/profile", response_model=ProfileResponse)
-async def get_profile(current_user: dict = Depends(get_current_user)):
-    user_id = current_user["id"]
-
-    if not supabase:
-        return ProfileResponse(
-            id=user_id,
-            email=current_user.get("email"),
-            mobile="",
-            first_name="",
-            last_name="",
-            surname="",
-            state="",
-            city="",
-            pincode="",
-            is_verified=True,
-            email_verified=True,
-        )
-
-    try:
-        response = (
-            supabase.table("profiles")
-            .select("*")
-            .eq("id", user_id)
-            .execute()
-        )
-
-        if response.data and len(response.data) > 0:
-            profile_data = response.data[0]
-            return ProfileResponse(
-                id=profile_data.get("id", user_id),
-                email=profile_data.get("email", current_user.get("email")),
-                mobile=profile_data.get("mobile", ""),
-                first_name=profile_data.get("first_name", profile_data.get("first_name", "")),
-                last_name=profile_data.get("last_name", profile_data.get("last_name", "")),
-                surname=profile_data.get("surname", profile_data.get("last_name", "")),
-                state=profile_data.get("state", ""),
-                city=profile_data.get("city", ""),
-                pincode=profile_data.get("pincode", ""),
-                is_verified=profile_data.get("is_verified", True),
-                email_verified=profile_data.get("email_verified", True),
-            )
-        else:
-            # Create default profile row if missing
-            new_profile = {
-                "id": user_id,
-                "email": current_user.get("email"),
-            }
-            supabase.table("profiles").insert(new_profile).execute()
-
-            return ProfileResponse(
-                id=user_id,
-                email=current_user.get("email"),
-                mobile="",
-                first_name="",
-                last_name="",
-                surname="",
-                state="",
-                city="",
-                pincode="",
-                is_verified=True,
-                email_verified=True,
-            )
-
-    except Exception as e:
+    if not TWO_FACTOR_API_KEY:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Database error: {str(e)}",
+            detail="TWO_FACTOR_API_KEY is not configured on server"
         )
 
+    clean_phone = payload.phone_number.replace(" ", "").replace("-", "")
+    url = f"https://2factor.in/API/V1/{TWO_FACTOR_API_KEY}/SMS/{clean_phone}/AUTOGEN"
 
-@router.put("/profile", response_model=ProfileResponse)
-async def update_profile(
-    profile_update: ProfileUpdate,
-    current_user: dict = Depends(get_current_user),
-):
-    user_id = current_user["id"]
+    async with httpx.AsyncClient() as client:
+        try:
+            response = await client.get(url, timeout=10.0)
+            data = response.json()
+            if data.get("Status") == "Success":
+                return {
+                    "status": "success",
+                    "session_id": data.get("Details"),
+                    "message": "OTP sent successfully via SMS"
+                }
+            else:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=data.get("Details", "Failed to send SMS OTP")
+                )
+        except Exception as e:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"2Factor API error: {str(e)}"
+            )
 
-    update_data = profile_update.dict(exclude_unset=True)
-    if not update_data:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="No fields provided for update",
-        )
-
-    if not supabase:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Database connection unconfigured",
-        )
-
-    try:
-        response = (
-            supabase.table("profiles")
-            .upsert({"id": user_id, **update_data})
-            .execute()
-        )
-
-        updated = response.data[0] if response.data else update_data
-
-        is_verified = updated.get("is_verified", True)
-        email_verified = updated.get("email_verified", True)
-
-        return ProfileResponse(
-            id=user_id,
-            email=updated.get("email", current_user.get("email")),
-            mobile=updated.get("mobile", ""),
-            first_name=updated.get("first_name", ""),
-            last_name=updated.get("last_name", ""),
-            surname=updated.get("surname", ""),
-            state=updated.get("state", ""),
-            city=updated.get("city", ""),
-            pincode=updated.get("pincode", ""),
-            is_verified=is_verified,
-            email_verified=email_verified,
-        )
-    except Exception as e:
+@router.post("/verify-otp")
+@router.post("/verify-otp/")
+async def verify_mobile_otp(payload: MobileOTPVerifyRequest):
+    """
+    Verifies SMS OTP using 2Factor.in VERIFY API.
+    """
+    if not TWO_FACTOR_API_KEY:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to update profile: {str(e)}",
+            detail="TWO_FACTOR_API_KEY is not configured on server"
         )
+
+    url = f"https://2factor.in/API/V1/{TWO_FACTOR_API_KEY}/SMS/VERIFY/{payload.session_id}/{payload.otp}"
+
+    async with httpx.AsyncClient() as client:
+        try:
+            response = await client.get(url, timeout=10.0)
+            data = response.json()
+            if data.get("Status") == "Success" and data.get("Details") == "OTP Matched":
+                return {"status": "success", "message": "OTP verified successfully"}
+            else:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Invalid or expired OTP"
+                )
+        except Exception as e:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Verification failed: {str(e)}"
+            )
+
+# --- Email OTP Endpoint (Resend.com) ---
+
+@router.post("/send-email-otp")
+@router.post("/send-email-otp/")
+async def send_email_otp(payload: EmailOTPRequest):
+    """
+    Sends Email OTP using Resend API.
+    """
+    if not RESEND_API_KEY:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="RESEND_API_KEY is not configured on server"
+        )
+
+    headers = {
+        "Authorization": f"Bearer {RESEND_API_KEY}",
+        "Content-Type": "application/json"
+    }
+
+    email_body = {
+        "from": RESEND_FROM_EMAIL,
+        "to": [payload.email],
+        "subject": "Your Verification Code",
+        "html": f"""
+            <div style="font-family: Arial, sans-serif; padding: 20px;">
+                <h2>Verification Code</h2>
+                <p>Your OTP code is: <strong style="font-size: 24px; color: #4F46E5;">{payload.otp}</strong></p>
+                <p>This code is valid for 10 minutes.</p>
+            </div>
+        """
+    }
+
+    async with httpx.AsyncClient() as client:
+        try:
+            response = await client.post(
+                "https://api.resend.com/emails",
+                headers=headers,
+                json=email_body,
+                timeout=10.0
+            )
+            if response.status_code in [200, 201]:
+                return {"status": "success", "message": "Email OTP sent successfully"}
+            else:
+                raise HTTPException(
+                    status_code=response.status_code,
+                    detail=f"Resend error: {response.text}"
+                )
+        except Exception as e:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Failed to send email: {str(e)}"
+            )

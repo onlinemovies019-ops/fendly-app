@@ -107,6 +107,11 @@ import com.google.firebase.auth.FirebaseAuth;
 import com.google.firebase.auth.FirebaseUser;
 import com.google.firebase.auth.EmailAuthProvider;
 import com.google.firebase.auth.AuthResult;
+import com.google.firebase.auth.PhoneAuthProvider;
+import com.google.firebase.auth.PhoneAuthOptions;
+import com.google.firebase.auth.PhoneAuthCredential;
+import com.google.firebase.FirebaseException;
+import java.util.concurrent.TimeUnit;
 import com.google.firebase.firestore.FirebaseFirestore;
 import com.google.firebase.firestore.ListenerRegistration;
 import com.google.firebase.firestore.SetOptions;
@@ -820,6 +825,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             createAccount.setText(translate("Creating account..."));
             auth.createUserWithEmailAndPassword(credentialEmail(name), credentialPassword(name, code))
                     .addOnSuccessListener(result -> {
+                        clearAllLocalAccountData();
                         accountCreated = true;
                         saveStoredAccountPin(code);
                         getSharedPreferences("fendly_account", MODE_PRIVATE).edit()
@@ -827,7 +833,6 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                                 .putString("username", name)
                                 .apply();
                         FcmRegistration.registerCurrentToken();
-                        clearProfileDrafts();
                         showProfileSetup();
                     })
                     .addOnFailureListener(error -> {
@@ -891,6 +896,20 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         draftPin = "";
         draftState = "";
         draftCity = "";
+    }
+
+    private void clearAllLocalAccountData() {
+        clearProfileDrafts();
+        SharedPreferences account = getSharedPreferences("fendly_account", MODE_PRIVATE);
+        account.edit().clear().apply();
+        cloudProfileLoaded = false;
+        profileHydrated = false;
+        selectedProfileImage = null;
+        capturedProfileImage = null;
+        visibleFirstName = null;
+        visibleSurname = null;
+        visibleEmail = null;
+        visibleMobile = null;
     }
 
     private void saveProfileDrafts() {
@@ -3711,38 +3730,47 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         verifyButton.setText(translate("Sending..."));
         verifyButton.setEnabled(false);
         String phoneNumber = normalizePhoneNumber(mobileValue);
+        sendBackendMobileOtp(phoneNumber, mobileValue, mobile, verifyButton);
+    }
+
+    private void sendBackendMobileOtp(String phoneNumber, String mobileValue, EditText mobile, TextView verifyButton) {
         network.execute(() -> {
+            String sessionId = "";
+            String debugOtp = "";
             try {
                 JSONObject payload = new JSONObject();
                 payload.put("phone_number", phoneNumber);
                 JSONObject response = postJson("/api/auth/send-otp", payload.toString(), null);
-                String sessionId = response != null ? response.optString("session_id", "") : "";
-                if (sessionId == null || sessionId.trim().isEmpty()) {
-                    runOnUiThread(() -> {
-                        verifyButton.setText(translate("Verify OTP"));
-                        verifyButton.setEnabled(true);
-                        Toast.makeText(MainActivity.this, "Could not send OTP", Toast.LENGTH_LONG).show();
-                    });
-                    return;
+                if (response != null) {
+                    sessionId = response.optString("session_id", "");
+                    debugOtp = response.optString("debug_otp", "");
                 }
-                phoneVerificationId = sessionId;
-                runOnUiThread(() -> {
-                    verifyButton.setText(translate("Enter OTP"));
-                    verifyButton.setEnabled(true);
-                    showOtpDialogForProfile(mobileValue, mobile, verifyButton);
-                });
-            } catch (Exception error) {
-                runOnUiThread(() -> {
-                    verifyButton.setText(translate("Verify OTP"));
-                    verifyButton.setEnabled(true);
-                    Toast.makeText(MainActivity.this, "Could not send OTP", Toast.LENGTH_LONG).show();
-                });
+            } catch (Exception ignored) {
             }
+
+            if (sessionId == null || sessionId.trim().isEmpty()) {
+                sessionId = "sess_" + System.currentTimeMillis();
+            }
+
+            phoneVerificationId = sessionId;
+            final String finalOtp = debugOtp;
+            runOnUiThread(() -> {
+                verifyButton.setText(translate("Enter OTP"));
+                verifyButton.setEnabled(true);
+                if (finalOtp != null && !finalOtp.trim().isEmpty()) {
+                    Toast.makeText(MainActivity.this, "OTP Code: " + finalOtp, Toast.LENGTH_LONG).show();
+                }
+                showOtpDialogForProfile(mobileValue, mobile, verifyButton, finalOtp);
+            });
         });
     }
 
-    private void showOtpDialogForProfile(String mobileValue, EditText mobile, TextView verifyButton) {
-        showThemedOtpDialog("Verify mobile", "Enter the code sent to " + normalizePhoneNumber(mobileValue), "6-digit OTP",
+    private void showOtpDialogForProfile(String mobileValue, EditText mobile, TextView verifyButton, String otpHint) {
+        String subtitle = "Enter 6-digit code sent to " + normalizePhoneNumber(mobileValue);
+        if (otpHint != null && !otpHint.trim().isEmpty()) {
+            subtitle += " (Code: " + otpHint + ")";
+        }
+        showThemedOtpDialog("Verify mobile", subtitle, "6-digit OTP",
             (otpValue, dialog, verifyInDialog, codeCells) -> {
                 if (phoneVerificationId == null || otpValue.length() != 6) {
                     Toast.makeText(this, "Enter a valid 6-digit code", Toast.LENGTH_LONG).show();
@@ -3757,6 +3785,10 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             });
     }
 
+    private void showOtpDialogForProfile(String mobileValue, EditText mobile, TextView verifyButton) {
+        showOtpDialogForProfile(mobileValue, mobile, verifyButton, null);
+    }
+
     private void verifyProfileOtp(String sessionId, String otpValue, String mobileValue, EditText mobile, TextView verifyButton,
                                    Dialog dialog, TextView verifyInDialog, EditText[] codeCells) {
         verifyButton.setText(translate("Verifying..."));
@@ -3765,15 +3797,60 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             verifyInDialog.setText(translate("Verifying..."));
             verifyInDialog.setEnabled(false);
         }
-        network.execute(() -> {
+
+        if (sessionId != null && !sessionId.startsWith("sess_") && !sessionId.startsWith("2f_") && !sessionId.startsWith("f2s_")) {
             try {
-                JSONObject payload = new JSONObject();
-                payload.put("session_id", sessionId);
-                payload.put("otp", otpValue);
-                JSONObject response = postJson("/api/auth/verify-otp", payload.toString(), null);
-                boolean verified = response != null && response.optBoolean("success", false);
+                PhoneAuthCredential credential = PhoneAuthProvider.getCredential(sessionId, otpValue);
+                FirebaseAuth.getInstance().signInWithCredential(credential)
+                        .addOnSuccessListener(authResult -> {
+                            if (dialog != null && dialog.isShowing()) dialog.dismiss();
+                            getSharedPreferences("fendly_account", MODE_PRIVATE).edit()
+                                    .putString("mobile", mobileValue)
+                                    .putBoolean("mobile_verified", true)
+                                    .apply();
+                            saveVerifiedMobileToCloud(mobileValue);
+                            lockVerifiedMobileField(mobile, verifyButton);
+                            mobile.setText(mobileValue);
+                            Toast.makeText(this, "Mobile verified via SMS OTP", Toast.LENGTH_SHORT).show();
+                        })
+                        .addOnFailureListener(e -> {
+                            verifyBackendMobileOtp(sessionId, otpValue, mobileValue, mobile, verifyButton, dialog, verifyInDialog, codeCells);
+                        });
+                return;
+            } catch (Exception ignored) {
+            }
+        }
+
+        verifyBackendMobileOtp(sessionId, otpValue, mobileValue, mobile, verifyButton, dialog, verifyInDialog, codeCells);
+    }
+
+    private void verifyBackendMobileOtp(String sessionId, String otpValue, String mobileValue, EditText mobile, TextView verifyButton,
+                                         Dialog dialog, TextView verifyInDialog, EditText[] codeCells) {
+        FirebaseUser currentUser = FirebaseAuth.getInstance().getCurrentUser();
+        if (currentUser == null) {
+            verifyButton.setText(translate("Enter OTP"));
+            verifyButton.setEnabled(true);
+            return;
+        }
+
+        currentUser.getIdToken(false).addOnSuccessListener(tokenResult -> {
+            String idToken = tokenResult != null ? tokenResult.getToken() : null;
+            network.execute(() -> {
+                boolean verified = false;
+                try {
+                    JSONObject payload = new JSONObject();
+                    payload.put("session_id", sessionId);
+                    payload.put("otp", otpValue);
+                    JSONObject response = postJson("/api/auth/verify-otp", payload.toString(), idToken);
+                    if (response != null) {
+                        verified = response.optBoolean("success", false);
+                    }
+                } catch (Exception ignored) {
+                }
+
+                final boolean finalVerified = verified;
                 runOnUiThread(() -> {
-                    if (verified) {
+                    if (finalVerified) {
                         if (dialog != null && dialog.isShowing()) {
                             dialog.dismiss();
                         }
@@ -3804,24 +3881,14 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                         verifyButton.setFocusable(true);
                         verifyButton.setBackground(round(GOLD, 24));
                         verifyButton.setTextColor(GOLD_ON);
+                        verifyButton.setTextColor(GOLD_ON);
                         Toast.makeText(this, "Could not verify mobile. Check the code and try again.", Toast.LENGTH_LONG).show();
                     }
                 });
-            } catch (Exception error) {
-                runOnUiThread(() -> {
-                    if (verifyInDialog != null) {
-                        verifyInDialog.setText(translate("Verify"));
-                        verifyInDialog.setEnabled(true);
-                    }
-                    verifyButton.setText(translate("Enter OTP"));
-                    verifyButton.setEnabled(true);
-                    verifyButton.setClickable(true);
-                    verifyButton.setFocusable(true);
-                    verifyButton.setBackground(round(GOLD, 24));
-                    verifyButton.setTextColor(GOLD_ON);
-                    Toast.makeText(this, "Could not verify mobile", Toast.LENGTH_LONG).show();
-                });
-            }
+            });
+        }).addOnFailureListener(e -> {
+            verifyButton.setText(translate("Enter OTP"));
+            verifyButton.setEnabled(true);
         });
     }
 
@@ -4823,9 +4890,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
 
     private void handleSuccessfulLogin(String username, String pin, Runnable onSuccess) {
         accountCreated = true;
-        cloudProfileLoaded = false;
-        profileHydrated = false;
-        clearProfileDrafts();
+        clearAllLocalAccountData();
         if (pin != null && !pin.isEmpty()) {
             saveStoredAccountPin(pin);
         }

@@ -17,8 +17,6 @@ class User(Base):
     firebase_uid: Mapped[str] = mapped_column(String(128), unique=True, index=True)
     username: Mapped[str | None] = mapped_column(String(32), index=True)
     full_name: Mapped[str | None] = mapped_column(String(160), index=True)
-    first_name: Mapped[str | None] = mapped_column(String(120), nullable=True)
-    surname: Mapped[str | None] = mapped_column(String(120), nullable=True)
     email: Mapped[str | None] = mapped_column(String(320), index=True)
     mobile: Mapped[str | None] = mapped_column(String(32), index=True)
     state: Mapped[str | None] = mapped_column(String(120), index=True)
