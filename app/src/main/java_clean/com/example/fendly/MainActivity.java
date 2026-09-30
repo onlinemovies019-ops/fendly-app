@@ -257,7 +257,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
     private EditText visibleSurname;
     private EditText visibleEmail;
     private TextView visibleEmailVerify;
-    private EditText visibleMobile;
+    private EditText[] visibleMobileCells;
     private final Handler realtimeProfileHandler = new Handler(Looper.getMainLooper());
     private Runnable realtimeProfileSave;
     private boolean applyingCloudProfile;
@@ -909,7 +909,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         visibleFirstName = null;
         visibleSurname = null;
         visibleEmail = null;
-        visibleMobile = null;
+        visibleMobileCells = null;
     }
 
     private void saveProfileDrafts() {
@@ -1094,15 +1094,15 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         }));
 
         EditText email = field(getString(R.string.profile_email_address));
-        EditText mobile = field(getString(R.string.profile_mobile_number));
+        EditText[] mobileCells = mobileCells();
         visibleEmail = email;
-        visibleMobile = mobile;
+        visibleMobileCells = mobileCells;
         String profileEmail = account.getString("email", "");
         if (profileEmail.endsWith("@login.fendly.app")) profileEmail = "";
         email.setText(profileEmail);
         String savedMobileValue = normalizeLocalizedDigits(account.getString("mobile", ""));
         draftMobile = savedMobileValue;
-        mobile.setText(formatPhoneNumberForDisplay(savedMobileValue));
+        setMobileCells(mobileCells, savedMobileValue);
 
         EditText[] pinCells = pinCells();
         if (!darkMode) {
@@ -1116,10 +1116,12 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             draftEmail = value;
             saveProfileDrafts();
         }));
-        mobile.addTextChangedListener(draftWatcher(value -> {
-            draftMobile = normalizeLocalizedDigits(value);
-            saveProfileDrafts();
-        }));
+        for (EditText cell : mobileCells) {
+            cell.addTextChangedListener(draftWatcher(value -> {
+                draftMobile = normalizeLocalizedDigits(mobileValue(mobileCells));
+                saveProfileDrafts();
+            }));
+        }
         for (EditText pinCell : pinCells) {
             pinCell.addTextChangedListener(draftWatcher(value -> {
                 draftPin = pinValue(pinCells);
@@ -1127,26 +1129,6 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             }));
         }
 
-        mobile.setInputType(InputType.TYPE_CLASS_PHONE);
-        mobile.setFilters(new InputFilter[]{
-                new InputFilter.LengthFilter(10),
-                (source, start, end, destination, destinationStart, destinationEnd) -> {
-                    StringBuilder digits = new StringBuilder();
-                    boolean modified = false;
-                    for (int index = start; index < end; index++) {
-                        char character = source.charAt(index);
-                        if (Character.isDigit(character)) {
-                            digits.append(character);
-                        } else {
-                            modified = true;
-                        }
-                    }
-                    if (!modified && digits.length() == (end - start)) {
-                        return null;
-                    }
-                    return digits.toString();
-                }
-        });
         email.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_EMAIL_ADDRESS);
 
         email.setOnFocusChangeListener((view, hasFocus) -> {
@@ -1156,17 +1138,6 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                     email.setError("Email invalid");
                 } else {
                     email.setError(null);
-                }
-            }
-        });
-
-        mobile.setOnFocusChangeListener((view, hasFocus) -> {
-            if (!hasFocus) {
-                String mobileValue = mobile.getText().toString().trim();
-                if (!mobileValue.isEmpty() && !mobileValue.matches("^\\d{10}$")) {
-                    mobile.setError("Mobile invalid");
-                } else {
-                    mobile.setError(null);
                 }
             }
         });
@@ -1232,47 +1203,53 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
 
         TextView mobileVerify = filledButton(getString(R.string.profile_verify_otp), GOLD, GOLD_ON);
         mobileVerify.setPadding(dp(10), 0, dp(10), 0);
-        mobileVerify.setOnClickListener(view -> verifyProfileMobile(mobile, mobileVerify));
+        mobileVerify.setOnClickListener(view -> verifyProfileMobileTarget(mobileCells, mobileVerify));
         String verifiedMobile = account.getString("mobile", "").trim();
-        mobile.setEnabled(true);
-        mobile.setFocusable(true);
-        mobile.setFocusableInTouchMode(true);
-        mobile.setCursorVisible(true);
-        mobile.setText(verifiedMobile);
+        for (EditText cell : mobileCells) {
+            cell.setEnabled(true);
+            cell.setFocusable(true);
+            cell.setFocusableInTouchMode(true);
+            cell.setCursorVisible(true);
+        }
+        setMobileCells(mobileCells, verifiedMobile);
         boolean isMobileVerified = account.getBoolean("mobile_verified", false);
-        String currentMobile = normalizeLocalizedDigits(mobile.getText().toString().trim());
+        String currentMobile = normalizeLocalizedDigits(mobileValue(mobileCells));
         if (isMobileVerified && !verifiedMobile.isEmpty() && verifiedMobile.equals(currentMobile)) {
             mobileVerify.setOnClickListener(null);
-            lockVerifiedMobileField(mobile, mobileVerify);
+            lockVerifiedMobileField(mobileCells, mobileVerify);
         }
-        mobile.addTextChangedListener(new TextWatcher() {
-            @Override public void beforeTextChanged(CharSequence value, int start, int count, int after) { }
-            @Override public void onTextChanged(CharSequence value, int start, int before, int count) {
-                String currentMobile = normalizeLocalizedDigits(value.toString().trim());
-                boolean verifiedNow = currentMobile.matches("^\\d{10}$")
-                    && getSharedPreferences("fendly_account", MODE_PRIVATE).getBoolean("mobile_verified", false)
-                    && currentMobile.equals(getSharedPreferences("fendly_account", MODE_PRIVATE).getString("mobile", "").trim());
-                if (verifiedNow) {
-                    mobileVerify.setOnClickListener(null);
-                    lockVerifiedMobileField(mobile, mobileVerify);
-                    return;
+        for (EditText cell : mobileCells) {
+            cell.addTextChangedListener(new TextWatcher() {
+                @Override public void beforeTextChanged(CharSequence value, int start, int count, int after) { }
+                @Override public void onTextChanged(CharSequence value, int start, int before, int count) {
+                    String currentMobile = normalizeLocalizedDigits(mobileValue(mobileCells));
+                    boolean verifiedNow = currentMobile.matches("^\\d{10}$")
+                        && getSharedPreferences("fendly_account", MODE_PRIVATE).getBoolean("mobile_verified", false)
+                        && currentMobile.equals(getSharedPreferences("fendly_account", MODE_PRIVATE).getString("mobile", "").trim());
+                    if (verifiedNow) {
+                        mobileVerify.setOnClickListener(null);
+                        lockVerifiedMobileField(mobileCells, mobileVerify);
+                        return;
+                    }
+                    if (!verifiedMobile.equals(currentMobile)) {
+                        mobileVerify.setOnClickListener(view -> verifyProfileMobileTarget(mobileCells, mobileVerify));
+                        mobileVerify.setText(translate("Verify OTP"));
+                        mobileVerify.setEnabled(true);
+                        mobileVerify.setClickable(true);
+                        mobileVerify.setFocusable(true);
+                        mobileVerify.setBackground(round(GOLD, 24));
+                        mobileVerify.setTextColor(GOLD_ON);
+                        for (EditText c : mobileCells) {
+                            c.setEnabled(true);
+                            c.setFocusable(true);
+                            c.setFocusableInTouchMode(true);
+                            c.setCursorVisible(true);
+                        }
+                    }
                 }
-                if (!verifiedMobile.equals(currentMobile)) {
-                    mobileVerify.setOnClickListener(view -> verifyProfileMobile(mobile, mobileVerify));
-                    mobileVerify.setText(translate("Verify OTP"));
-                    mobileVerify.setEnabled(true);
-                    mobileVerify.setClickable(true);
-                    mobileVerify.setFocusable(true);
-                    mobileVerify.setBackground(round(GOLD, 24));
-                    mobileVerify.setTextColor(GOLD_ON);
-                    mobile.setEnabled(true);
-                    mobile.setFocusable(true);
-                    mobile.setFocusableInTouchMode(true);
-                    mobile.setCursorVisible(true);
-                }
-            }
-            @Override public void afterTextChanged(Editable value) { }
-        });
+                @Override public void afterTextChanged(Editable value) { }
+            });
+        }
 
         Map<String, String[]> stateCities = indiaStateCityMap();
         String[] states = stateCities.keySet().toArray(new String[0]);
@@ -1323,7 +1300,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         root.addView(locationRow, contentParams(-1, dp(76), dp(4)));
 
         addEditableProfileField(root, getString(R.string.profile_email), email, null);
-        addEditableProfileField(root, getString(R.string.profile_mobile), mobile, mobileVerify);
+        addLabeledMobileField(root, getString(R.string.profile_mobile), mobileCells, mobileVerify);
         addLabeledPinField(root, getString(R.string.profile_four_digit_pin), pinCells);
 
         TextView save = actionButton(getString(R.string.profile_complete), true);
@@ -1336,7 +1313,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             if (updatedSurname.equalsIgnoreCase(originalSurname) || updatedSurname.equals(localizeProfileName(originalSurname))) updatedSurname = originalSurname;
             String fullName = (updatedFirstName + " " + updatedSurname).trim();
             String usernameValue = usernameField.getText().toString().trim();
-            String mobileValue = mobile.getText().toString().trim();
+            String mobileValue = mobileValue(mobileCells);
             String emailValue = email.getText().toString().trim();
             String pinValue = pinValue(pinCells);
             String selectedState = reverseLocalizedProfileValue("state", stateSearch.getText().toString().trim());
@@ -1355,8 +1332,8 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                 usernameField.setError("Use 3-32 letters, numbers, or underscores");
                 usernameField.requestFocus();
             } else if (!mobileValue.matches("^\\d{10}$")) {
-                mobile.setError("Enter valid 10-digit mobile number");
-                mobile.requestFocus();
+                Toast.makeText(this, "Enter valid 10-digit mobile number", Toast.LENGTH_SHORT).show();
+                mobileCells[0].requestFocus();
             } else if (!validEmail(emailValue)) {
                 email.setError("Enter a valid email like Gmail, Yahoo, Hotmail, Outlook, etc.");
                 email.requestFocus();
@@ -1372,7 +1349,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                 if (REQUIRE_MOBILE_OTP_FOR_PROFILE_SAVE && !currentMobileVerified) {
                     Toast.makeText(this, "Verify mobile OTP before continuing", Toast.LENGTH_SHORT).show();
                     blinkVerificationRequired(mobileVerify);
-                    mobile.requestFocus();
+                    mobileCells[0].requestFocus();
                     return;
                 }
 
@@ -3733,7 +3710,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         sendBackendMobileOtp(phoneNumber, mobileValue, mobile, verifyButton);
     }
 
-    private void sendBackendMobileOtp(String phoneNumber, String mobileValue, EditText mobile, TextView verifyButton) {
+    private void sendBackendMobileOtp(String phoneNumber, String mobileValue, Object mobileTarget, TextView verifyButton) {
         network.execute(() -> {
             String sessionId = "";
             String debugOtp = "";
@@ -3760,12 +3737,12 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                 if (finalOtp != null && !finalOtp.trim().isEmpty()) {
                     Toast.makeText(MainActivity.this, "OTP Code: " + finalOtp, Toast.LENGTH_LONG).show();
                 }
-                showOtpDialogForProfile(mobileValue, mobile, verifyButton, finalOtp);
+                showOtpDialogForProfile(mobileValue, mobileTarget, verifyButton, finalOtp);
             });
         });
     }
 
-    private void showOtpDialogForProfile(String mobileValue, EditText mobile, TextView verifyButton, String otpHint) {
+    private void showOtpDialogForProfile(String mobileValue, Object mobileTarget, TextView verifyButton, String otpHint) {
         String subtitle = "Enter 6-digit code sent to " + normalizePhoneNumber(mobileValue);
         if (otpHint != null && !otpHint.trim().isEmpty()) {
             subtitle += " (Code: " + otpHint + ")";
@@ -3776,20 +3753,20 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                     Toast.makeText(this, "Enter a valid 6-digit code", Toast.LENGTH_LONG).show();
                     return;
                 }
-                verifyProfileOtp(phoneVerificationId, otpValue, mobileValue, mobile, verifyButton, dialog, verifyInDialog, codeCells);
+                verifyProfileOtp(phoneVerificationId, otpValue, mobileValue, mobileTarget, verifyButton, dialog, verifyInDialog, codeCells);
             }, () -> {
                 verifyButton.setText(translate("Enter OTP"));
                 verifyButton.setEnabled(true);
             }, () -> {
-                verifyProfileMobile(mobile, verifyButton);
+                verifyProfileMobileTarget(mobileTarget, verifyButton);
             });
     }
 
-    private void showOtpDialogForProfile(String mobileValue, EditText mobile, TextView verifyButton) {
-        showOtpDialogForProfile(mobileValue, mobile, verifyButton, null);
+    private void showOtpDialogForProfile(String mobileValue, Object mobileTarget, TextView verifyButton) {
+        showOtpDialogForProfile(mobileValue, mobileTarget, verifyButton, null);
     }
 
-    private void verifyProfileOtp(String sessionId, String otpValue, String mobileValue, EditText mobile, TextView verifyButton,
+    private void verifyProfileOtp(String sessionId, String otpValue, String mobileValue, Object mobileTarget, TextView verifyButton,
                                    Dialog dialog, TextView verifyInDialog, EditText[] codeCells) {
         verifyButton.setText(translate("Verifying..."));
         verifyButton.setEnabled(false);
@@ -3809,22 +3786,26 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                                     .putBoolean("mobile_verified", true)
                                     .apply();
                             saveVerifiedMobileToCloud(mobileValue);
-                            lockVerifiedMobileField(mobile, verifyButton);
-                            mobile.setText(mobileValue);
+                            lockVerifiedMobileField(mobileTarget, verifyButton);
+                            if (mobileTarget instanceof EditText) {
+                                ((EditText) mobileTarget).setText(mobileValue);
+                            } else if (mobileTarget instanceof EditText[]) {
+                                setMobileCells((EditText[]) mobileTarget, mobileValue);
+                            }
                             Toast.makeText(this, "Mobile verified via SMS OTP", Toast.LENGTH_SHORT).show();
                         })
                         .addOnFailureListener(e -> {
-                            verifyBackendMobileOtp(sessionId, otpValue, mobileValue, mobile, verifyButton, dialog, verifyInDialog, codeCells);
+                            verifyBackendMobileOtp(sessionId, otpValue, mobileValue, mobileTarget, verifyButton, dialog, verifyInDialog, codeCells);
                         });
                 return;
             } catch (Exception ignored) {
             }
         }
 
-        verifyBackendMobileOtp(sessionId, otpValue, mobileValue, mobile, verifyButton, dialog, verifyInDialog, codeCells);
+        verifyBackendMobileOtp(sessionId, otpValue, mobileValue, mobileTarget, verifyButton, dialog, verifyInDialog, codeCells);
     }
 
-    private void verifyBackendMobileOtp(String sessionId, String otpValue, String mobileValue, EditText mobile, TextView verifyButton,
+    private void verifyBackendMobileOtp(String sessionId, String otpValue, String mobileValue, Object mobileTarget, TextView verifyButton,
                                          Dialog dialog, TextView verifyInDialog, EditText[] codeCells) {
         network.execute(() -> {
             boolean verified = false;
@@ -3850,8 +3831,12 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                             .putBoolean("mobile_verified", true)
                             .apply();
                     saveVerifiedMobileToCloud(mobileValue);
-                    lockVerifiedMobileField(mobile, verifyButton);
-                    mobile.setText(mobileValue);
+                    lockVerifiedMobileField(mobileTarget, verifyButton);
+                    if (mobileTarget instanceof EditText) {
+                        ((EditText) mobileTarget).setText(mobileValue);
+                    } else if (mobileTarget instanceof EditText[]) {
+                        setMobileCells((EditText[]) mobileTarget, mobileValue);
+                    }
                     Toast.makeText(this, "Mobile verified", Toast.LENGTH_SHORT).show();
                 } else {
                     if (verifyInDialog != null) {
@@ -4649,9 +4634,9 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         if (visibleEmail != null && emailVal != null && !emailVal.endsWith("@login.fendly.app") && !visibleEmail.hasFocus()) {
             setVisibleText(visibleEmail, emailVal);
         }
-        String mobileVal = formatPhoneNumberForDisplay(document.getString("mobile"));
-        if (visibleMobile != null && mobileVal != null && !visibleMobile.hasFocus()) {
-            setVisibleText(visibleMobile, mobileVal);
+        String mobileVal = document.getString("mobile");
+        if (visibleMobileCells != null && mobileVal != null && !hasMobileCellsFocus()) {
+            setMobileCells(visibleMobileCells, mobileVal);
         }
         applyingCloudProfile = false;
     }
@@ -4687,9 +4672,11 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                 update.put("email", emailText);
             }
         }
-        if (visibleMobile != null) {
-            String mobileText = normalizeLocalizedDigits(visibleMobile.getText().toString().trim());
-            update.put("mobile", mobileText);
+        if (visibleMobileCells != null) {
+            String mobileText = normalizeLocalizedDigits(mobileValue(visibleMobileCells));
+            if (mobileText.length() == 10) {
+                update.put("mobile", mobileText);
+            }
         }
         if (update.isEmpty()) return;
         FirebaseFirestore.getInstance().collection("users").document(getProfileDocumentKey())
@@ -5466,47 +5453,18 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             }
         });
 
-        EditText mobile = field(getString(R.string.profile_mobile_number));
-        visibleMobile = mobile;
+        EditText[] mobileCells = mobileCells();
+        visibleMobileCells = mobileCells;
         String savedMobile = normalizeLocalizedDigits(account.getString("mobile", ""));
         draftMobile = savedMobile;
-        mobile.setText(formatPhoneNumberForDisplay(savedMobile));
-        mobile.setTag(savedMobile);
-        mobile.addTextChangedListener(draftWatcher(value -> {
-            draftMobile = normalizeLocalizedDigits(value);
-            saveProfileDrafts();
-            scheduleRealtimeProfileSave();
-        }));
-        mobile.setInputType(InputType.TYPE_CLASS_PHONE);
-        mobile.setFilters(new InputFilter[]{
-                new InputFilter.LengthFilter(10),
-                (source, start, end, destination, destinationStart, destinationEnd) -> {
-                    StringBuilder digits = new StringBuilder();
-                    boolean modified = false;
-                    for (int index = start; index < end; index++) {
-                        char character = source.charAt(index);
-                        if (Character.isDigit(character)) {
-                            digits.append(character);
-                        } else {
-                            modified = true;
-                        }
-                    }
-                    if (!modified && digits.length() == (end - start)) {
-                        return null;
-                    }
-                    return digits.toString();
-                }
-        });
-        mobile.setOnFocusChangeListener((view, hasFocus) -> {
-            if (!hasFocus) {
-                String mobileValue = mobile.getText().toString().trim();
-                if (!mobileValue.isEmpty() && !mobileValue.matches("^\\d{10}$")) {
-                    mobile.setError("Mobile invalid");
-                } else {
-                    mobile.setError(null);
-                }
-            }
-        });
+        setMobileCells(mobileCells, savedMobile);
+        for (EditText cell : mobileCells) {
+            cell.addTextChangedListener(draftWatcher(value -> {
+                draftMobile = normalizeLocalizedDigits(mobileValue(mobileCells));
+                saveProfileDrafts();
+                scheduleRealtimeProfileSave();
+            }));
+        }
 
         TextView emailVerify = filledButton(getString(R.string.profile_verify_otp), GOLD, GOLD_ON);
         emailVerify.setPadding(dp(12), 0, dp(12), 0);
@@ -5517,15 +5475,17 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
 
         TextView mobileVerify = filledButton(getString(R.string.profile_verify_otp), GOLD, GOLD_ON);
         mobileVerify.setPadding(dp(10), 0, dp(10), 0);
-        mobileVerify.setOnClickListener(view -> verifyProfileMobile(mobile, mobileVerify));
+        mobileVerify.setOnClickListener(view -> verifyProfileMobileTarget(mobileCells, mobileVerify));
         String verifiedMobile = account.getString("mobile", "").trim();
-        mobile.setEnabled(true);
-        mobile.setFocusable(true);
-        mobile.setFocusableInTouchMode(true);
-        mobile.setCursorVisible(true);
+        for (EditText cell : mobileCells) {
+            cell.setEnabled(true);
+            cell.setFocusable(true);
+            cell.setFocusableInTouchMode(true);
+            cell.setCursorVisible(true);
+        }
         boolean isMobileVerified = account.getBoolean("mobile_verified", false);
         if (isMobileVerified) {
-            lockVerifiedMobileField(mobile, mobileVerify);
+            lockVerifiedMobileField(mobileCells, mobileVerify);
         } else if (currentUser != null) {
             FirebaseFirestore.getInstance().collection("users").document(getProfileDocumentKey())
                     .get(Source.SERVER)
@@ -5540,38 +5500,38 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                                 editor.putBoolean("mobile_verified", true);
                                 if (cloudMobile != null && !cloudMobile.trim().isEmpty()) {
                                     editor.putString("mobile", cloudMobile.trim());
-                                    if (mobile != null) {
-                                        mobile.setText(formatPhoneNumberForDisplay(cloudMobile.trim()));
-                                    }
+                                    setMobileCells(mobileCells, cloudMobile.trim());
                                 }
                                 editor.apply();
-                                lockVerifiedMobileField(mobile, mobileVerify);
+                                lockVerifiedMobileField(mobileCells, mobileVerify);
                             }
                         }
                     });
         }
-        mobile.addTextChangedListener(new TextWatcher() {
-            @Override public void beforeTextChanged(CharSequence value, int start, int count, int after) { }
-            @Override public void onTextChanged(CharSequence value, int start, int before, int count) {
-                String currentMobile = normalizeLocalizedDigits(value.toString().trim());
-                boolean verifiedNow = currentMobile.matches("^\\d{10}$")
-                    && getSharedPreferences("fendly_account", MODE_PRIVATE).getBoolean("mobile_verified", false)
-                    && currentMobile.equals(getSharedPreferences("fendly_account", MODE_PRIVATE).getString("mobile", "").trim());
-                if (verifiedNow) {
-                    setVerifiedButtonState(mobileVerify);
-                    return;
+        for (EditText cell : mobileCells) {
+            cell.addTextChangedListener(new TextWatcher() {
+                @Override public void beforeTextChanged(CharSequence value, int start, int count, int after) { }
+                @Override public void onTextChanged(CharSequence value, int start, int before, int count) {
+                    String currentMobile = normalizeLocalizedDigits(mobileValue(mobileCells));
+                    boolean verifiedNow = currentMobile.matches("^\\d{10}$")
+                        && getSharedPreferences("fendly_account", MODE_PRIVATE).getBoolean("mobile_verified", false)
+                        && currentMobile.equals(getSharedPreferences("fendly_account", MODE_PRIVATE).getString("mobile", "").trim());
+                    if (verifiedNow) {
+                        setVerifiedButtonState(mobileVerify);
+                        return;
+                    }
+                    if (!verifiedMobile.equals(currentMobile)) {
+                        mobileVerify.setText(translate("Verify OTP"));
+                        mobileVerify.setEnabled(true);
+                        mobileVerify.setClickable(true);
+                        mobileVerify.setFocusable(true);
+                        mobileVerify.setBackground(round(GOLD, 24));
+                        mobileVerify.setTextColor(GOLD_ON);
+                    }
                 }
-                if (!verifiedMobile.equals(currentMobile)) {
-                    mobileVerify.setText(translate("Verify OTP"));
-                    mobileVerify.setEnabled(true);
-                    mobileVerify.setClickable(true);
-                    mobileVerify.setFocusable(true);
-                    mobileVerify.setBackground(round(GOLD, 24));
-                    mobileVerify.setTextColor(GOLD_ON);
-                }
-            }
-            @Override public void afterTextChanged(Editable value) { }
-        });
+                @Override public void afterTextChanged(Editable value) { }
+            });
+        }
 
         Map<String, String[]> stateCities = indiaStateCityMap();
         String[] states = stateCities.keySet().toArray(new String[0]);
@@ -5623,7 +5583,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         root.addView(locationRow, contentParams(-1, dp(76), dp(4)));
 
         addEditableProfileField(root, getString(R.string.profile_email), email, emailVerify);
-        addEditableProfileField(root, getString(R.string.profile_mobile), mobile, mobileVerify);
+        addLabeledMobileField(root, getString(R.string.profile_mobile), mobileCells, mobileVerify);
         EditText[] changePinCells = pinCells();
         LinearLayout pinGroup = new LinearLayout(this);
         pinGroup.setOrientation(LinearLayout.VERTICAL);
@@ -5691,7 +5651,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             if (updatedSurname.equalsIgnoreCase(originalSurname) || updatedSurname.equals(localizeProfileName(originalSurname))) updatedSurname = originalSurname;
             String updatedFullName = (updatedFirstName + " " + updatedSurname).trim();
             String updatedEmail = email.getText().toString().trim();
-            String updatedMobile = normalizeLocalizedDigits(mobile.getText().toString().trim());
+            String updatedMobile = normalizeLocalizedDigits(mobileValue(mobileCells));
             String selectedState = reverseLocalizedProfileValue("state", stateSearch.getText().toString().trim());
             String selectedCity = reverseLocalizedProfileValue("city", citySearch.getText().toString().trim());
             String originalState = String.valueOf(stateSearch.getTag() == null ? "" : stateSearch.getTag());
@@ -5711,8 +5671,8 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                 return;
             }
             if (!updatedMobile.isEmpty() && !updatedMobile.matches("^\\d{10}$")) {
-                mobile.setError("Mobile invalid");
-                mobile.requestFocus();
+                Toast.makeText(this, "Mobile invalid", Toast.LENGTH_SHORT).show();
+                mobileCells[0].requestFocus();
                 return;
             }
             if (selectedState == null || selectedState.trim().isEmpty() || isSelectStatePlaceholder(selectedState) || selectedCity.isEmpty() || isSelectCityPlaceholder(selectedCity) || !cityMatchesState) {
@@ -5725,7 +5685,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             if (REQUIRE_MOBILE_OTP_FOR_PROFILE_SAVE && !verifiedMobileNumber) {
                 Toast.makeText(this, "Verify mobile OTP before saving changes", Toast.LENGTH_SHORT).show();
                 blinkVerificationRequired(mobileVerify);
-                mobile.requestFocus();
+                mobileCells[0].requestFocus();
                 return;
             }
             String lastSavedEmail = account.getString("email", "").trim();
@@ -6147,6 +6107,81 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         return digitCells(6, false);
     }
 
+    private EditText[] mobileCells() {
+        return digitCells(10, false);
+    }
+
+    private String mobileValue(EditText[] cells) {
+        StringBuilder builder = new StringBuilder();
+        if (cells != null) {
+            for (EditText cell : cells) {
+                if (cell != null) builder.append(cell.getText().toString());
+            }
+        }
+        return builder.toString();
+    }
+
+    private void setMobileCells(EditText[] cells, String value) {
+        if (cells == null) return;
+        String clean = normalizeLocalizedDigits(value != null ? value : "").replaceAll("\\D+", "");
+        for (int i = 0; i < cells.length; i++) {
+            if (i < clean.length()) {
+                cells[i].setText(String.valueOf(clean.charAt(i)));
+            } else {
+                cells[i].setText("");
+            }
+        }
+    }
+
+    private boolean hasMobileCellsFocus() {
+        if (visibleMobileCells == null) return false;
+        for (EditText cell : visibleMobileCells) {
+            if (cell != null && cell.hasFocus()) return true;
+        }
+        return false;
+    }
+
+    private void addLabeledMobileField(LinearLayout parent, String label, EditText[] cells, TextView verifyButton) {
+        LinearLayout group = new LinearLayout(this);
+        group.setOrientation(LinearLayout.VERTICAL);
+        group.addView(fieldLabel(label), new LinearLayout.LayoutParams(-1, dp(20)));
+
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        for (int index = 0; index < cells.length; index++) {
+            LinearLayout.LayoutParams cellParams = new LinearLayout.LayoutParams(0, dp(38), 1f);
+            if (index > 0) cellParams.setMargins(dp(2), 0, 0, 0);
+            row.addView(cells[index], cellParams);
+        }
+        LinearLayout.LayoutParams rowParams = new LinearLayout.LayoutParams(-1, dp(42));
+        rowParams.topMargin = dp(4);
+        group.addView(row, rowParams);
+
+        if (verifyButton != null) {
+            if (verifyButton.getParent() instanceof ViewGroup) {
+                ((ViewGroup) verifyButton.getParent()).removeView(verifyButton);
+            }
+            verifyButton.setClickable(true);
+            verifyButton.setFocusable(true);
+            verifyButton.setEnabled(true);
+            verifyButton.setIncludeFontPadding(false);
+            verifyButton.setTextAlignment(View.TEXT_ALIGNMENT_CENTER);
+            verifyButton.setSingleLine(true);
+            verifyButton.setPadding(dp(16), dp(8), dp(16), dp(8));
+            LinearLayout.LayoutParams buttonParams = new LinearLayout.LayoutParams(-1, dp(40));
+            buttonParams.setMargins(0, dp(8), 0, 0);
+            verifyButton.setLayoutParams(buttonParams);
+            group.addView(verifyButton);
+            parent.addView(group, contentParams(-1, dp(120), dp(8)));
+        } else {
+            parent.addView(group, contentParams(-1, dp(68), dp(4)));
+        }
+    }
+
+    private void addLabeledMobileField(LinearLayout parent, String label, EditText[] cells) {
+        addLabeledMobileField(parent, label, cells, null);
+    }
+
     private EditText[] digitCells(int count, boolean password) {
         EditText[] cells = new EditText[count];
         for (int index = 0; index < cells.length; index++) {
@@ -6234,14 +6269,46 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         setVerifiedButtonState(verifyButton);
     }
 
-    private void lockVerifiedMobileField(EditText mobile, TextView verifyButton) {
-        if (mobile != null) {
+    private void lockVerifiedMobileField(Object mobileTarget, TextView verifyButton) {
+        if (mobileTarget instanceof EditText) {
+            EditText mobile = (EditText) mobileTarget;
             mobile.setEnabled(false);
             mobile.setFocusable(false);
             mobile.setFocusableInTouchMode(false);
             mobile.setCursorVisible(false);
+        } else if (mobileTarget instanceof EditText[]) {
+            for (EditText cell : (EditText[]) mobileTarget) {
+                if (cell != null) {
+                    cell.setEnabled(false);
+                    cell.setFocusable(false);
+                    cell.setFocusableInTouchMode(false);
+                    cell.setCursorVisible(false);
+                }
+            }
         }
         setVerifiedButtonState(verifyButton);
+    }
+
+    private void verifyProfileMobileTarget(Object mobileTarget, TextView verifyButton) {
+        String mobileValue = "";
+        if (mobileTarget instanceof EditText) {
+            mobileValue = normalizeLocalizedDigits(((EditText) mobileTarget).getText().toString().trim());
+        } else if (mobileTarget instanceof EditText[]) {
+            mobileValue = normalizeLocalizedDigits(mobileValue((EditText[]) mobileTarget));
+        }
+        if (!mobileValue.matches("^\\d{10}$")) {
+            Toast.makeText(this, "Enter a valid 10-digit mobile number", Toast.LENGTH_LONG).show();
+            return;
+        }
+        FirebaseAuth auth = FirebaseAuth.getInstance();
+        if (auth.getCurrentUser() == null) {
+            Toast.makeText(this, "Sign in to verify your mobile number", Toast.LENGTH_LONG).show();
+            return;
+        }
+        verifyButton.setText(translate("Sending..."));
+        verifyButton.setEnabled(false);
+        String phoneNumber = normalizePhoneNumber(mobileValue);
+        sendBackendMobileOtp(phoneNumber, mobileValue, mobileTarget, verifyButton);
     }
 
     private void blinkVerificationRequired(TextView verifyButton) {
