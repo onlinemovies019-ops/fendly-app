@@ -3257,6 +3257,39 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         picker.show();
     }
 
+    private void uploadProfilePhotoBackground(Uri imageUri, Bitmap cameraBitmap) {
+        FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
+        if (user == null) return;
+        user.getIdToken(false).addOnSuccessListener(token -> network.execute(() -> {
+            String imageUrl = uploadImage(imageUri, cameraBitmap, token.getToken());
+            if (imageUrl == null || imageUrl.trim().isEmpty()) {
+                if (cameraBitmap != null) {
+                    imageUrl = bitmapToBase64(cameraBitmap);
+                } else if (imageUri != null) {
+                    imageUrl = uriToBase64(imageUri);
+                }
+            }
+            if (imageUrl == null || imageUrl.trim().isEmpty()) return;
+
+            final String finalImageUrl = imageUrl;
+            SharedPreferences account = getSharedPreferences("fendly_account", MODE_PRIVATE);
+            account.edit().putString("profile_image_url", finalImageUrl).apply();
+
+            String username = account.getString("username", "");
+            String fullName = account.getString("full_name", "");
+            String email = account.getString("email", "");
+            String mobile = account.getString("mobile", "");
+            String state = account.getString("state", "");
+            String city = account.getString("city", "");
+
+            saveCloudProfileDocument(user, username, fullName, email, mobile, state, city, finalImageUrl, null);
+
+            runOnUiThread(() -> {
+                if (currentPage == PAGE_PROFILE) showProfile();
+            });
+        }));
+    }
+
     private void showProfilePhotoOptions() {
         boolean hasPicture = hasProfilePicture();
         if (hasPicture) {
@@ -6748,6 +6781,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                     .putString("profile_image_uri", selectedProfileImage.toString())
                     .apply();
             if (currentPage == PAGE_PROFILE) showProfile();
+            uploadProfilePhotoBackground(selectedProfileImage, null);
         }
         if (requestCode == REQUEST_PROFILE_CAMERA && resultCode == RESULT_OK && data != null && data.getExtras() != null) {
             capturedProfileImage = (Bitmap) data.getExtras().get("data");
@@ -6762,6 +6796,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                 }
             }
             if (currentPage == PAGE_PROFILE) showProfile();
+            uploadProfilePhotoBackground(null, capturedProfileImage);
         }
 
         if (requestCode == IntentIntegrator.REQUEST_CODE && resultCode == RESULT_OK) {
