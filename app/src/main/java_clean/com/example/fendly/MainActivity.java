@@ -5034,8 +5034,10 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
     private void syncProfileToBackendApi(String username, String fullName, String email, String mobile, String state, String city) {
         FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
         if (user == null) return;
-        boolean emailVerified = getSharedPreferences("fendly_account", MODE_PRIVATE).getBoolean("email_verified", false);
-        boolean mobileVerified = getSharedPreferences("fendly_account", MODE_PRIVATE).getBoolean("mobile_verified", false);
+        SharedPreferences account = getSharedPreferences("fendly_account", MODE_PRIVATE);
+        boolean emailVerified = account.getBoolean("email_verified", false);
+        boolean mobileVerified = account.getBoolean("mobile_verified", false);
+        String profilePhotoUrl = account.getString("profile_image_url", "").trim();
         user.getIdToken(false).addOnSuccessListener(token -> network.execute(() -> {
             HttpURLConnection putConnection = null;
             try {
@@ -5046,7 +5048,8 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                 putConnection.setDoOutput(true);
                 putConnection.setRequestProperty("Authorization", "Bearer " + token.getToken());
                 putConnection.setRequestProperty("Content-Type", "application/json; charset=UTF-8");
-                String body = "{\"username\":\"" + escapeJson(username) + "\",\"full_name\":\"" + escapeJson(fullName) + "\",\"email\":\"" + escapeJson(email) + "\",\"mobile\":\"" + escapeJson(mobile) + "\",\"state\":\"" + escapeJson(state) + "\",\"city\":\"" + escapeJson(city) + "\",\"email_verified\":" + emailVerified + ",\"mobile_verified\":" + mobileVerified + "}";
+                String photoJson = profilePhotoUrl.isEmpty() ? "null" : "\"" + escapeJson(profilePhotoUrl) + "\"";
+                String body = "{\"username\":\"" + escapeJson(username) + "\",\"full_name\":\"" + escapeJson(fullName) + "\",\"email\":\"" + escapeJson(email) + "\",\"mobile\":\"" + escapeJson(mobile) + "\",\"state\":\"" + escapeJson(state) + "\",\"city\":\"" + escapeJson(city) + "\",\"profile_photo_url\":" + photoJson + ",\"email_verified\":" + emailVerified + ",\"mobile_verified\":" + mobileVerified + "}";
                 try (OutputStream output = putConnection.getOutputStream()) {
                     output.write(body.getBytes(StandardCharsets.UTF_8));
                 }
@@ -5349,6 +5352,10 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                         String mobile = profile.optString("mobile", account.getString("mobile", "")).trim();
                         String state = profile.optString("state", account.getString("state", "")).trim();
                         String city = profile.optString("city", account.getString("city", "")).trim();
+                        String photoUrl = profile.optString("profile_photo_url", account.getString("profile_image_url", "")).trim();
+                        if (photoUrl.isEmpty()) {
+                            photoUrl = profile.optString("image_url", "").trim();
+                        }
                         boolean emailVerified = profile.optBoolean("email_verified", account.getBoolean("email_verified", false));
                         boolean mobileVerified = profile.optBoolean("mobile_verified", account.getBoolean("mobile_verified", false));
 
@@ -5359,6 +5366,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                         if (!mobile.isEmpty()) editor.putString("mobile", mobile);
                         if (!state.isEmpty()) editor.putString("state", state);
                         if (!city.isEmpty()) editor.putString("city", city);
+                        if (!photoUrl.isEmpty()) editor.putString("profile_image_url", photoUrl);
                         if (emailVerified) editor.putBoolean("email_verified", true);
                         if (mobileVerified) editor.putBoolean("mobile_verified", true);
                         editor.apply();
