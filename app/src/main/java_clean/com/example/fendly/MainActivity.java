@@ -4779,12 +4779,28 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
     }
 
     private void loadCloudProfileImage(ImageView avatar) {
+        if (avatar == null) return;
         String imageUrl = getSharedPreferences("fendly_account", MODE_PRIVATE)
                 .getString("profile_image_url", "").trim();
         if (imageUrl.isEmpty()) return;
+
         avatar.clearColorFilter();
         avatar.setScaleType(ImageView.ScaleType.CENTER_CROP);
         avatar.setPadding(0, 0, 0, 0);
+
+        if (imageUrl.startsWith("data:image/") || (!imageUrl.startsWith("http://") && !imageUrl.startsWith("https://") && !imageUrl.startsWith("content://") && !imageUrl.startsWith("file://"))) {
+            try {
+                String cleanB64 = imageUrl.contains(",") ? imageUrl.substring(imageUrl.indexOf(",") + 1) : imageUrl;
+                byte[] decodedBytes = Base64.decode(cleanB64, Base64.DEFAULT);
+                Bitmap bitmap = BitmapFactory.decodeByteArray(decodedBytes, 0, decodedBytes.length);
+                if (bitmap != null) {
+                    avatar.setImageBitmap(bitmap);
+                    return;
+                }
+            } catch (Exception ignored) {
+            }
+        }
+
         Glide.with(this)
                 .load(imageUrl)
                 .placeholder(R.drawable.ic_field_person)
@@ -5400,6 +5416,16 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                         String cloudEmail = document.getString("email");
                         String cloudMobile = document.getString("mobile");
                         String fullName = document.getString("full_name");
+                        String cloudFirstName = document.getString("first_name");
+                        if (cloudFirstName == null) cloudFirstName = document.getString("profile_first_name");
+                        String cloudSurname = document.getString("surname");
+                        if (cloudSurname == null) cloudSurname = document.getString("profile_surname");
+                        String cloudState = document.getString("state");
+                        String cloudCity = document.getString("city");
+                        String cloudImage = document.getString("imageUrl");
+                        if (cloudImage == null || cloudImage.trim().isEmpty()) {
+                            cloudImage = document.getString("profile_image_url");
+                        }
 
                         if (isVerified) editor.putBoolean("email_verified", true);
                         if (mobileVerified) editor.putBoolean("mobile_verified", true);
@@ -5411,6 +5437,21 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                         }
                         if (fullName != null && !fullName.trim().isEmpty()) {
                             editor.putString("full_name", fullName.trim());
+                        }
+                        if (cloudFirstName != null && !cloudFirstName.trim().isEmpty()) {
+                            editor.putString("profile_first_name", cloudFirstName.trim());
+                        }
+                        if (cloudSurname != null && !cloudSurname.trim().isEmpty()) {
+                            editor.putString("profile_surname", cloudSurname.trim());
+                        }
+                        if (cloudState != null && !cloudState.trim().isEmpty()) {
+                            editor.putString("state", cloudState.trim());
+                        }
+                        if (cloudCity != null && !cloudCity.trim().isEmpty()) {
+                            editor.putString("city", cloudCity.trim());
+                        }
+                        if (cloudImage != null && !cloudImage.trim().isEmpty()) {
+                            editor.putString("profile_image_url", cloudImage.trim());
                         }
                     }
                     editor.apply();
@@ -5502,17 +5543,20 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         }
 
         boolean hasCustomPhoto = false;
+        String cloudImageUrl = account.getString("profile_image_url", "").trim();
         String savedProfileUri = account.getString("profile_image_uri", null);
-        if (savedProfileUri != null && !savedProfileUri.trim().isEmpty()
-                && setImageFromUri(avatar, Uri.parse(savedProfileUri))) {
-            hasCustomPhoto = true;
-        }
+
         if (selectedProfileImage != null) {
             if (setImageFromUri(avatar, selectedProfileImage)) hasCustomPhoto = true;
-        }
-        if (capturedProfileImage != null) {
+        } else if (capturedProfileImage != null) {
             hasCustomPhoto = true;
             avatar.setImageBitmap(capturedProfileImage);
+        } else if (!cloudImageUrl.isEmpty()) {
+            loadCloudProfileImage(avatar);
+            hasCustomPhoto = true;
+        } else if (savedProfileUri != null && !savedProfileUri.trim().isEmpty()
+                && setImageFromUri(avatar, Uri.parse(savedProfileUri))) {
+            hasCustomPhoto = true;
         }
 
         if (hasCustomPhoto) {
