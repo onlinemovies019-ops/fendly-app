@@ -91,6 +91,7 @@ async def send_otp(payload: SendOTPRequest):
 
             if data.get("Status") == "Success":
                 return {
+                    "success": True,
                     "status": "success",
                     "session_id": data.get("Details"),
                     "message": "OTP sent successfully via 2Factor"
@@ -99,12 +100,14 @@ async def send_otp(payload: SendOTPRequest):
                 detail_msg = data.get("Details", data.get("Message", "Failed to send OTP"))
                 print(f"-> 2Factor Rejected OTP Request: {detail_msg}", flush=True)
                 return {
+                    "success": False,
                     "status": "error",
                     "message": f"2Factor: {detail_msg}"
                 }
         except Exception as e:
             print(f"-> 2Factor Exception: {e}", flush=True)
             return {
+                "success": False,
                 "status": "error",
                 "message": f"2Factor Error: {str(e)}"
             }
@@ -113,6 +116,7 @@ async def send_otp(payload: SendOTPRequest):
 async def verify_otp(payload: VerifyOTPRequest):
     if not TWO_FACTOR_API_KEY or TWO_FACTOR_API_KEY == "your_2factor_api_key":
         return {
+            "success": False,
             "status": "error",
             "message": "TWO_FACTOR_API_KEY is not configured in Render Environment Variables"
         }
@@ -129,16 +133,22 @@ async def verify_otp(payload: VerifyOTPRequest):
             if data.get("Status") == "Success" and (
                 data.get("Details") == "OTP Matched" or "Matched" in str(data.get("Details"))
             ):
-                return {"status": "success", "message": "OTP verified successfully"}
+                return {
+                    "success": True,
+                    "status": "success",
+                    "message": "OTP verified successfully"
+                }
             else:
                 detail_msg = data.get("Details", "Invalid or expired OTP")
                 return {
+                    "success": False,
                     "status": "error",
                     "message": f"2Factor: {detail_msg}"
                 }
         except Exception as e:
             print(f"-> 2Factor Verify Exception: {e}", flush=True)
             return {
+                "success": False,
                 "status": "error",
                 "message": f"Verification Error: {str(e)}"
             }
@@ -175,7 +185,7 @@ async def send_email_otp(payload: EmailOTPRequest):
         )
         with urllib.request.urlopen(req, timeout=10.0) as resp:
             if resp.status in [200, 201]:
-                return {"status": "success", "message": "Email OTP sent successfully"}
+                return {"success": True, "status": "success", "message": "Email OTP sent successfully"}
             else:
                 raise HTTPException(
                     status_code=resp.status,
