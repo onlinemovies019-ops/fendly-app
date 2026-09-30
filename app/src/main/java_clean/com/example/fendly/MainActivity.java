@@ -3006,6 +3006,34 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                     lastSubmissionError = "image storage unavailable";
                 }
             }
+
+            FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
+            if (user != null) {
+                String collectionName = "FOUND".equals(type) ? "found_items" : "lost_items";
+                String username = getProfileDocumentKey();
+                String reportId = "rep_" + System.currentTimeMillis() + "_" + (new Random().nextInt(9000) + 1000);
+                Map<String, Object> reportDoc = new LinkedHashMap<>();
+                reportDoc.put("id", reportId);
+                reportDoc.put("type", type);
+                reportDoc.put("title", title);
+                reportDoc.put("description", description);
+                reportDoc.put("report_location", location);
+                reportDoc.put("report_date", date);
+                reportDoc.put("latitude", latitude);
+                reportDoc.put("longitude", longitude);
+                reportDoc.put("image_url", imageUrl);
+                reportDoc.put("user_id", user.getUid());
+                reportDoc.put("created_by", user.getUid());
+                reportDoc.put("uid", user.getUid());
+                reportDoc.put("username", username);
+                reportDoc.put("created_by_username", username);
+                reportDoc.put("edit_count", 0);
+                reportDoc.put("created_at", new Date());
+
+                FirebaseFirestore.getInstance().collection(collectionName).document(reportId)
+                        .set(reportDoc, SetOptions.merge());
+            }
+
             connection = (HttpURLConnection) new URL(endpoint).openConnection();
             connection.setRequestMethod("POST");
             connection.setConnectTimeout(60000);
@@ -3218,6 +3246,25 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
     }
 
     private int putItem(String type, String id, String title, String description, String location, String date, String imageUrl, String idToken) {
+        FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
+        if (user != null && id != null && !id.trim().isEmpty()) {
+            String collectionName = "FOUND".equalsIgnoreCase(type) ? "found_items" : "lost_items";
+            String username = getProfileDocumentKey();
+            Map<String, Object> reportDoc = new LinkedHashMap<>();
+            reportDoc.put("title", title);
+            reportDoc.put("description", description);
+            reportDoc.put("report_location", location);
+            reportDoc.put("report_date", date);
+            if (imageUrl != null) reportDoc.put("image_url", imageUrl);
+            reportDoc.put("user_id", user.getUid());
+            reportDoc.put("created_by", user.getUid());
+            reportDoc.put("username", username);
+            reportDoc.put("created_by_username", username);
+
+            FirebaseFirestore.getInstance().collection(collectionName).document(id)
+                    .set(reportDoc, SetOptions.merge());
+        }
+
         HttpURLConnection connection = null;
         try {
             String endpoint = API_BASE + "/api/items/" + type.toLowerCase(Locale.US) + "/" + id;
@@ -4301,17 +4348,22 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                     }
                 }
 
+                String currentUsername = getProfileDocumentKey();
                 Task<QuerySnapshot> f1 = db.collection("found_items").whereEqualTo("user_id", currentUid).get();
                 Task<QuerySnapshot> f2 = db.collection("found_items").whereEqualTo("created_by", currentUid).get();
                 Task<QuerySnapshot> f3 = db.collection("found_items").whereEqualTo("uid", currentUid).get();
                 Task<QuerySnapshot> f4 = db.collection("found_items").whereEqualTo("userId", currentUid).get();
+                Task<QuerySnapshot> f5 = db.collection("found_items").whereEqualTo("username", currentUsername).get();
+                Task<QuerySnapshot> f6 = db.collection("found_items").whereEqualTo("created_by_username", currentUsername).get();
 
                 Task<QuerySnapshot> l1 = db.collection("lost_items").whereEqualTo("user_id", currentUid).get();
                 Task<QuerySnapshot> l2 = db.collection("lost_items").whereEqualTo("created_by", currentUid).get();
                 Task<QuerySnapshot> l3 = db.collection("lost_items").whereEqualTo("uid", currentUid).get();
                 Task<QuerySnapshot> l4 = db.collection("lost_items").whereEqualTo("userId", currentUid).get();
+                Task<QuerySnapshot> l5 = db.collection("lost_items").whereEqualTo("username", currentUsername).get();
+                Task<QuerySnapshot> l6 = db.collection("lost_items").whereEqualTo("created_by_username", currentUsername).get();
 
-                Tasks.whenAllComplete(f1, f2, f3, f4, l1, l2, l3, l4).addOnCompleteListener(firestoreTask -> {
+                Tasks.whenAllComplete(f1, f2, f3, f4, f5, f6, l1, l2, l3, l4, l5, l6).addOnCompleteListener(firestoreTask -> {
                     List<JSONObject> firestoreReports = new ArrayList<>();
                     try {
                         List<DocumentSnapshot> foundDocs = new ArrayList<>();
@@ -4320,11 +4372,15 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                         if (f2.isSuccessful() && f2.getResult() != null) foundDocs.addAll(f2.getResult().getDocuments());
                         if (f3.isSuccessful() && f3.getResult() != null) foundDocs.addAll(f3.getResult().getDocuments());
                         if (f4.isSuccessful() && f4.getResult() != null) foundDocs.addAll(f4.getResult().getDocuments());
+                        if (f5.isSuccessful() && f5.getResult() != null) foundDocs.addAll(f5.getResult().getDocuments());
+                        if (f6.isSuccessful() && f6.getResult() != null) foundDocs.addAll(f6.getResult().getDocuments());
 
                         if (l1.isSuccessful() && l1.getResult() != null) lostDocs.addAll(l1.getResult().getDocuments());
                         if (l2.isSuccessful() && l2.getResult() != null) lostDocs.addAll(l2.getResult().getDocuments());
                         if (l3.isSuccessful() && l3.getResult() != null) lostDocs.addAll(l3.getResult().getDocuments());
                         if (l4.isSuccessful() && l4.getResult() != null) lostDocs.addAll(l4.getResult().getDocuments());
+                        if (l5.isSuccessful() && l5.getResult() != null) lostDocs.addAll(l5.getResult().getDocuments());
+                        if (l6.isSuccessful() && l6.getResult() != null) lostDocs.addAll(l6.getResult().getDocuments());
 
                         Map<String, DocumentSnapshot> uniqueFound = new LinkedHashMap<>();
                         for (DocumentSnapshot doc : foundDocs) uniqueFound.put(doc.getId(), doc);
@@ -4468,6 +4524,10 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
     }
 
     private int deleteItem(String type, String id, String idToken) {
+        if (id != null && !id.trim().isEmpty()) {
+            String collectionName = "FOUND".equalsIgnoreCase(type) ? "found_items" : "lost_items";
+            FirebaseFirestore.getInstance().collection(collectionName).document(id).delete();
+        }
         HttpURLConnection connection = null;
         try {
             connection = (HttpURLConnection) new URL(API_BASE + "/api/items/" + type.toLowerCase(Locale.US) + "/" + id).openConnection();
