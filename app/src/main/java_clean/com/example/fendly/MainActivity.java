@@ -1572,7 +1572,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                 payload.put("session_id", sessionId);
                 payload.put("otp", otpValue);
                 JSONObject response = postJson("/api/auth/verify-otp", payload.toString(), null);
-                boolean verified = response != null && response.optBoolean("success", false);
+                boolean verified = response != null && (response.optBoolean("success", false) || "success".equalsIgnoreCase(response.optString("status", "")));
                 runOnUiThread(() -> {
                     if (verified) {
                         if (dialog != null && dialog.isShowing()) {
@@ -2121,7 +2121,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                 payload.put("session_id", phoneVerificationId);
                 payload.put("otp", otpValue);
                 JSONObject response = postJson("/api/auth/verify-otp", payload.toString(), null);
-                boolean verified = response != null && response.optBoolean("success", false);
+                boolean verified = response != null && (response.optBoolean("success", false) || "success".equalsIgnoreCase(response.optString("status", "")));
                 runOnUiThread(() -> {
                     if (verified) {
                         if (dialog != null && dialog.isShowing()) {
@@ -3834,7 +3834,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                 payload.put("otp", otpValue);
                 JSONObject response = postJson("/api/auth/verify-otp", payload.toString(), null);
                 if (response != null) {
-                    verified = response.optBoolean("success", false);
+                    verified = response.optBoolean("success", false) || "success".equalsIgnoreCase(response.optString("status", ""));
                 }
             } catch (Exception ignored) {
             }
