@@ -7253,7 +7253,14 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         return GOLD;
     }
 
+    private void removeParent(View v) {
+        if (v != null && v.getParent() instanceof ViewGroup) {
+            ((ViewGroup) v.getParent()).removeView(v);
+        }
+    }
+
     private void addAppControls(LinearLayout parent, boolean authScreen) {
+        removeParent(parent);
         LinearLayout controls = new LinearLayout(this);
         controls.setGravity(Gravity.CENTER_VERTICAL);
 
