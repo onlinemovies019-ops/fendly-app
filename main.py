@@ -3,7 +3,7 @@ import json
 import urllib.request
 import urllib.parse
 from contextlib import asynccontextmanager
-
+import logging
 from fastapi import Depends, FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -124,7 +124,7 @@ async def lifespan(_: FastAPI):
     yield
 
 
-app = FastAPI(title="Fendly API", version="1.0.0", lifespan=lifespan)
+app = FastAPI(title="Fendly API")
 
 app.add_middleware(
     CORSMiddleware,
@@ -270,6 +270,16 @@ app.include_router(auth_router)
 @app.get("/health")
 def health_check():
     return {"status": "ok"}
+
+# Print all registered routes when Uvicorn starts
+@app.on_event("startup")
+async def show_routes():
+    print("=== REGISTERED ROUTES ===")
+    for route in app.routes:
+        methods = getattr(route, "methods", None)
+        method_str = f"[{','.join(methods)}]" if methods else ""
+        print(f"ROUTE -> {route.path} {method_str}")
+    print("=========================")
 
 
 @app.get("/user/me")
