@@ -64,10 +64,10 @@ async def send_otp(payload: SendOTPRequest):
     print(f"-> RECEIVED /api/auth/send-otp with phone: {payload.phone_number}", flush=True)
     if not TWO_FACTOR_API_KEY or TWO_FACTOR_API_KEY == "your_2factor_api_key":
         print("-> ERROR: TWO_FACTOR_API_KEY is missing or unconfigured in environment!", flush=True)
-        return {
-            "status": "error",
-            "message": "TWO_FACTOR_API_KEY is not configured in Render Environment Variables. Please set TWO_FACTOR_API_KEY on Render."
-        }
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="TWO_FACTOR_API_KEY is not configured in Render Environment Variables."
+        )
 
     raw_phone = payload.phone_number.replace(" ", "").replace("-", "").replace("+", "")
     if len(raw_phone) > 10 and raw_phone.startswith("91"):
@@ -100,29 +100,27 @@ async def send_otp(payload: SendOTPRequest):
             else:
                 detail_msg = data.get("Details", data.get("Message", "Failed to send OTP"))
                 print(f"-> 2Factor Rejected OTP Request: {detail_msg}", flush=True)
-                return {
-                    "success": False,
-                    "status": "error",
-                    "message": f"2Factor: {detail_msg}"
-                }
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"2Factor: {detail_msg}"
+                )
+        except HTTPException as he:
+            raise he
         except Exception as e:
             print(f"-> 2Factor Exception: {e}", flush=True)
-            return {
-                "success": False,
-                "status": "error",
-                "message": f"2Factor Error: {str(e)}"
-            }
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"2Factor Error: {str(e)}"
+            )
 
 @router.post("/verify-otp")
 async def verify_otp(payload: VerifyOTPRequest):
     print(f"-> RECEIVED /api/auth/verify-otp with session_id: {payload.session_id}, otp: {payload.otp}", flush=True)
     if not TWO_FACTOR_API_KEY or TWO_FACTOR_API_KEY == "your_2factor_api_key":
-        print("-> ERROR: TWO_FACTOR_API_KEY not configured for verify", flush=True)
-        return {
-            "success": False,
-            "status": "error",
-            "message": "TWO_FACTOR_API_KEY is not configured in Render Environment Variables"
-        }
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="TWO_FACTOR_API_KEY is not configured in Render Environment Variables"
+        )
 
     url = f"https://2factor.in/API/V1/{TWO_FACTOR_API_KEY}/SMS/VERIFY/{payload.session_id}/{payload.otp}"
     print(f"-> Calling 2Factor Verify URL: {url.replace(TWO_FACTOR_API_KEY, 'REDACTED')}", flush=True)
@@ -148,34 +146,29 @@ async def verify_otp(payload: VerifyOTPRequest):
             else:
                 detail_msg = data.get("Details", "Invalid or expired OTP")
                 print(f"-> 2Factor Verify REJECTED: {detail_msg}", flush=True)
-                return {
-                    "success": False,
-                    "status": "error",
-                    "message": f"2Factor: {detail_msg}"
-                }
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"2Factor: {detail_msg}"
+                )
+        except HTTPException as he:
+            raise he
         except Exception as e:
             print(f"-> 2Factor Verify Exception: {e}", flush=True)
-            return {
-                "success": False,
-                "status": "error",
-                "message": f"Verification Error: {str(e)}"
-            }
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Verification Error: {str(e)}"
+            )
 
 @router.post("/send-email-otp")
 async def send_email_otp(payload: EmailOTPRequest):
+    if not RESEND_API_KEY or RESEND_API_KEY == "your_resend_api_key":
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="RESEND_API_KEY is not configured in Render Environment Variables."
+        )
+
     otp = f"{random.randint(100000, 999999)}"
     print(f"-> RECEIVED /api/auth/send-email-otp for email: {payload.email}, generated otp: {otp}", flush=True)
-
-    response_data = {
-        "success": True,
-        "status": "success",
-        "debug_otp": otp,
-        "message": "Email OTP generated successfully"
-    }
-
-    if not RESEND_API_KEY or RESEND_API_KEY == "your_resend_api_key":
-        print(f"RESEND_API_KEY not configured. Returning debug_otp: {otp}", flush=True)
-        return response_data
 
     headers = {
         "Authorization": f"Bearer {RESEND_API_KEY}",
@@ -186,10 +179,12 @@ async def send_email_otp(payload: EmailOTPRequest):
         "to": [payload.email],
         "subject": "Your Fendly Verification Code",
         "html": f"""
-            <div style="font-family: Arial, sans-serif; padding: 20px;">
-                <h2>Fendly Verification Code</h2>
-                <p>Your OTP code is: <strong style="font-size: 24px; color: #4F46E5;">{otp}</strong></p>
-                <p>This code is valid for 10 minutes.</p>
+            <div style="font-family: Arial, sans-serif; padding: 20px; background-color: #f9f9f9; border-radius: 8px;">
+                <h2 style="color: #4F46E5;">Fendly Verification Code</h2>
+                <p>Hello,</p>
+                <p>Your verification code is:</p>
+                <div style="background-color: #ffffff; padding: 15px; border-radius: 6px; text-align: center; font-size: 28px; font-weight: bold; color: #111827; letter-spacing: 4px;">{otp}</div>
+                <p style="margin-top: 20px; color: #6B7280; font-size: 14px;">This code is valid for 10 minutes. If you did not request this, please ignore this email.</p>
             </div>
         """
     }
@@ -200,9 +195,21 @@ async def send_email_otp(payload: EmailOTPRequest):
             headers=headers,
             method="POST"
         )
-        with urllib.request.urlopen(req, timeout=10.0) as resp:
-            print(f"Resend API status: {resp.status}", flush=True)
-            return response_data
+        with urllib.request.urlopen(req, timeout=15.0) as resp:
+            response_text = resp.read().decode("utf-8")
+            print(f"Resend API Response: {response_text}", flush=True)
+            if resp.status in [200, 201]:
+                return {"success": True, "status": "success", "message": "Email OTP sent successfully via Resend"}
+            else:
+                raise HTTPException(
+                    status_code=resp.status,
+                    detail=f"Resend error: {response_text}"
+                )
+    except HTTPException as he:
+        raise he
     except Exception as e:
-        print(f"Resend error: {e}", flush=True)
-        return response_data
+        print(f"Resend error exception: {e}", flush=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to send email via Resend: {str(e)}"
+        )
