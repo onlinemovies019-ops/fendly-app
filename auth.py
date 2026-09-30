@@ -114,7 +114,9 @@ async def send_otp(payload: SendOTPRequest):
 
 @router.post("/verify-otp")
 async def verify_otp(payload: VerifyOTPRequest):
+    print(f"-> RECEIVED /api/auth/verify-otp with session_id: {payload.session_id}, otp: {payload.otp}", flush=True)
     if not TWO_FACTOR_API_KEY or TWO_FACTOR_API_KEY == "your_2factor_api_key":
+        print("-> ERROR: TWO_FACTOR_API_KEY not configured for verify", flush=True)
         return {
             "success": False,
             "status": "error",
@@ -127,11 +129,15 @@ async def verify_otp(payload: VerifyOTPRequest):
     async with httpx.AsyncClient() as client:
         try:
             response = await client.get(url, timeout=15.0)
-            data = response.json()
-            print(f"-> 2Factor Verify Response: {data}", flush=True)
+            print(f"-> 2Factor Verify HTTP Status: {response.status_code}", flush=True)
+            try:
+                data = response.json()
+            except Exception:
+                data = {"Status": "Error", "Details": f"Invalid JSON: {response.text}"}
+            print(f"-> 2Factor Verify JSON Response: {data}", flush=True)
 
             if data.get("Status") == "Success" and (
-                data.get("Details") == "OTP Matched" or "Matched" in str(data.get("Details"))
+                data.get("Details") == "OTP Matched" or "Matched" in str(data.get("Details")) or "Success" in str(data.get("Status"))
             ):
                 return {
                     "success": True,
@@ -140,6 +146,7 @@ async def verify_otp(payload: VerifyOTPRequest):
                 }
             else:
                 detail_msg = data.get("Details", "Invalid or expired OTP")
+                print(f"-> 2Factor Verify REJECTED: {detail_msg}", flush=True)
                 return {
                     "success": False,
                     "status": "error",
