@@ -1,5 +1,6 @@
 import os
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, status, Depends
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 import httpx
 from pydantic import BaseModel
 
@@ -7,12 +8,30 @@ router = APIRouter(prefix="/api/auth", tags=["Authentication"])
 
 TWO_FACTOR_API_KEY = os.getenv("TWO_FACTOR_API_KEY", "")
 
+security = HTTPBearer(auto_error=False)
+
+async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)):
+    """
+    Authentication dependency required by protected endpoints (e.g., in routers/items.py).
+    """
+    if not credentials:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authorization token missing or invalid",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    return {"token": credentials.credentials, "user": "authenticated_user"}
+
+# --- Schemas ---
+
 class SendOTPRequest(BaseModel):
     phone_number: str
 
 class VerifyOTPRequest(BaseModel):
     session_id: str
     otp: str
+
+# --- Endpoints ---
 
 @router.post("/send-otp")
 async def send_otp(payload: SendOTPRequest):
