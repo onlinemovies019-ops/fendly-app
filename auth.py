@@ -55,7 +55,6 @@ class VerifyOTPRequest(BaseModel):
 
 class EmailOTPRequest(BaseModel):
     email: EmailStr
-    otp: str | None = None
 
 # — Endpoints —
 
@@ -163,9 +162,8 @@ async def verify_otp(payload: VerifyOTPRequest):
 
 @router.post("/send-email-otp")
 async def send_email_otp(payload: EmailOTPRequest):
-    otp = payload.otp
-    if not otp or not otp.strip():
-        otp = f"{random.randint(100000, 999999)}"
+    otp = f"{random.randint(100000, 999999)}"
+    print(f"-> RECEIVED /api/auth/send-email-otp for email: {payload.email}, generated otp: {otp}", flush=True)
 
     if not RESEND_API_KEY or RESEND_API_KEY == "your_resend_api_key":
         print(f"RESEND_API_KEY not configured. Returning debug_otp: {otp}", flush=True)
