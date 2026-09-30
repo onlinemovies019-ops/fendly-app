@@ -258,6 +258,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
     private EditText visibleSurname;
     private EditText visibleEmail;
     private TextView visibleEmailVerify;
+    private ImageView visibleAvatar;
     private EditText[] visibleMobileCells;
     private final Handler realtimeProfileHandler = new Handler(Looper.getMainLooper());
     private Runnable realtimeProfileSave;
@@ -911,6 +912,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         visibleSurname = null;
         visibleEmail = null;
         visibleMobileCells = null;
+        visibleAvatar = null;
     }
 
     private void saveProfileDrafts() {
@@ -4647,7 +4649,11 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                         putIfPresent(editor, "mobile", document.getString("mobile"));
                         putIfPresent(editor, "state", document.getString("state"));
                         putIfPresent(editor, "city", document.getString("city"));
-                        putIfPresent(editor, "profile_image_url", document.getString("imageUrl"));
+                        String cloudImage = document.getString("imageUrl");
+                        if (cloudImage == null || cloudImage.trim().isEmpty()) {
+                            cloudImage = document.getString("profile_image_url");
+                        }
+                        putIfPresent(editor, "profile_image_url", cloudImage);
 
                         boolean cloudEmailVerified = parseBooleanValue(document.get("emailVerified"))
                                 || parseBooleanValue(document.get("isEmailVerified"))
@@ -4678,6 +4684,9 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                         }
                         editor.putBoolean("mobile_verified", mobileVerifiedFinal);
                         editor.apply();
+                        if (visibleAvatar != null) {
+                            runOnUiThread(() -> loadCloudProfileImage(visibleAvatar));
+                        }
                     }
                     cloudProfileLoaded = true;
                     cloudProfileHydrationInFlight = false;
@@ -5542,6 +5551,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             avatar.setClipToOutline(true);
         }
 
+        visibleAvatar = avatar;
         boolean hasCustomPhoto = false;
         String cloudImageUrl = account.getString("profile_image_url", "").trim();
         String savedProfileUri = account.getString("profile_image_uri", null);
