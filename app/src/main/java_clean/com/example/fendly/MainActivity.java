@@ -3353,17 +3353,46 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         if (hasPicture) {
             new AlertDialog.Builder(this)
                     .setTitle(translate("Profile photo"))
-                    .setItems(new String[]{translate("See profile picture"), translate("Choose profile picture")}, (dialog, which) -> {
+                    .setItems(new String[]{translate("See profile picture"), translate("Choose profile picture"), translate("Remove profile picture")}, (dialog, which) -> {
                         if (which == 0) {
                             showEnlargedProfilePicture();
-                        } else {
+                        } else if (which == 1) {
                             showChoosePhotoSourceOptions();
+                        } else {
+                            removeProfilePicture();
                         }
                     })
                     .show();
         } else {
             showChoosePhotoSourceOptions();
         }
+    }
+
+    private void removeProfilePicture() {
+        selectedProfileImage = null;
+        capturedProfileImage = null;
+        SharedPreferences account = getSharedPreferences("fendly_account", MODE_PRIVATE);
+        account.edit()
+                .remove("profile_image_uri")
+                .remove("profile_image_url")
+                .apply();
+
+        FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
+        if (user != null) {
+            Map<String, Object> update = new LinkedHashMap<>();
+            update.put("imageUrl", "");
+            update.put("profile_image_url", "");
+            update.put("profile_photo_url", "");
+            FirebaseFirestore db = FirebaseFirestore.getInstance();
+            String docKey = getProfileDocumentKey();
+            db.collection("users").document(docKey).set(update, SetOptions.merge());
+            if (!user.getUid().equals(docKey)) {
+                db.collection("users").document(user.getUid()).set(update, SetOptions.merge());
+            }
+            syncProfileToBackendApi(account.getString("username", ""), account.getString("full_name", ""), account.getString("email", ""), account.getString("mobile", ""), account.getString("state", ""), account.getString("city", ""));
+        }
+        if (currentPage == PAGE_PROFILE) showProfile();
+        Toast.makeText(this, translate("Profile picture removed"), Toast.LENGTH_SHORT).show();
     }
 
     private void showChoosePhotoSourceOptions() {
@@ -5524,12 +5553,17 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                                     String remoteEmail = profile.optString("email", "").trim();
                                     String remoteMobile = profile.optString("mobile", "").trim();
                                     String remoteFullName = profile.optString("full_name", "").trim();
+                                    String remotePhotoUrl = profile.optString("profile_photo_url", "").trim();
+                                    if (remotePhotoUrl.isEmpty()) {
+                                        remotePhotoUrl = profile.optString("image_url", "").trim();
+                                    }
                                     SharedPreferences.Editor backendEditor = account.edit();
                                     if (remoteEmailVerified) backendEditor.putBoolean("email_verified", true);
                                     if (remoteMobileVerified) backendEditor.putBoolean("mobile_verified", true);
                                     if (!remoteEmail.isEmpty() && !remoteEmail.endsWith("@login.fendly.app")) backendEditor.putString("email", remoteEmail);
                                     if (!remoteMobile.isEmpty()) backendEditor.putString("mobile", remoteMobile);
                                     if (!remoteFullName.isEmpty()) backendEditor.putString("full_name", remoteFullName);
+                                    if (!remotePhotoUrl.isEmpty()) backendEditor.putString("profile_image_url", remotePhotoUrl);
                                     backendEditor.apply();
                                 }
                             }
