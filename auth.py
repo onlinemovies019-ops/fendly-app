@@ -117,10 +117,12 @@ async def send_otp(payload: SendOTPRequest):
 async def verify_otp(payload: VerifyOTPRequest):
     print(f"-> RECEIVED /api/auth/verify-otp with session_id: {payload.session_id}, otp: {payload.otp}", flush=True)
     if not TWO_FACTOR_API_KEY or TWO_FACTOR_API_KEY == "your_2factor_api_key":
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="TWO_FACTOR_API_KEY is not configured in Render Environment Variables"
-        )
+        print("-> ERROR: TWO_FACTOR_API_KEY not configured for verify", flush=True)
+        return {
+            "success": False,
+            "status": "error",
+            "message": "TWO_FACTOR_API_KEY is not configured in Render Environment Variables"
+        }
 
     url = f"https://2factor.in/API/V1/{TWO_FACTOR_API_KEY}/SMS/VERIFY/{payload.session_id}/{payload.otp}"
     print(f"-> Calling 2Factor Verify URL: {url.replace(TWO_FACTOR_API_KEY, 'REDACTED')}", flush=True)
@@ -188,28 +190,29 @@ async def send_email_otp(payload: EmailOTPRequest):
             </div>
         """
     }
-    try:
-        req = urllib.request.Request(
-            "https://api.resend.com/emails",
-            data=json.dumps(email_body).encode("utf-8"),
-            headers=headers,
-            method="POST"
-        )
-        with urllib.request.urlopen(req, timeout=15.0) as resp:
-            response_text = resp.read().decode("utf-8")
-            print(f"Resend API Response: {response_text}", flush=True)
-            if resp.status in [200, 201]:
+    async with httpx.AsyncClient() as client:
+        try:
+            response = await client.post(
+                "https://api.resend.com/emails",
+                json=email_body,
+                headers=headers,
+                timeout=15.0
+            )
+            print(f"Resend HTTP Status: {response.status_code}", flush=True)
+            print(f"Resend Response Body: {response.text}", flush=True)
+
+            if response.status_code in [200, 201]:
                 return {"success": True, "status": "success", "message": "Email OTP sent successfully via Resend"}
             else:
                 raise HTTPException(
-                    status_code=resp.status,
-                    detail=f"Resend error: {response_text}"
+                    status_code=response.status_code,
+                    detail=f"Resend error: {response.text}"
                 )
-    except HTTPException as he:
-        raise he
-    except Exception as e:
-        print(f"Resend error exception: {e}", flush=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to send email via Resend: {str(e)}"
-        )
+        except HTTPException as he:
+            raise he
+        except Exception as e:
+            print(f"Resend error exception: {e}", flush=True)
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Failed to send email via Resend: {str(e)}"
+            )
