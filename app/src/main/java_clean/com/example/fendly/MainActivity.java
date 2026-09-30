@@ -7756,10 +7756,21 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         });
     }
 
+    @SuppressWarnings("deprecation")
     private void applyLiveFontScale(View view, float scale) {
-        Object originalSize = view.getTag();
-        if (view instanceof TextView && originalSize instanceof Float) {
-            ((TextView) view).setTextSize(((Float) originalSize) * scale);
+        if (view instanceof TextView) {
+            float baseSize = 14f;
+            Object originalSize = view.getTag();
+            if (originalSize instanceof Float) {
+                baseSize = (Float) originalSize;
+            } else {
+                float currentSize = ((TextView) view).getTextSize() / getResources().getDisplayMetrics().scaledDensity;
+                if (currentSize > 0) {
+                    baseSize = Math.max(10f, Math.min(28f, currentSize));
+                    view.setTag(Float.valueOf(baseSize));
+                }
+            }
+            ((TextView) view).setTextSize(baseSize * scale);
         }
         if (view instanceof ViewGroup) {
             ViewGroup group = (ViewGroup) view;
