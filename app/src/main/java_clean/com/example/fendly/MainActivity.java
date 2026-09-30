@@ -276,27 +276,35 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
     private final ExecutorService network = Executors.newSingleThreadExecutor();
     private volatile String lastSubmissionError;
 
-    private String getProfileDocumentKey() {
-        SharedPreferences account = getSharedPreferences("fendly_account", MODE_PRIVATE);
-        String username = account.getString("username", "").trim().toLowerCase(Locale.US);
+    private String normalizeDocumentKey(String rawUsername) {
+        if (rawUsername == null) return "";
+        String username = rawUsername.trim().toLowerCase(Locale.US);
         if (username.startsWith("@")) {
             username = username.substring(1);
         }
         username = username.replaceAll("[^a-z0-9_]", "_");
         username = username.replaceAll("_+", "_");
-        username = username.replaceAll("^_+|_+$", "");
+        return username.replaceAll("^_+|_+$", "");
+    }
 
-        if (username.isEmpty() || username.length() < 3) {
-            FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
-            if (user != null && user.getEmail() != null) {
-                String email = user.getEmail().trim().toLowerCase(Locale.US);
-                String base = email.replace("@login.fendly.app", "").replaceAll("[^a-z0-9_]", "_");
-                base = base.replaceAll("_+", "_").replaceAll("^_+|_+$", "");
-                if (!base.isEmpty()) return base;
-            }
-            return user != null ? user.getUid() : "anonymous";
+    private String getProfileDocumentKey() {
+        SharedPreferences account = getSharedPreferences("fendly_account", MODE_PRIVATE);
+        String username = normalizeDocumentKey(account.getString("username", ""));
+        if (!username.isEmpty() && username.length() >= 3) {
+            return username;
         }
-        return username;
+        FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
+        if (user != null) {
+            if (user.getEmail() != null) {
+                String email = user.getEmail().trim().toLowerCase(Locale.US);
+                String base = normalizeDocumentKey(email.replace("@login.fendly.app", ""));
+                if (!base.isEmpty() && base.length() >= 3) {
+                    return base;
+                }
+            }
+            return user.getUid();
+        }
+        return "anonymous";
     }
 
     @Override
