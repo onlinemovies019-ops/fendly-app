@@ -28,7 +28,6 @@ async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(s
         )
     token = credentials.credentials
     try:
-        # Attempt to decode JWT payload unverified to extract Firebase UID / sub / user_id
         parts = token.split(".")
         if len(parts) == 3:
             padding = '=' * (-len(parts[1]) % 4)
@@ -39,8 +38,6 @@ async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(s
                 return str(uid)
     except Exception:
         pass
-
-    # Fallback to returning the token string itself as the uid
     return str(token)
 
 # — Schemas —
@@ -75,43 +72,38 @@ async def send_otp(payload: SendOTPRequest):
         clean_phone = raw_phone
 
     url = f"https://2factor.in/API/V1/{TWO_FACTOR_API_KEY}/SMS/{clean_phone}/AUTOGEN"
-    print(f"Calling real 2Factor API URL: {url.replace(TWO_FACTOR_API_KEY, 'REDACTED')}")
+    print(f"Calling 2Factor API URL: {url.replace(TWO_FACTOR_API_KEY, 'REDACTED')}")
 
     async with httpx.AsyncClient() as client:
         try:
             response = await client.get(url, timeout=15.0)
-            print(f"2Factor HTTP Status Code: {response.status_code}")
+            print(f"2Factor HTTP Status: {response.status_code}")
             try:
                 data = response.json()
             except Exception:
-                data = {"Status": "Error", "Details": f"Invalid JSON response from 2Factor: {response.text}"}
-            print(f"2Factor API Real Response: {data}")
+                data = {"Status": "Error", "Details": f"Invalid JSON: {response.text}"}
+            print(f"2Factor JSON Response: {data}")
 
             if data.get("Status") == "Success":
                 return {
                     "status": "success",
                     "session_id": data.get("Details"),
-                    "message": "Real OTP sent successfully via 2Factor"
+                    "message": "OTP sent successfully via 2Factor"
                 }
             else:
-                detail_msg = data.get("Details", data.get("Message", "Failed to send OTP via 2Factor"))
+                detail_msg = data.get("Details", data.get("Message", "Failed to send OTP"))
+                print(f"2Factor Rejected OTP Request: {detail_msg}")
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=f"2Factor API error: {detail_msg}"
+                    detail=f"2Factor: {detail_msg}"
                 )
         except HTTPException as he:
             raise he
-        except httpx.HTTPError as he:
-            print(f"2Factor HTTP Error: {he}")
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"2Factor network error: {str(he)}"
-            )
         except Exception as e:
-            print(f"2Factor Error: {e}")
+            print(f"2Factor Exception: {e}")
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"2Factor SMS error: {str(e)}"
+                detail=f"2Factor Error: {str(e)}"
             )
 
 @router.post("/verify-otp")
@@ -123,13 +115,13 @@ async def verify_otp(payload: VerifyOTPRequest):
         )
 
     url = f"https://2factor.in/API/V1/{TWO_FACTOR_API_KEY}/SMS/VERIFY/{payload.session_id}/{payload.otp}"
-    print(f"Calling real 2Factor Verify URL: {url.replace(TWO_FACTOR_API_KEY, 'REDACTED')}")
+    print(f"Calling 2Factor Verify URL: {url.replace(TWO_FACTOR_API_KEY, 'REDACTED')}")
 
     async with httpx.AsyncClient() as client:
         try:
             response = await client.get(url, timeout=15.0)
             data = response.json()
-            print(f"2Factor Verify Real Response: {data}")
+            print(f"2Factor Verify Response: {data}")
 
             if data.get("Status") == "Success" and (
                 data.get("Details") == "OTP Matched" or "Matched" in str(data.get("Details"))
@@ -139,7 +131,7 @@ async def verify_otp(payload: VerifyOTPRequest):
                 detail_msg = data.get("Details", "Invalid or expired OTP")
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=f"2Factor verification error: {detail_msg}"
+                    detail=f"2Factor: {detail_msg}"
                 )
         except HTTPException as he:
             raise he
@@ -147,7 +139,7 @@ async def verify_otp(payload: VerifyOTPRequest):
             print(f"2Factor Verify Exception: {e}")
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Verification failed: {str(e)}"
+                detail=f"Verification Error: {str(e)}"
             )
 
 @router.post("/send-email-otp")
