@@ -3826,69 +3826,55 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
 
     private void verifyBackendMobileOtp(String sessionId, String otpValue, String mobileValue, EditText mobile, TextView verifyButton,
                                          Dialog dialog, TextView verifyInDialog, EditText[] codeCells) {
-        FirebaseUser currentUser = FirebaseAuth.getInstance().getCurrentUser();
-        if (currentUser == null) {
-            verifyButton.setText(translate("Enter OTP"));
-            verifyButton.setEnabled(true);
-            return;
-        }
-
-        currentUser.getIdToken(false).addOnSuccessListener(tokenResult -> {
-            String idToken = tokenResult != null ? tokenResult.getToken() : null;
-            network.execute(() -> {
-                boolean verified = false;
-                try {
-                    JSONObject payload = new JSONObject();
-                    payload.put("session_id", sessionId);
-                    payload.put("otp", otpValue);
-                    JSONObject response = postJson("/api/auth/verify-otp", payload.toString(), idToken);
-                    if (response != null) {
-                        verified = response.optBoolean("success", false);
-                    }
-                } catch (Exception ignored) {
+        network.execute(() -> {
+            boolean verified = false;
+            try {
+                JSONObject payload = new JSONObject();
+                payload.put("session_id", sessionId);
+                payload.put("otp", otpValue);
+                JSONObject response = postJson("/api/auth/verify-otp", payload.toString(), null);
+                if (response != null) {
+                    verified = response.optBoolean("success", false);
                 }
+            } catch (Exception ignored) {
+            }
 
-                final boolean finalVerified = verified;
-                runOnUiThread(() -> {
-                    if (finalVerified) {
-                        if (dialog != null && dialog.isShowing()) {
-                            dialog.dismiss();
-                        }
-                        getSharedPreferences("fendly_account", MODE_PRIVATE).edit()
-                                .putString("mobile", mobileValue)
-                                .putBoolean("mobile_verified", true)
-                                .apply();
-                        saveVerifiedMobileToCloud(mobileValue);
-                        lockVerifiedMobileField(mobile, verifyButton);
-                        mobile.setText(mobileValue);
-                        Toast.makeText(this, "Mobile verified", Toast.LENGTH_SHORT).show();
-                    } else {
-                        if (verifyInDialog != null) {
-                            verifyInDialog.setText(translate("Verify"));
-                            verifyInDialog.setEnabled(true);
-                        }
-                        if (codeCells != null) {
-                            for (EditText cell : codeCells) {
-                                if (cell != null) cell.setText("");
-                            }
-                            if (codeCells.length > 0 && codeCells[0] != null) {
-                                codeCells[0].requestFocus();
-                            }
-                        }
-                        verifyButton.setText(translate("Enter OTP"));
-                        verifyButton.setEnabled(true);
-                        verifyButton.setClickable(true);
-                        verifyButton.setFocusable(true);
-                        verifyButton.setBackground(round(GOLD, 24));
-                        verifyButton.setTextColor(GOLD_ON);
-                        verifyButton.setTextColor(GOLD_ON);
-                        Toast.makeText(this, "Could not verify mobile. Check the code and try again.", Toast.LENGTH_LONG).show();
+            final boolean finalVerified = verified;
+            runOnUiThread(() -> {
+                if (finalVerified) {
+                    if (dialog != null && dialog.isShowing()) {
+                        dialog.dismiss();
                     }
-                });
+                    getSharedPreferences("fendly_account", MODE_PRIVATE).edit()
+                            .putString("mobile", mobileValue)
+                            .putBoolean("mobile_verified", true)
+                            .apply();
+                    saveVerifiedMobileToCloud(mobileValue);
+                    lockVerifiedMobileField(mobile, verifyButton);
+                    mobile.setText(mobileValue);
+                    Toast.makeText(this, "Mobile verified", Toast.LENGTH_SHORT).show();
+                } else {
+                    if (verifyInDialog != null) {
+                        verifyInDialog.setText(translate("Verify"));
+                        verifyInDialog.setEnabled(true);
+                    }
+                    if (codeCells != null) {
+                        for (EditText cell : codeCells) {
+                            if (cell != null) cell.setText("");
+                        }
+                        if (codeCells.length > 0 && codeCells[0] != null) {
+                            codeCells[0].requestFocus();
+                        }
+                    }
+                    verifyButton.setText(translate("Enter OTP"));
+                    verifyButton.setEnabled(true);
+                    verifyButton.setClickable(true);
+                    verifyButton.setFocusable(true);
+                    verifyButton.setBackground(round(GOLD, 24));
+                    verifyButton.setTextColor(GOLD_ON);
+                    Toast.makeText(this, "Could not verify mobile. Check the code and try again.", Toast.LENGTH_LONG).show();
+                }
             });
-        }).addOnFailureListener(e -> {
-            verifyButton.setText(translate("Enter OTP"));
-            verifyButton.setEnabled(true);
         });
     }
 
