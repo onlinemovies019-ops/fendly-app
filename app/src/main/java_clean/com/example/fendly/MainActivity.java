@@ -4768,18 +4768,29 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             return;
         }
 
+        SharedPreferences account = getSharedPreferences("fendly_account", MODE_PRIVATE);
+        String fn = account.getString("profile_first_name", "");
+        String sn = account.getString("profile_surname", "");
+        if (fn.isEmpty() || sn.isEmpty()) {
+            String[] parts = fullName.split("\\s+", 2);
+            if (fn.isEmpty() && parts.length > 0) fn = parts[0];
+            if (sn.isEmpty() && parts.length > 1) sn = parts[1];
+        }
+
         Map<String, Object> profile = new LinkedHashMap<>();
         profile.put("uid", user.getUid());
         profile.put("username", username);
         profile.put("full_name", fullName);
+        profile.put("first_name", fn);
+        profile.put("surname", sn);
+        profile.put("profile_first_name", fn);
+        profile.put("profile_surname", sn);
         profile.put("email", email);
         profile.put("mobile", mobile);
         profile.put("state", state);
         profile.put("city", city);
-        boolean emailVerified = getSharedPreferences("fendly_account", MODE_PRIVATE)
-            .getBoolean("email_verified", false);
-        boolean mobileVerified = getSharedPreferences("fendly_account", MODE_PRIVATE)
-            .getBoolean("mobile_verified", false);
+        boolean emailVerified = account.getBoolean("email_verified", false);
+        boolean mobileVerified = account.getBoolean("mobile_verified", false);
         profile.put("emailVerified", emailVerified);
         profile.put("isEmailVerified", emailVerified);
         profile.put("email_verified", emailVerified);
@@ -4787,26 +4798,32 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         profile.put("isMobileVerified", mobileVerified);
         profile.put("mobile_verified", mobileVerified);
         profile.put("imageUrl", imageUrl == null ? "" : imageUrl);
+        profile.put("profile_image_url", imageUrl == null ? "" : imageUrl);
 
         syncProfileToBackendApi(username, fullName, email, mobile, state, city);
 
-        FirebaseFirestore.getInstance().collection("users").document(getProfileDocumentKey())
-                .set(profile, SetOptions.merge())
-                .addOnSuccessListener(unused -> runOnUiThread(() -> {
-                    getSharedPreferences("fendly_account", MODE_PRIVATE).edit()
-                            .putString("profile_image_url", imageUrl == null ? "" : imageUrl).apply();
-                    cloudProfileLoaded = true;
-                    if (saveButton != null) profileSaveSucceeded(saveButton);
-                }))
-                .addOnFailureListener(exception -> {
-                    Log.e("FIREBASE_ERROR", "Cloud firestore sync warning: ", exception);
-                    runOnUiThread(() -> {
-                        getSharedPreferences("fendly_account", MODE_PRIVATE).edit()
-                                .putString("profile_image_url", imageUrl == null ? "" : imageUrl).apply();
-                        cloudProfileLoaded = true;
-                        if (saveButton != null) profileSaveSucceeded(saveButton);
-                    });
-                });
+        FirebaseFirestore db = FirebaseFirestore.getInstance();
+        String docKey = getProfileDocumentKey();
+        db.collection("users").document(docKey)
+                .set(profile, SetOptions.merge());
+        if (!user.getUid().equals(docKey)) {
+            db.collection("users").document(user.getUid())
+                    .set(profile, SetOptions.merge());
+        }
+
+        account.edit()
+                .putString("profile_image_url", imageUrl == null ? "" : imageUrl)
+                .putString("profile_first_name", fn)
+                .putString("profile_surname", sn)
+                .putString("full_name", fullName)
+                .putString("email", email)
+                .putString("mobile", mobile)
+                .putString("state", state)
+                .putString("city", city)
+                .apply();
+
+        cloudProfileLoaded = true;
+        if (saveButton != null) profileSaveSucceeded(saveButton);
     }
 
     private void syncProfileToBackendApi(String username, String fullName, String email, String mobile, String state, String city) {
@@ -5331,6 +5348,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
     private void renderProfileContent() {
         FirebaseUser currentUser = FirebaseAuth.getInstance().getCurrentUser();
         SharedPreferences account = getSharedPreferences("fendly_account", MODE_PRIVATE);
+        hydrateCloudProfile(null);
         profileHydrated = true;
         cloudProfileLoaded = true;
         inRenewalPaymentFlow = false;
