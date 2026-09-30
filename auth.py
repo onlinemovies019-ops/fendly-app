@@ -45,8 +45,8 @@ class EmailOTPRequest(BaseModel):
 async def send_otp(payload: SendOTPRequest):
     if not TWO_FACTOR_API_KEY or TWO_FACTOR_API_KEY == "your_2factor_api_key":
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="TWO_FACTOR_API_KEY is not configured in Render Environment Variables. Please add your valid 2Factor API key."
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="TWO_FACTOR_API_KEY is not configured in Render Environment Variables."
         )
 
     raw_phone = payload.phone_number.replace(" ", "").replace("-", "").replace("+", "")
@@ -63,7 +63,11 @@ async def send_otp(payload: SendOTPRequest):
     async with httpx.AsyncClient() as client:
         try:
             response = await client.get(url, timeout=15.0)
-            data = response.json()
+            print(f"2Factor HTTP Status Code: {response.status_code}")
+            try:
+                data = response.json()
+            except Exception as json_err:
+                data = {"Status": "Error", "Details": f"Invalid JSON response from 2Factor: {response.text}"}
             print(f"2Factor API Real Response: {data}")
 
             if data.get("Status") == "Success":
@@ -78,24 +82,26 @@ async def send_otp(payload: SendOTPRequest):
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail=f"2Factor API error: {detail_msg}"
                 )
+        except HTTPException as he:
+            raise he
         except httpx.HTTPError as he:
             print(f"2Factor HTTP Error: {he}")
             raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"2Factor network error: {str(he)}"
             )
         except Exception as e:
             print(f"2Factor Error: {e}")
             raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"SMS error: {str(e)}"
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"2Factor SMS error: {str(e)}"
             )
 
 @router.post("/verify-otp")
 async def verify_otp(payload: VerifyOTPRequest):
     if not TWO_FACTOR_API_KEY or TWO_FACTOR_API_KEY == "your_2factor_api_key":
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            status_code=status.HTTP_400_BAD_REQUEST,
             detail="TWO_FACTOR_API_KEY is not configured in Render Environment Variables"
         )
 
@@ -118,10 +124,12 @@ async def verify_otp(payload: VerifyOTPRequest):
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail=f"2Factor verification error: {detail_msg}"
                 )
+        except HTTPException as he:
+            raise he
         except Exception as e:
             print(f"2Factor Verify Exception: {e}")
             raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Verification failed: {str(e)}"
             )
 
