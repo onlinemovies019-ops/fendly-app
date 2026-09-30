@@ -36,26 +36,11 @@ def _create_db_engine():
 
 engine = _create_db_engine()
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
-_sqlite_engine = None
-_sqlite_SessionLocal = None
 
 
 def get_db() -> Generator[Session, None, None]:
-    global _sqlite_engine, _sqlite_SessionLocal
+    session = SessionLocal()
     try:
-        session = SessionLocal()
-        session.execute(sqlalchemy.text("SELECT 1"))
-        try:
-            yield session
-        finally:
-            session.close()
-    except Exception as exc:
-        logger.error("Primary database error: %s. Switching to fallback SQLite database.", exc)
-        if _sqlite_SessionLocal is None:
-            _sqlite_engine = create_engine("sqlite:///./fendly.db", connect_args={"check_same_thread": False})
-            _sqlite_SessionLocal = sessionmaker(bind=_sqlite_engine, autoflush=False, autocommit=False)
-        fallback_session = _sqlite_SessionLocal()
-        try:
-            yield fallback_session
-        finally:
-            fallback_session.close()
+        yield session
+    finally:
+        session.close()
