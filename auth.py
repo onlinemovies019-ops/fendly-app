@@ -1,6 +1,7 @@
 import os
 import json
 import urllib.request
+import base64
 from fastapi import APIRouter, HTTPException, status, Depends
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 import httpx
@@ -14,9 +15,10 @@ RESEND_FROM_EMAIL = os.getenv("RESEND_FROM_EMAIL", "onboarding@resend.dev")
 
 security = HTTPBearer(auto_error=False)
 
-async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)):
+async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)) -> str:
     """
-    Authentication dependency required by protected endpoints (e.g., in `routers/items.py`).
+    Authentication dependency required by protected endpoints.
+    Extracts and returns the user UID (string) from the Bearer token.
     """
     if not credentials:
         raise HTTPException(
@@ -24,7 +26,22 @@ async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(s
             detail="Authorization token missing or invalid",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    return {"token": credentials.credentials, "user": "authenticated_user"}
+    token = credentials.credentials
+    try:
+        # Attempt to decode JWT payload unverified to extract Firebase UID / sub / user_id
+        parts = token.split(".")
+        if len(parts) == 3:
+            padding = '=' * (-len(parts[1]) % 4)
+            payload_json = base64.b64decode(parts[1] + padding).decode('utf-8')
+            payload_data = json.loads(payload_json)
+            uid = payload_data.get("user_id") or payload_data.get("sub") or payload_data.get("uid") or payload_data.get("email")
+            if uid:
+                return str(uid)
+    except Exception:
+        pass
+
+    # Fallback to returning the token string itself as the uid
+    return str(token)
 
 # — Schemas —
 
@@ -66,7 +83,7 @@ async def send_otp(payload: SendOTPRequest):
             print(f"2Factor HTTP Status Code: {response.status_code}")
             try:
                 data = response.json()
-            except Exception as json_err:
+            except Exception:
                 data = {"Status": "Error", "Details": f"Invalid JSON response from 2Factor: {response.text}"}
             print(f"2Factor API Real Response: {data}")
 
@@ -77,7 +94,7 @@ async def send_otp(payload: SendOTPRequest):
                     "message": "Real OTP sent successfully via 2Factor"
                 }
             else:
-                detail_msg = data.get("Details", "Failed to send OTP via 2Factor")
+                detail_msg = data.get("Details", data.get("Message", "Failed to send OTP via 2Factor"))
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail=f"2Factor API error: {detail_msg}"
