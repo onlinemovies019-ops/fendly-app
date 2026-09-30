@@ -15,19 +15,24 @@ import android.graphics.Typeface;
 import android.graphics.drawable.ColorDrawable;
 import android.graphics.drawable.Drawable;
 import android.content.res.ColorStateList;
-import android.content.res.Configuration;
 import android.graphics.drawable.LayerDrawable;
+import androidx.appcompat.app.AppCompatDelegate;
+import androidx.core.os.LocaleListCompat;
 import android.os.Build;
 import android.os.Bundle;
 import android.text.InputFilter;
 import android.text.TextUtils;
+import android.util.Base64;
 import android.view.Gravity;
 import android.view.KeyEvent;
 import android.util.Log;
 import android.util.TypedValue;
 import android.view.View;
 import android.view.ViewGroup;
+import androidx.compose.ui.platform.ComposeView;
+import android.content.res.Configuration;
 import android.view.MotionEvent;
+import android.view.ViewParent;
 import android.view.Window;
 import android.view.WindowManager;
 import android.view.inputmethod.EditorInfo;
@@ -37,6 +42,7 @@ import android.widget.ImageView;
 import android.widget.ImageButton;
 import android.widget.LinearLayout;
 import android.widget.GridLayout;
+import android.widget.PopupMenu;
 import android.widget.SeekBar;
 import android.widget.TextView;
 import android.widget.Button;
@@ -77,6 +83,7 @@ import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.Random;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.security.SecureRandom;
@@ -84,6 +91,9 @@ import java.security.SecureRandom;
 import com.google.firebase.auth.GetTokenResult;
 import com.google.firebase.auth.UserInfo;
 import com.google.firebase.firestore.DocumentSnapshot;
+import com.google.firebase.firestore.QuerySnapshot;
+import com.google.firebase.Timestamp;
+import java.util.Collections;
 import com.google.zxing.integration.android.IntentIntegrator;
 import com.google.zxing.integration.android.IntentResult;
 import android.graphics.drawable.GradientDrawable;
@@ -100,6 +110,7 @@ import com.google.firebase.auth.AuthResult;
 import com.google.firebase.firestore.FirebaseFirestore;
 import com.google.firebase.firestore.ListenerRegistration;
 import com.google.firebase.firestore.SetOptions;
+import com.google.firebase.firestore.Source;
 import com.google.android.gms.tasks.Task;
 import com.google.android.gms.tasks.Tasks;
 import androidx.biometric.BiometricManager;
@@ -202,6 +213,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
     private String draftLocation = "";
     private String draftDate = "";
     private String draftImei = "";
+    private String localEmailOtp = "";
     private String draftFullName = "";
     private String draftEmail = "";
     private String draftMobile = "";
@@ -239,10 +251,12 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
     private EditText visibleFirstName;
     private EditText visibleSurname;
     private EditText visibleEmail;
+    private TextView visibleEmailVerify;
     private EditText visibleMobile;
     private final Handler realtimeProfileHandler = new Handler(Looper.getMainLooper());
     private Runnable realtimeProfileSave;
     private boolean applyingCloudProfile;
+    private boolean visibleNameDirty;
     private final List<Runnable> pendingProfileHydrationCallbacks = new ArrayList<>();
     private long lastProfileHydrationAttemptMs = 0L;
     private static final long PROFILE_HYDRATION_RETRY_WINDOW_MS = 10000L;
@@ -251,27 +265,49 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
      * Temporary testing toggle: set to true to restore the mobile OTP requirement later.
      * Keep the old validation logic in place while it is disabled for the current testing phase.
      */
-    private static final boolean REQUIRE_MOBILE_OTP_FOR_PROFILE_SAVE = false;
+    private static final boolean REQUIRE_MOBILE_OTP_FOR_PROFILE_SAVE = true;
     private final ExecutorService network = Executors.newSingleThreadExecutor();
     private volatile String lastSubmissionError;
 
+    private String getProfileDocumentKey() {
+        SharedPreferences account = getSharedPreferences("fendly_account", MODE_PRIVATE);
+        String username = account.getString("username", "").trim().toLowerCase(Locale.US);
+        if (username.startsWith("@")) {
+            username = username.substring(1);
+        }
+        username = username.replaceAll("[^a-z0-9_]", "_");
+        username = username.replaceAll("_+", "_");
+        username = username.replaceAll("^_+|_+$", "");
+
+        if (username.isEmpty() || username.length() < 3) {
+            FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
+            if (user != null && user.getEmail() != null) {
+                String email = user.getEmail().trim().toLowerCase(Locale.US);
+                String base = email.replace("@login.fendly.app", "").replaceAll("[^a-z0-9_]", "_");
+                base = base.replaceAll("_+", "_").replaceAll("^_+|_+$", "");
+                if (!base.isEmpty()) return base;
+            }
+            return user != null ? user.getUid() : "anonymous";
+        }
+        return username;
+    }
+
     @Override
     protected void attachBaseContext(Context newBase) {
-        super.attachBaseContext(LanguageManager.wrap(newBase));
+        super.attachBaseContext(LanguageManager.wrapContext(newBase));
     }
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
-        int savedLanguage = getSharedPreferences("fendly_language", MODE_PRIVATE)
-                .getInt("selected_language_index", 0);
-        LanguageManager.setAppLanguage(languageCodeForIndex(savedLanguage));
         boolean savedDarkMode = getSharedPreferences("fendly_settings", MODE_PRIVATE)
             .getBoolean("dark_mode", false);
+        setTheme(savedDarkMode ? R.style.Theme_Fendly_Dark : R.style.Theme_Fendly);
+        LanguageManager.restoreSavedLanguage(this);
+        int savedLanguage = LanguageManager.getSavedLanguageIndex(this);
         super.onCreate(savedInstanceState);
         initializeCloudinary();
         setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_PORTRAIT);
         getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
-        setTheme(savedDarkMode ? R.style.Theme_Fendly_Dark : R.style.Theme_Fendly);
         if (Build.VERSION.SDK_INT >= 33 && ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
             ActivityCompat.requestPermissions(this, new String[]{Manifest.permission.POST_NOTIFICATIONS}, 100);
         }
@@ -280,9 +316,13 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         darkMode = getSharedPreferences("fendly_settings", MODE_PRIVATE).getBoolean("dark_mode", false);
         SharedPreferences account = getSharedPreferences("fendly_account", MODE_PRIVATE);
         FirebaseUser firebaseUser = FirebaseAuth.getInstance().getCurrentUser();
-        accountCreated = account.getBoolean("created", false) || firebaseUser != null;
-        if (!accountCreated && !hasProfileDrafts(account)) {
+        // Always reset fresh account drafts when there's no current Firebase user,
+        // even if the 'created' flag persists from a previous session.
+        accountCreated = firebaseUser != null;
+        if (firebaseUser == null) {
             resetFreshAccountDrafts();
+        } else {
+            accountCreated = true;
         }
         if (savedInstanceState != null) {
             currentPage = savedInstanceState.getInt("state_current_page", PAGE_AUTH);
@@ -301,11 +341,103 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             profileSetupVisible = savedInstanceState.getBoolean("state_profile_setup_visible", false);
             inRenewalPaymentFlow = savedInstanceState.getBoolean("state_in_renewal_payment_flow", false);
         }
+        boolean languageSelected = getSharedPreferences("fendly_language", MODE_PRIVATE)
+                .contains("selected_language_index");
+        if (!languageSelected) {
+            Intent intent = new Intent(this, LanguageActivity.class);
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK | Intent.FLAG_ACTIVITY_NO_ANIMATION);
+            startActivity(intent);
+            finish();
+            return;
+        }
+
         restoreProfileDrafts();
         applySystemBarColors();
         restoreScreenState();
         FcmRegistration.registerCurrentToken();
-        if (FirebaseAuth.getInstance().getCurrentUser() != null) hydrateProfileFromBackend(null);
+        if (FirebaseAuth.getInstance().getCurrentUser() != null) {
+            hydrateProfileFromBackend(null);
+            hydrateCloudProfile(null);
+            checkAndReloadUserVerification();
+        }
+    }
+
+    private void checkAndReloadUserVerification() {
+        FirebaseUser currentUser = FirebaseAuth.getInstance().getCurrentUser();
+        if (currentUser == null) return;
+        currentUser.reload().addOnCompleteListener(task -> {
+            boolean firebaseVerified = currentUser.isEmailVerified();
+            if (firebaseVerified) {
+                getSharedPreferences("fendly_account", MODE_PRIVATE).edit()
+                        .putBoolean("email_verified", true)
+                        .apply();
+                if (currentPage == PAGE_PROFILE && visibleEmail != null && visibleEmailVerify != null) {
+                    runOnUiThread(() -> refreshEmailVerificationState(visibleEmail, visibleEmailVerify));
+                }
+            }
+
+            FirebaseFirestore db = FirebaseFirestore.getInstance();
+            db.collection("users").document(getProfileDocumentKey())
+                    .get(Source.SERVER)
+                    .addOnSuccessListener(document -> {
+                        if (document != null && document.exists()) {
+                            boolean cloudVerified = parseBooleanValue(document.get("emailVerified"))
+                                    || parseBooleanValue(document.get("isEmailVerified"))
+                                    || parseBooleanValue(document.get("email_verified"));
+                            if (cloudVerified) {
+                                getSharedPreferences("fendly_account", MODE_PRIVATE).edit()
+                                        .putBoolean("email_verified", true)
+                                        .apply();
+                                if (currentPage == PAGE_PROFILE && visibleEmail != null && visibleEmailVerify != null) {
+                                    runOnUiThread(() -> refreshEmailVerificationState(visibleEmail, visibleEmailVerify));
+                                }
+                            }
+                        }
+                    });
+
+            currentUser.getIdToken(false).addOnSuccessListener(token -> network.execute(() -> {
+                HttpURLConnection connection = null;
+                try {
+                    connection = (HttpURLConnection) new URL(API_BASE + "/api/users/profile").openConnection();
+                    connection.setRequestMethod("GET");
+                    connection.setConnectTimeout(15000);
+                    connection.setReadTimeout(30000);
+                    connection.setRequestProperty("Authorization", "Bearer " + token.getToken());
+                    if (connection.getResponseCode() >= 200 && connection.getResponseCode() < 300) {
+                        String payload = readStream(connection.getInputStream());
+                        if (payload != null && !payload.trim().isEmpty()) {
+                            JSONObject profile = new JSONObject(payload);
+                            boolean apiVerified = profile.optBoolean("email_verified", false);
+                            if (apiVerified) {
+                                getSharedPreferences("fendly_account", MODE_PRIVATE).edit()
+                                        .putBoolean("email_verified", true)
+                                        .apply();
+                                if (currentPage == PAGE_PROFILE && visibleEmail != null && visibleEmailVerify != null) {
+                                    runOnUiThread(() -> refreshEmailVerificationState(visibleEmail, visibleEmailVerify));
+                                }
+                            }
+                        }
+                    }
+                } catch (Exception ignored) {
+                } finally {
+                    if (connection != null) connection.disconnect();
+                }
+            }));
+        }).addOnFailureListener(e -> {
+            Log.d("USER_RELOAD", "User reload failed due to network issues: ", e);
+        });
+    }
+
+    private void checkLanguageAndRedirectIfNeeded() {
+        boolean languageSelected = getSharedPreferences("fendly_language", MODE_PRIVATE)
+                .contains("selected_language_index");
+        if (!languageSelected) {
+            Intent intent = new Intent(this, LanguageActivity.class);
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK | Intent.FLAG_ACTIVITY_NO_ANIMATION);
+            startActivity(intent);
+            overridePendingTransition(0, 0);
+            finish();
+        }
     }
 
     @Override
@@ -319,12 +451,37 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
     @Override
     protected void onResume() {
         super.onResume();
-        selectedLanguage = getSharedPreferences("fendly_language", MODE_PRIVATE)
-                .getInt("selected_language_index", 0);
-        restoreProfileDrafts();
-        if (FirebaseAuth.getInstance().getCurrentUser() != null) {
+        // Don't restore profile drafts when there's no current Firebase user,
+        // as this would re-populate old email/phone from a previous session.
+        // Only restore if user is authenticated.
+        FirebaseUser firebaseUser = FirebaseAuth.getInstance().getCurrentUser();
+        if (firebaseUser != null) {
+            selectedLanguage = getSharedPreferences("fendly_language", MODE_PRIVATE)
+                    .getInt("selected_language_index", 0);
+            restoreProfileDrafts();
             hydrateProfileFromBackend(null);
-            return;
+            hydrateCloudProfile(null);
+            checkAndReloadUserVerification();
+        } else {
+            // User is not logged in - ensure drafts are fresh
+            selectedLanguage = getSharedPreferences("fendly_language", MODE_PRIVATE)
+                    .getInt("selected_language_index", 0);
+            // Clear any stale draft data since user is not authenticated
+            draftFullName = "";
+            draftEmail = "";
+            draftMobile = "";
+            draftPin = "";
+            draftState = "";
+            draftCity = "";
+            SharedPreferences account = getSharedPreferences("fendly_account", MODE_PRIVATE);
+            account.edit()
+                    .remove("draft_full_name")
+                    .remove("draft_email")
+                    .remove("draft_mobile")
+                    .remove("draft_pin")
+                    .remove("draft_state")
+                    .remove("draft_city")
+                    .apply();
         }
         if ((currentPage == PAGE_PROFILE || currentPage == PAGE_PROFILE_SETUP) && screenRenderer != null) {
             screenRenderer.run();
@@ -406,15 +563,6 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
     }
 
     @Override
-    public void onConfigurationChanged(Configuration newConfig) {
-        super.onConfigurationChanged(newConfig);
-        setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_PORTRAIT);
-        if (screenRenderer != null) {
-            screenRenderer.run();
-        }
-    }
-
-    @Override
     public void onBackPressed() {
         if (currentPage == PAGE_ADMIN) {
             buildScreen();
@@ -445,10 +593,11 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
     }
 
     private int responsiveHorizontalPadding() {
-        int screenWidth = getResources().getDisplayMetrics().widthPixels;
-        if (screenWidth >= 1200) return dp(44);
-        if (screenWidth >= 900) return dp(32);
-        if (screenWidth >= 600) return dp(24);
+        int widthPx = getResources().getDisplayMetrics().widthPixels;
+        int maxContentWidthPx = dp(520);
+        if (widthPx > maxContentWidthPx) {
+            return (widthPx - maxContentWidthPx) / 2;
+        }
         return dp(18);
     }
 
@@ -626,11 +775,11 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             login.setEnabled(false);
             FirebaseAuth.getInstance().signInWithEmailAndPassword(credentialEmail(name), credentialPassword(name, code))
                     .addOnSuccessListener(result -> {
-                        accountCreated = true;
-                        saveStoredAccountPin(code);
-                        getSharedPreferences("fendly_account", MODE_PRIVATE).edit().putBoolean("created", true).putString("username", name).apply();
-                        showHome();
-                        hydrateProfileFromBackend(null);
+                        handleSuccessfulLogin(name, code, () -> {
+                            login.setText(loginText("login"));
+                            login.setEnabled(true);
+                            showHome();
+                        });
                     })
                     .addOnFailureListener(error -> {
                         login.setText(loginText("login"));
@@ -647,7 +796,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         loginRow.addView(fingerprintRow, fingerprintRowParams);
         authCard.addView(loginRow, new LinearLayout.LayoutParams(-1, dp(44)));
 
-        TextView createAccount = text(loginText("create"), 12, primaryTextColor(), Typeface.BOLD);
+        TextView createAccount = text(loginText("create"), 12, primaryTextColor(), Typeface.NORMAL);
         createAccount.setGravity(Gravity.CENTER);
         createAccount.setIncludeFontPadding(true);
         createAccount.setMaxLines(2);
@@ -678,6 +827,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                                 .putString("username", name)
                                 .apply();
                         FcmRegistration.registerCurrentToken();
+                        clearProfileDrafts();
                         showProfileSetup();
                     })
                     .addOnFailureListener(error -> {
@@ -757,9 +907,22 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
 
     private void restoreProfileDrafts() {
         SharedPreferences account = getSharedPreferences("fendly_account", MODE_PRIVATE);
+        boolean emailVerified = account.getBoolean("email_verified", false);
+        boolean mobileVerified = account.getBoolean("mobile_verified", false);
+
         draftFullName = account.getString("draft_full_name", draftFullName);
-        draftEmail = account.getString("draft_email", draftEmail);
-        draftMobile = account.getString("draft_mobile", draftMobile);
+        if (!emailVerified) {
+            draftEmail = account.getString("draft_email", draftEmail);
+        } else {
+            draftEmail = "";
+            account.edit().remove("draft_email").apply();
+        }
+        if (!mobileVerified) {
+            draftMobile = account.getString("draft_mobile", draftMobile);
+        } else {
+            draftMobile = "";
+            account.edit().remove("draft_mobile").apply();
+        }
         draftPin = account.getString("draft_pin", draftPin);
         draftState = account.getString("draft_state", draftState);
         draftCity = account.getString("draft_city", draftCity);
@@ -791,20 +954,13 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                 .remove("mobile_verified")
                 .remove("email_verified")
                 .remove("email_verify_cooldown_until")
+                .remove("draft_full_name")
+                .remove("draft_email")
+                .remove("draft_mobile")
+                .remove("draft_pin")
+                .remove("draft_state")
+                .remove("draft_city")
                 .apply();
-
-        if (hasProfileDrafts(account)) {
-            saveProfileDrafts();
-        } else {
-            account.edit()
-                    .remove("draft_full_name")
-                    .remove("draft_email")
-                    .remove("draft_mobile")
-                    .remove("draft_pin")
-                    .remove("draft_state")
-                    .remove("draft_city")
-                    .apply();
-        }
     }
 
     private void showProfileSetup() {
@@ -837,24 +993,34 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         if (Build.VERSION.SDK_INT >= 21) avatarWrap.setClipToOutline(true);
 
         ImageView avatar = new ImageView(this);
-        avatar.setScaleType(ImageView.ScaleType.CENTER_CROP);
         avatar.setBackground(roundWithStroke(surfaceColor(), 60, fieldBorderColor()));
         avatar.setLayoutParams(new FrameLayout.LayoutParams(dp(118), dp(118), Gravity.CENTER));
         avatar.setImageResource(R.drawable.ic_field_person);
-        avatar.setColorFilter(accentColor());
         if (Build.VERSION.SDK_INT >= 21) avatar.setClipToOutline(true);
 
+        boolean hasCustomPhoto = false;
         String savedProfileUri = account.getString("profile_image_uri", null);
         if (savedProfileUri != null && !savedProfileUri.trim().isEmpty()
                 && setImageFromUri(avatar, Uri.parse(savedProfileUri))) {
-            avatar.clearColorFilter();
+            hasCustomPhoto = true;
         }
         if (selectedProfileImage != null) {
-            if (setImageFromUri(avatar, selectedProfileImage)) avatar.clearColorFilter();
+            if (setImageFromUri(avatar, selectedProfileImage)) hasCustomPhoto = true;
         }
         if (capturedProfileImage != null) {
-            avatar.clearColorFilter();
+            hasCustomPhoto = true;
             avatar.setImageBitmap(capturedProfileImage);
+        }
+
+        if (hasCustomPhoto) {
+            avatar.clearColorFilter();
+            avatar.setScaleType(ImageView.ScaleType.CENTER_CROP);
+            avatar.setPadding(0, 0, 0, 0);
+        } else {
+            avatar.setColorFilter(accentColor());
+            avatar.setScaleType(ImageView.ScaleType.FIT_CENTER);
+            int pad = dp(24);
+            avatar.setPadding(pad, pad, pad, pad);
         }
 
         avatarWrap.addView(avatar, new FrameLayout.LayoutParams(dp(118), dp(118), Gravity.CENTER));
@@ -872,28 +1038,52 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         String rawSavedFullName = (!draftFullName.trim().isEmpty() ? draftFullName : account.getString("full_name", "")).trim();
         String savedFullName = getCanonicalEnglishName(rawSavedFullName);
         String[] nameParts = savedFullName.split("\\s+", 2);
-        firstName.setText(localizeProfileName(nameParts.length > 0 ? nameParts[0] : ""));
-        surname.setText(localizeProfileName(nameParts.length > 1 ? nameParts[1] : ""));
+        String savedFirstName = account.contains("profile_first_name")
+            ? account.getString("profile_first_name", "")
+            : (nameParts.length > 0 ? nameParts[0] : "");
+        String savedSurname = account.contains("profile_surname")
+            ? account.getString("profile_surname", "")
+            : (nameParts.length > 1 ? nameParts[1] : "");
+        firstName.setText(localizeProfileName(savedFirstName));
+        surname.setText(localizeProfileName(savedSurname));
         visibleFirstName = firstName;
         visibleSurname = surname;
+        visibleNameDirty = false;
         firstName.addTextChangedListener(draftWatcher(value -> {
+            if (applyingCloudProfile) return;
             String fn = getCanonicalEnglishName(value);
             String sn = getCanonicalEnglishName(surname.getText().toString().trim());
             draftFullName = (fn + " " + sn).trim();
+            getSharedPreferences("fendly_account", MODE_PRIVATE).edit()
+                    .putString("profile_first_name", fn)
+                    .putString("profile_surname", sn)
+                    .apply();
+            visibleNameDirty = true;
             saveProfileDrafts();
         }));
         surname.addTextChangedListener(draftWatcher(value -> {
+            if (applyingCloudProfile) return;
             String fn = getCanonicalEnglishName(firstName.getText().toString().trim());
             String sn = getCanonicalEnglishName(value);
             draftFullName = (fn + " " + sn).trim();
+            getSharedPreferences("fendly_account", MODE_PRIVATE).edit()
+                    .putString("profile_first_name", fn)
+                    .putString("profile_surname", sn)
+                    .apply();
+            visibleNameDirty = true;
             saveProfileDrafts();
         }));
 
         EditText email = field(getString(R.string.profile_email_address));
         EditText mobile = field(getString(R.string.profile_mobile_number));
-        email.setText(!draftEmail.trim().isEmpty() ? draftEmail : account.getString("email", ""));
-        mobile.setText(formatPhoneNumberForDisplay(
-            !draftMobile.trim().isEmpty() ? draftMobile : account.getString("mobile", "")));
+        visibleEmail = email;
+        visibleMobile = mobile;
+        String profileEmail = account.getString("email", "");
+        if (profileEmail.endsWith("@login.fendly.app")) profileEmail = "";
+        email.setText(profileEmail);
+        String savedMobileValue = normalizeLocalizedDigits(account.getString("mobile", ""));
+        draftMobile = savedMobileValue;
+        mobile.setText(formatPhoneNumberForDisplay(savedMobileValue));
 
         EditText[] pinCells = pinCells();
         if (!darkMode) {
@@ -908,7 +1098,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             saveProfileDrafts();
         }));
         mobile.addTextChangedListener(draftWatcher(value -> {
-            draftMobile = value;
+            draftMobile = normalizeLocalizedDigits(value);
             saveProfileDrafts();
         }));
         for (EditText pinCell : pinCells) {
@@ -923,9 +1113,17 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                 new InputFilter.LengthFilter(10),
                 (source, start, end, destination, destinationStart, destinationEnd) -> {
                     StringBuilder digits = new StringBuilder();
+                    boolean modified = false;
                     for (int index = start; index < end; index++) {
                         char character = source.charAt(index);
-                        if (Character.isDigit(character)) digits.append(character);
+                        if (Character.isDigit(character)) {
+                            digits.append(character);
+                        } else {
+                            modified = true;
+                        }
+                    }
+                    if (!modified && digits.length() == (end - start)) {
+                        return null;
                     }
                     return digits.toString();
                 }
@@ -959,7 +1157,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         usernameField.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);
         usernameField.setFilters(new InputFilter[]{new InputFilter.LengthFilter(32)});
 
-        TextView usernameStatus = text("", 10, secondaryTextColor(), Typeface.BOLD);
+        TextView usernameStatus = text("", 10, secondaryTextColor(), Typeface.NORMAL);
         usernameStatus.setGravity(Gravity.CENTER);
         usernameStatus.setPadding(dp(10), dp(4), dp(10), dp(4));
         usernameStatus.setVisibility(View.INVISIBLE);
@@ -981,13 +1179,13 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             @Override public void beforeTextChanged(CharSequence s, int start, int count, int after) { }
             @Override public void onTextChanged(CharSequence s, int start, int before, int count) { }
             @Override public void afterTextChanged(Editable editable) {
-                String candidate = editable == null ? "" : editable.toString().trim().toLowerCase(Locale.US);
+                String candidate = editable == null ? "" : editable.toString().trim();
                 if (candidate.isEmpty()) {
                     usernameStatus.setVisibility(View.INVISIBLE);
                     usernameStatus.setText("");
                     return;
                 }
-                if (!candidate.matches("^[a-z0-9_]{3,32}$")) {
+                if (!candidate.matches("^[a-zA-Z0-9_]{3,32}$")) {
                     usernameStatus.setVisibility(View.VISIBLE);
                     usernameStatus.setText(translate("Invalid"));
                     usernameStatus.setTextColor(Color.RED);
@@ -996,7 +1194,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                 usernameStatus.setVisibility(View.VISIBLE);
                 usernameStatus.setText(translate("Checking..."));
                 usernameStatus.setTextColor(Color.rgb(201, 162, 76));
-                checkUsernameAvailability(candidate, usernameField, usernameStatus);
+                checkUsernameAvailability(candidate.toLowerCase(Locale.US), usernameField, usernameStatus);
             }
         });
 
@@ -1017,18 +1215,16 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         mobileVerify.setPadding(dp(10), 0, dp(10), 0);
         mobileVerify.setOnClickListener(view -> verifyProfileMobile(mobile, mobileVerify));
         String verifiedMobile = account.getString("mobile", "").trim();
-        String enteredMobile = normalizeLocalizedDigits(mobile.getText().toString().trim());
-        boolean mobileAlreadyVerified = verifiedMobile.matches("^\\d{10}$")
-            && enteredMobile.matches("^\\d{10}$")
-            && account.getBoolean("mobile_verified", false)
-            && verifiedMobile.equals(enteredMobile);
-        if (mobileAlreadyVerified) {
+        mobile.setEnabled(true);
+        mobile.setFocusable(true);
+        mobile.setFocusableInTouchMode(true);
+        mobile.setCursorVisible(true);
+        mobile.setText(verifiedMobile);
+        boolean isMobileVerified = account.getBoolean("mobile_verified", false);
+        String currentMobile = normalizeLocalizedDigits(mobile.getText().toString().trim());
+        if (isMobileVerified && !verifiedMobile.isEmpty() && verifiedMobile.equals(currentMobile)) {
+            mobileVerify.setOnClickListener(null);
             lockVerifiedMobileField(mobile, mobileVerify);
-        } else {
-            mobile.setEnabled(true);
-            mobile.setFocusable(true);
-            mobile.setFocusableInTouchMode(true);
-            mobile.setCursorVisible(true);
         }
         mobile.addTextChangedListener(new TextWatcher() {
             @Override public void beforeTextChanged(CharSequence value, int start, int count, int after) { }
@@ -1120,7 +1316,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             if (updatedFirstName.equalsIgnoreCase(originalFirstName) || updatedFirstName.equals(localizeProfileName(originalFirstName))) updatedFirstName = originalFirstName;
             if (updatedSurname.equalsIgnoreCase(originalSurname) || updatedSurname.equals(localizeProfileName(originalSurname))) updatedSurname = originalSurname;
             String fullName = (updatedFirstName + " " + updatedSurname).trim();
-            String usernameValue = usernameField.getText().toString().trim().toLowerCase(Locale.US);
+            String usernameValue = usernameField.getText().toString().trim();
             String mobileValue = mobile.getText().toString().trim();
             String emailValue = email.getText().toString().trim();
             String pinValue = pinValue(pinCells);
@@ -1136,7 +1332,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             if (fullName.isEmpty()) {
                 firstName.setError("Enter first name");
                 firstName.requestFocus();
-            } else if (!usernameValue.matches("^[a-z0-9_]{3,32}$")) {
+            } else if (!usernameValue.matches("^[a-zA-Z0-9_]{3,32}$")) {
                 usernameField.setError("Use 3-32 letters, numbers, or underscores");
                 usernameField.requestFocus();
             } else if (!mobileValue.matches("^\\d{10}$")) {
@@ -1170,7 +1366,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                         .putString("mobile", mobileValue)
                         .putString("state", selectedState)
                         .putString("city", selectedCity)
-                        .putBoolean("mobile_verified", true)
+                        .putBoolean("mobile_verified", currentMobileVerified)
                         .apply();
                 clearProfileDrafts();
 
@@ -1222,23 +1418,35 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         });
     }
 
+    private interface OtpVerificationHandler {
+        void onVerify(String otpValue, Dialog dialog, TextView verifyInDialog, EditText[] codeCells);
+    }
+
     private void showOtpDialog(String username, String pin, TextView save) {
-        showThemedOtpDialog(translate("Verify your mobile"), translate("Enter the code sent to your mobile number."), translate("6-digit SMS code"), value -> {
-            if (phoneVerificationId == null || value.length() != 6) {
-                save.setText(translate("Invalid SMS code"));
-                save.setEnabled(true);
-                return false;
-            }
-            completePhoneVerification(phoneVerificationId, username, pin, save, value);
-            return true;
-        }, () -> {
-                    save.setText(translate("Save and continue"));
+        showThemedOtpDialog(translate("Verify your mobile"), translate("Enter the code sent to your mobile number."), translate("6-digit SMS code"),
+            (value, dialog, verifyInDialog, codeCells) -> {
+                if (phoneVerificationId == null || value.length() != 6) {
+                    save.setText(translate("Invalid SMS code"));
                     save.setEnabled(true);
-                });
+                    Toast.makeText(this, translate("Enter a valid 6-digit code"), Toast.LENGTH_LONG).show();
+                    return;
+                }
+                verifyInDialog.setText(translate("Verifying..."));
+                verifyInDialog.setEnabled(false);
+                completePhoneVerification(phoneVerificationId, username, pin, save, value, dialog, verifyInDialog, codeCells);
+            }, () -> {
+                save.setText(translate("Save and continue"));
+                save.setEnabled(true);
+            });
     }
 
     private void showThemedOtpDialog(String titleText, String subtitleText, String hintText,
-                                     Function<String, Boolean> verifyAction, Runnable cancelAction) {
+                                     OtpVerificationHandler verifyHandler, Runnable cancelAction) {
+        showThemedOtpDialog(titleText, subtitleText, hintText, verifyHandler, cancelAction, null);
+    }
+
+    private void showThemedOtpDialog(String titleText, String subtitleText, String hintText,
+                                     OtpVerificationHandler verifyHandler, Runnable cancelAction, Runnable resendAction) {
         Dialog dialog = new Dialog(this);
         dialog.requestWindowFeature(Window.FEATURE_NO_TITLE);
         LinearLayout content = new LinearLayout(this);
@@ -1254,8 +1462,8 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         iconParams.gravity = Gravity.CENTER_HORIZONTAL;
         content.addView(icon, iconParams);
 
-        TextView title = text(translate(titleText), 18, primaryTextColor(), Typeface.BOLD);
-        title.setTypeface(localizedScriptTypeface(title.getText(), Typeface.BOLD));
+        TextView title = text(translate(titleText), 18, primaryTextColor(), Typeface.NORMAL);
+        title.setTypeface(localizedScriptTypeface(title.getText(), Typeface.NORMAL));
         title.setGravity(Gravity.CENTER);
         title.setPadding(0, dp(8), 0, dp(2));
         content.addView(title, new LinearLayout.LayoutParams(-1, -2));
@@ -1280,25 +1488,45 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
 
         LinearLayout actions = new LinearLayout(this);
         actions.setGravity(Gravity.END | Gravity.CENTER_VERTICAL);
-        TextView cancel = text(translate("Cancel"), 12, secondaryTextColor(), Typeface.BOLD);
-        cancel.setTypeface(localizedScriptTypeface(cancel.getText(), Typeface.BOLD));
+
+        if (resendAction != null) {
+            TextView resend = text(translate("Resend"), 11, accentColor(), Typeface.NORMAL);
+            resend.setTypeface(localizedScriptTypeface(resend.getText(), Typeface.NORMAL));
+            resend.setGravity(Gravity.CENTER);
+            resend.setPadding(dp(4), 0, dp(8), 0);
+            resend.setOnClickListener(view -> {
+                dialog.dismiss();
+                resendAction.run();
+            });
+            actions.addView(resend, new LinearLayout.LayoutParams(dp(72), dp(44)));
+        }
+
+        TextView cancel = text(translate("Cancel"), 12, secondaryTextColor(), Typeface.NORMAL);
+        cancel.setTypeface(localizedScriptTypeface(cancel.getText(), Typeface.NORMAL));
         cancel.setGravity(Gravity.CENTER);
         cancel.setOnClickListener(view -> {
             dialog.dismiss();
-            cancelAction.run();
+            if (cancelAction != null) cancelAction.run();
         });
-        actions.addView(cancel, new LinearLayout.LayoutParams(dp(88), dp(44)));
-        TextView verify = text(translate("Verify"), 12, GOLD_ON, Typeface.BOLD);
-        verify.setTypeface(localizedScriptTypeface(verify.getText(), Typeface.BOLD));
+        actions.addView(cancel, new LinearLayout.LayoutParams(dp(72), dp(44)));
+
+        TextView verify = text(translate("Verify"), 12, GOLD_ON, Typeface.NORMAL);
+        verify.setTypeface(localizedScriptTypeface(verify.getText(), Typeface.NORMAL));
         verify.setGravity(Gravity.CENTER);
         verify.setBackground(goldButton());
-        LinearLayout.LayoutParams verifyParams = new LinearLayout.LayoutParams(dp(100), dp(44));
+        LinearLayout.LayoutParams verifyParams = new LinearLayout.LayoutParams(dp(90), dp(44));
         verifyParams.setMargins(dp(8), 0, 0, 0);
         actions.addView(verify, verifyParams);
         content.addView(actions, new LinearLayout.LayoutParams(-1, dp(44)));
+
         verify.setOnClickListener(view -> {
-            if (Boolean.TRUE.equals(verifyAction.apply(pinValue(codeCells).trim()))) {
-                dialog.dismiss();
+            String value = pinValue(codeCells).trim();
+            if (value.length() != 6) {
+                Toast.makeText(this, translate("Enter a valid 6-digit code"), Toast.LENGTH_LONG).show();
+                return;
+            }
+            if (verifyHandler != null) {
+                verifyHandler.onVerify(value, dialog, verify, codeCells);
             }
         });
 
@@ -1313,7 +1541,8 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         }
     }
 
-    private void completePhoneVerification(String sessionId, String username, String pin, TextView save, String otpValue) {
+    private void completePhoneVerification(String sessionId, String username, String pin, TextView save, String otpValue,
+                                           Dialog dialog, TextView verifyInDialog, EditText[] codeCells) {
         if (phoneVerificationHandled) return;
         phoneVerificationHandled = true;
         save.setText(translate("Verifying OTP..."));
@@ -1327,18 +1556,37 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                 boolean verified = response != null && response.optBoolean("success", false);
                 runOnUiThread(() -> {
                     if (verified) {
+                        if (dialog != null && dialog.isShowing()) {
+                            dialog.dismiss();
+                        }
                         getSharedPreferences("fendly_account", MODE_PRIVATE).edit().putBoolean("mobile_verified", true).apply();
                         finishProfileSetup(username, pin, save);
                     } else {
                         phoneVerificationHandled = false;
+                        if (verifyInDialog != null) {
+                            verifyInDialog.setText(translate("Verify"));
+                            verifyInDialog.setEnabled(true);
+                        }
+                        if (codeCells != null) {
+                            for (EditText cell : codeCells) {
+                                if (cell != null) cell.setText("");
+                            }
+                            if (codeCells.length > 0 && codeCells[0] != null) {
+                                codeCells[0].requestFocus();
+                            }
+                        }
                         save.setText(translate("SMS verification failed"));
                         save.setEnabled(true);
-                        Toast.makeText(this, translate("Could not verify mobile number"), Toast.LENGTH_LONG).show();
+                        Toast.makeText(this, translate("Could not verify mobile number. Check the code and try again."), Toast.LENGTH_LONG).show();
                     }
                 });
             } catch (Exception error) {
                 runOnUiThread(() -> {
                     phoneVerificationHandled = false;
+                    if (verifyInDialog != null) {
+                        verifyInDialog.setText(translate("Verify"));
+                        verifyInDialog.setEnabled(true);
+                    }
                     save.setText(translate("SMS verification failed"));
                     save.setEnabled(true);
                     Toast.makeText(this, translate("Could not verify mobile number"), Toast.LENGTH_LONG).show();
@@ -1511,8 +1759,12 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                 : currentUser.linkWithCredential(EmailAuthProvider.getCredential(email, password));
         accountTask
                 .addOnSuccessListener(result -> {
-                    getSharedPreferences("fendly_account", MODE_PRIVATE).edit().putBoolean("created", true).putString("username", username).apply();
+                    SharedPreferences account = getSharedPreferences("fendly_account", MODE_PRIVATE);
+                    String formattedUsername = formatUsernameDisplay(username);
+                    account.edit().putBoolean("created", true).putString("username", formattedUsername).apply();
                     accountCreated = true;
+                    saveCloudProfile(formattedUsername, account.getString("full_name", ""), account.getString("email", ""),
+                            account.getString("mobile", ""), account.getString("state", ""), account.getString("city", ""), null);
                     syncProfileWithBackend();
                     showHome();
                     hydrateProfileFromBackend(null);
@@ -1604,10 +1856,11 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             login.setEnabled(false);
             FirebaseAuth.getInstance().signInWithEmailAndPassword(credentialEmail(name), credentialPassword(name, code))
                     .addOnSuccessListener(result -> {
-                        accountCreated = true;
-                        getSharedPreferences("fendly_account", MODE_PRIVATE).edit().putBoolean("created", true).putString("username", name).apply();
-                        showHome();
-                        hydrateProfileFromBackend(null);
+                        handleSuccessfulLogin(name, code, () -> {
+                            login.setText(localizedFieldLabel("Log in"));
+                            login.setEnabled(true);
+                            showHome();
+                        });
                     })
                     .addOnFailureListener(error -> {
                         login.setText(translate("Try again"));
@@ -1642,7 +1895,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         iconParams.gravity = Gravity.CENTER_HORIZONTAL;
         content.addView(icon, iconParams);
 
-        TextView title = text(translate("Fingerprint login"), 18, primaryTextColor(), Typeface.BOLD);
+        TextView title = text(translate("Fingerprint login"), 18, primaryTextColor(), Typeface.NORMAL);
         title.setGravity(Gravity.CENTER);
         title.setPadding(0, dp(8), 0, dp(2));
         content.addView(title, new LinearLayout.LayoutParams(-1, -2));
@@ -1652,14 +1905,14 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         content.addView(subtitle, new LinearLayout.LayoutParams(-1, dp(28)));
 
         String localizedUsername = localizeProfileName(username);
-        TextView usernameLabel = text(localizedUsername, 15, primaryTextColor(), Typeface.BOLD);
+        TextView usernameLabel = text(localizedUsername, 15, primaryTextColor(), Typeface.NORMAL);
         usernameLabel.setGravity(Gravity.CENTER);
         usernameLabel.setBackground(roundWithStroke(backgroundColor(), 12, fieldBorderColor()));
         LinearLayout.LayoutParams usernameParams = new LinearLayout.LayoutParams(-1, dp(46));
         usernameParams.setMargins(0, dp(10), 0, dp(14));
         content.addView(usernameLabel, usernameParams);
 
-        TextView login = text(translate("Log in"), 13, GOLD_ON, Typeface.BOLD);
+        TextView login = text(translate("Log in"), 13, GOLD_ON, Typeface.NORMAL);
         login.setGravity(Gravity.CENTER);
         login.setBackground(goldButton());
         login.setOnClickListener(view -> {
@@ -1668,7 +1921,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         });
         content.addView(login, new LinearLayout.LayoutParams(-1, dp(44)));
 
-        TextView another = text(translate("Use another account"), 11, secondaryTextColor(), Typeface.BOLD);
+        TextView another = text(translate("Use another account"), 11, secondaryTextColor(), Typeface.NORMAL);
         another.setGravity(Gravity.CENTER);
         another.setPadding(0, dp(10), 0, 0);
         another.setOnClickListener(view -> dialog.dismiss());
@@ -1698,8 +1951,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                         FirebaseAuth.getInstance().signInWithEmailAndPassword(
                                         credentialEmail(username), credentialPassword(username, pin))
                                 .addOnSuccessListener(authResult -> {
-                                    showHome();
-                                    hydrateProfileFromBackend(null);
+                                    handleSuccessfulLogin(username, pin, MainActivity.this::showHome);
                                 })
                                 .addOnFailureListener(error -> Toast.makeText(MainActivity.this,
                                         translate("Could not sign in with fingerprint"), Toast.LENGTH_LONG).show());
@@ -1729,13 +1981,13 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         );
         LinearLayout actions = new LinearLayout(this);
         actions.setGravity(Gravity.END | Gravity.CENTER_VERTICAL);
-        TextView cancel = text(translate("Cancel"), 12, secondaryTextColor(), Typeface.BOLD);
-        cancel.setTypeface(localizedScriptTypeface(cancel.getText(), Typeface.BOLD));
+        TextView cancel = text(translate("Cancel"), 12, secondaryTextColor(), Typeface.NORMAL);
+        cancel.setTypeface(localizedScriptTypeface(cancel.getText(), Typeface.NORMAL));
         cancel.setGravity(Gravity.CENTER);
         cancel.setOnClickListener(view -> dialog.dismiss());
         actions.addView(cancel, new LinearLayout.LayoutParams(dp(88), dp(44)));
-        TextView confirm = text(translate("Confirm"), 12, GOLD_ON, Typeface.BOLD);
-        confirm.setTypeface(localizedScriptTypeface(confirm.getText(), Typeface.BOLD));
+        TextView confirm = text(translate("Confirm"), 12, GOLD_ON, Typeface.NORMAL);
+        confirm.setTypeface(localizedScriptTypeface(confirm.getText(), Typeface.NORMAL));
         confirm.setGravity(Gravity.CENTER);
         confirm.setBackground(goldButton());
         LinearLayout.LayoutParams confirmParams = new LinearLayout.LayoutParams(dp(100), dp(44));
@@ -1743,9 +1995,9 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         actions.addView(confirm, confirmParams);
         content.addView(actions, new LinearLayout.LayoutParams(-1, dp(44)));
         confirm.setOnClickListener(view -> {
-            String username = loginUsername.getText().toString().trim().toLowerCase(Locale.US);
+            String username = loginUsername.getText().toString().trim();
             String mobileValue = getSharedPreferences("fendly_account", MODE_PRIVATE).getString("mobile", "").trim();
-            if (!username.matches("^[a-z0-9_]{3,32}$")) {
+            if (!username.matches("^[a-zA-Z0-9_]{3,32}$")) {
                 loginUsername.setError(translate("Enter your username first"));
                 dialog.dismiss();
                 return;
@@ -1778,8 +2030,8 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         LinearLayout.LayoutParams iconParams = new LinearLayout.LayoutParams(dp(60), dp(60));
         iconParams.gravity = Gravity.CENTER_HORIZONTAL;
         content.addView(icon, iconParams);
-        TextView title = text(translate(titleText), 18, primaryTextColor(), Typeface.BOLD);
-        title.setTypeface(localizedScriptTypeface(title.getText(), Typeface.BOLD));
+        TextView title = text(translate(titleText), 18, primaryTextColor(), Typeface.NORMAL);
+        title.setTypeface(localizedScriptTypeface(title.getText(), Typeface.NORMAL));
         title.setGravity(Gravity.CENTER);
         title.setPadding(0, dp(8), 0, dp(2));
         content.addView(title, new LinearLayout.LayoutParams(-1, -2));
@@ -1828,17 +2080,20 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
     }
 
     private void showForgotOtpDialog(String username, String mobile, String pin, Dialog parentDialog) {
-        showThemedOtpDialog(translate("Enter OTP"), translate("Enter the 6-digit code sent to your mobile number."), translate("6-digit OTP"), value -> {
-            if (phoneVerificationId == null || value.length() != 6) {
-                Toast.makeText(this, translate("Enter the 6-digit OTP"), Toast.LENGTH_LONG).show();
-                return false;
-            }
-            verifyForgotOtp(username, mobile, pin, parentDialog, value);
-            return true;
-        }, () -> { });
+        showThemedOtpDialog(translate("Enter OTP"), translate("Enter the 6-digit code sent to your mobile number."), translate("6-digit OTP"),
+            (value, dialog, verifyInDialog, codeCells) -> {
+                if (phoneVerificationId == null || value.length() != 6) {
+                    Toast.makeText(this, translate("Enter the 6-digit OTP"), Toast.LENGTH_LONG).show();
+                    return;
+                }
+                verifyInDialog.setText(translate("Verifying..."));
+                verifyInDialog.setEnabled(false);
+                verifyForgotOtp(username, mobile, pin, parentDialog, value, dialog, verifyInDialog, codeCells);
+            }, () -> { }, null);
     }
 
-    private void verifyForgotOtp(String username, String mobile, String pin, Dialog parentDialog, String otpValue) {
+    private void verifyForgotOtp(String username, String mobile, String pin, Dialog parentDialog, String otpValue,
+                                Dialog dialog, TextView verifyInDialog, EditText[] codeCells) {
         if (phoneVerificationHandled) return;
         phoneVerificationHandled = true;
         network.execute(() -> {
@@ -1850,6 +2105,9 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                 boolean verified = response != null && response.optBoolean("success", false);
                 runOnUiThread(() -> {
                     if (verified) {
+                        if (dialog != null && dialog.isShowing()) {
+                            dialog.dismiss();
+                        }
                         getSharedPreferences("fendly_account", MODE_PRIVATE).edit()
                                 .putBoolean("created", true)
                                 .putString("username", username)
@@ -1865,12 +2123,28 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                                 .show();
                     } else {
                         phoneVerificationHandled = false;
-                        Toast.makeText(this, translate("This mobile is not linked to that username"), Toast.LENGTH_LONG).show();
+                        if (verifyInDialog != null) {
+                            verifyInDialog.setText(translate("Verify"));
+                            verifyInDialog.setEnabled(true);
+                        }
+                        if (codeCells != null) {
+                            for (EditText cell : codeCells) {
+                                if (cell != null) cell.setText("");
+                            }
+                            if (codeCells.length > 0 && codeCells[0] != null) {
+                                codeCells[0].requestFocus();
+                            }
+                        }
+                        Toast.makeText(this, translate("Incorrect OTP. Please try again."), Toast.LENGTH_LONG).show();
                     }
                 });
             } catch (Exception error) {
                 runOnUiThread(() -> {
                     phoneVerificationHandled = false;
+                    if (verifyInDialog != null) {
+                        verifyInDialog.setText(translate("Verify"));
+                        verifyInDialog.setEnabled(true);
+                    }
                     Toast.makeText(this, "Could not reset PIN", Toast.LENGTH_LONG).show();
                 });
             }
@@ -1938,7 +2212,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
     private LinearLayout labeledSpinner(String label, Spinner spinner) {
         LinearLayout group = new LinearLayout(this);
         group.setOrientation(LinearLayout.VERTICAL);
-        TextView fieldLabel = text(label, 10, secondaryTextColor(), Typeface.BOLD);
+        TextView fieldLabel = text(label, 10, secondaryTextColor(), Typeface.NORMAL);
         fieldLabel.setLetterSpacing(.04f);
         fieldLabel.setGravity(Gravity.START);
         fieldLabel.setIncludeFontPadding(false);
@@ -2204,7 +2478,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         currentPage = PAGE_HOME;
         screenRenderer = this::showHome;
         LinearLayout root = screenBase("Home");
-        addHeading("Find what matters.", "Lost nearby? Found something? Start here.");
+        addHeading("Find what matters.", "Lost or Found? We Connect the Dots.");
         LinearLayout choices = new LinearLayout(this);
         choices.setOrientation(LinearLayout.HORIZONTAL);
         TextView lost = actionButton("LOST", true);
@@ -2356,7 +2630,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         boolean locationVisibleOnThisScreen = hasLocation && currentReportType != null && currentReportType.equalsIgnoreCase(activeLocationReportType);
         TextView addLocation = text(locationVisibleOnThisScreen
             ? "Location ready"
-                : translate("Precise location  OFF"), 11, locationVisibleOnThisScreen ? Color.WHITE : secondaryTextColor(), Typeface.BOLD);
+                : translate("Precise location  OFF"), 11, locationVisibleOnThisScreen ? Color.WHITE : secondaryTextColor(), Typeface.NORMAL);
         addLocation.setGravity(Gravity.CENTER);
         addLocation.setBackground(locationVisibleOnThisScreen
                 ? roundWithStroke(LOST_GREEN, 10, LOST_GREEN)
@@ -2484,7 +2758,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                         options.put("amount", order.getInt("amount"));
                         options.put("currency", order.getString("currency"));
                         options.put("name", "Fendly");
-                        options.put("description", "Annual subscription renewal");
+                        options.put("description", "Subscription renewal");
                         options.put("theme.color", "#E8B24A");
                         options.put("method", new JSONObject().put("upi", true));
                         checkout.open(this, options);
@@ -2987,9 +3261,27 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
     }
 
     private void showProfilePhotoOptions() {
+        boolean hasPicture = hasProfilePicture();
+        if (hasPicture) {
+            new AlertDialog.Builder(this)
+                    .setTitle(translate("Profile photo"))
+                    .setItems(new String[]{translate("See profile picture"), translate("Choose profile picture")}, (dialog, which) -> {
+                        if (which == 0) {
+                            showEnlargedProfilePicture();
+                        } else {
+                            showChoosePhotoSourceOptions();
+                        }
+                    })
+                    .show();
+        } else {
+            showChoosePhotoSourceOptions();
+        }
+    }
+
+    private void showChoosePhotoSourceOptions() {
         new AlertDialog.Builder(this)
-                .setTitle("Update profile photo")
-                .setItems(new String[]{"Choose from gallery", "Take photo"}, (dialog, which) -> {
+                .setTitle(translate("Choose profile picture"))
+                .setItems(new String[]{translate("Choose from gallery"), translate("Take photo")}, (dialog, which) -> {
                     if (which == 0) {
                         openProfilePhotoPicker();
                     } else {
@@ -2997,6 +3289,55 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                     }
                 })
                 .show();
+    }
+
+    private void showEnlargedProfilePicture() {
+        Dialog imageDialog = new Dialog(this, android.R.style.Theme_Black_NoTitleBar_Fullscreen);
+        LinearLayout layout = new LinearLayout(this);
+        layout.setOrientation(LinearLayout.VERTICAL);
+        layout.setGravity(Gravity.CENTER);
+        layout.setBackgroundColor(Color.BLACK);
+        layout.setLayoutParams(new ViewGroup.LayoutParams(-1, -1));
+
+        ImageView imageView = new ImageView(this);
+        imageView.setLayoutParams(new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        imageView.setScaleType(ImageView.ScaleType.FIT_CENTER);
+
+        SharedPreferences account = getSharedPreferences("fendly_account", MODE_PRIVATE);
+        String savedProfileUri = account.getString("profile_image_uri", null);
+        String cloudImageUrl = account.getString("profile_image_url", "").trim();
+
+        if (capturedProfileImage != null) {
+            imageView.setImageBitmap(capturedProfileImage);
+        } else if (selectedProfileImage != null) {
+            Glide.with(this).load(selectedProfileImage).into(imageView);
+        } else if (savedProfileUri != null && !savedProfileUri.trim().isEmpty()) {
+            if (savedProfileUri.startsWith("content://") || savedProfileUri.startsWith("file://") || savedProfileUri.startsWith("http://") || savedProfileUri.startsWith("https://")) {
+                Glide.with(this).load(Uri.parse(savedProfileUri)).into(imageView);
+            } else {
+                Glide.with(this).load(new File(savedProfileUri)).into(imageView);
+            }
+        } else if (!cloudImageUrl.isEmpty()) {
+            Glide.with(this).load(cloudImageUrl).into(imageView);
+        } else {
+            imageView.setImageResource(R.drawable.ic_field_person);
+        }
+
+        imageView.setOnClickListener(v -> imageDialog.dismiss());
+        layout.setOnClickListener(v -> imageDialog.dismiss());
+        layout.addView(imageView);
+        imageDialog.setContentView(layout);
+        imageDialog.show();
+    }
+
+    private boolean hasProfilePicture() {
+        SharedPreferences account = getSharedPreferences("fendly_account", MODE_PRIVATE);
+        String savedProfileUri = account.getString("profile_image_uri", null);
+        String cloudImageUrl = account.getString("profile_image_url", "").trim();
+        return (selectedProfileImage != null) ||
+               (capturedProfileImage != null) ||
+               (savedProfileUri != null && !savedProfileUri.trim().isEmpty()) ||
+               (!cloudImageUrl.isEmpty());
     }
 
     private void openProfilePhotoPicker() {
@@ -3023,29 +3364,117 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
 
     private void refreshEmailVerificationState(EditText email, TextView verifyButton) {
         SharedPreferences account = getSharedPreferences("fendly_account", MODE_PRIVATE);
-        long cooldownUntil = account.getLong("email_verify_cooldown_until", 0L);
-        if (cooldownUntil > System.currentTimeMillis()) {
-            startEmailVerificationCooldown(verifyButton, cooldownUntil, false);
-            return;
+        FirebaseUser currentUser = FirebaseAuth.getInstance().getCurrentUser();
+        
+        // Check Firestore-synced verification status first
+        boolean cloudEmailVerified = account.getBoolean("email_verified", false);
+        boolean firebaseEmailVerified = currentUser != null && currentUser.isEmailVerified();
+        
+        if (cloudEmailVerified || firebaseEmailVerified) {
+            account.edit().putBoolean("email_verified", true).apply();
+            cancelEmailVerificationCooldown();
+            lockVerifiedEmailField(email, verifyButton);
+        } else {
+            long cooldownUntil = account.getLong("email_verify_cooldown_until", 0L);
+            if (cooldownUntil > System.currentTimeMillis()) {
+                startEmailVerificationCooldown(verifyButton, cooldownUntil, false);
+                return;
+            }
+            verifyButton.setText(translate("Verify OTP"));
+            verifyButton.setTextColor(GOLD_ON);
+            verifyButton.setEnabled(true);
+            verifyButton.setClickable(true);
+            verifyButton.setFocusable(true);
+            verifyButton.setBackground(round(GOLD, 24));
         }
 
-        boolean verified = account.getBoolean("email_verified", false);
-        if (verified) {
-            cancelEmailVerificationCooldown();
-            setVerifiedButtonState(verifyButton);
-            return;
+        if (!cloudEmailVerified && !firebaseEmailVerified && currentUser != null) {
+            FirebaseFirestore db = FirebaseFirestore.getInstance();
+            db.collection("users").document(getProfileDocumentKey())
+                    .get(Source.SERVER)
+                    .addOnSuccessListener(document -> {
+                        if (document != null && document.exists()) {
+                            boolean isVerifiedInCloud = parseBooleanValue(document.get("emailVerified"))
+                                    || parseBooleanValue(document.get("isEmailVerified"))
+                                    || parseBooleanValue(document.get("email_verified"));
+                            String cloudEmail = document.getString("email");
+                            if (isVerifiedInCloud) {
+                                SharedPreferences.Editor editor = getSharedPreferences("fendly_account", MODE_PRIVATE).edit();
+                                editor.putBoolean("email_verified", true);
+                                if (cloudEmail != null && !cloudEmail.trim().isEmpty() && !cloudEmail.endsWith("@login.fendly.app")) {
+                                    editor.putString("email", cloudEmail.trim());
+                                    if (email != null) {
+                                        email.setText(cloudEmail.trim());
+                                    }
+                                }
+                                editor.apply();
+                                cancelEmailVerificationCooldown();
+                                lockVerifiedEmailField(email, verifyButton);
+                                return;
+                            }
+                        }
+
+                        // Backup check: query verified_emails collection directly by email address from SERVER!
+                        String currentFieldEmail = (email != null ? email.getText().toString() : "").trim().toLowerCase(Locale.US);
+                        String prefsSavedEmail = account.getString("email", "").trim().toLowerCase(Locale.US);
+                        String emailToCheck = !currentFieldEmail.isEmpty() ? currentFieldEmail : prefsSavedEmail;
+
+                        if (!emailToCheck.isEmpty() && !emailToCheck.endsWith("@login.fendly.app")) {
+                            db.collection("verified_emails").document(emailToCheck)
+                                    .get(Source.SERVER)
+                                    .addOnSuccessListener(emailDoc -> {
+                                        if (emailDoc != null && emailDoc.exists() && parseBooleanValue(emailDoc.get("verified"))) {
+                                            getSharedPreferences("fendly_account", MODE_PRIVATE).edit()
+                                                    .putBoolean("email_verified", true)
+                                                    .putString("email", emailToCheck)
+                                                    .apply();
+                                            if (email != null && email.getText().toString().trim().isEmpty()) {
+                                                email.setText(emailToCheck);
+                                            }
+                                            cancelEmailVerificationCooldown();
+                                            lockVerifiedEmailField(email, verifyButton);
+                                        }
+                                    });
+                        }
+                    });
         }
 
         String savedEmail = account.getString("email", "").trim();
-        if (savedEmail != null && !savedEmail.isEmpty()) {
+        if ((savedEmail == null || savedEmail.isEmpty()) && currentUser != null && currentUser.getEmail() != null) {
+            String firebaseEmail = currentUser.getEmail().trim();
+            if (!firebaseEmail.endsWith("@login.fendly.app")) {
+                savedEmail = firebaseEmail;
+                account.edit().putString("email", savedEmail).apply();
+            }
+        }
+        if (savedEmail != null && !savedEmail.isEmpty() && !savedEmail.endsWith("@login.fendly.app") && email.getText().toString().trim().isEmpty()) {
             email.setText(savedEmail);
         }
-        verifyButton.setText(translate("Verify OTP"));
-        verifyButton.setTextColor(GOLD_ON);
-        verifyButton.setEnabled(true);
-        verifyButton.setClickable(true);
-        verifyButton.setFocusable(true);
-        verifyButton.setBackground(round(GOLD, 24));
+
+        email.addTextChangedListener(new TextWatcher() {
+            @Override public void beforeTextChanged(CharSequence value, int start, int count, int after) { }
+            @Override public void onTextChanged(CharSequence value, int start, int before, int count) {
+                if (applyingCloudProfile || !email.hasFocus() || !email.isEnabled()) {
+                    return;
+                }
+                String currentEmail = value.toString().trim().toLowerCase(Locale.US);
+                SharedPreferences prefs = getSharedPreferences("fendly_account", MODE_PRIVATE);
+                boolean isVerified = prefs.getBoolean("email_verified", false);
+                String verifiedEmail = prefs.getString("email", "").trim().toLowerCase(Locale.US);
+
+                if (isVerified && !currentEmail.isEmpty() && !verifiedEmail.isEmpty() && !verifiedEmail.equalsIgnoreCase(currentEmail)) {
+                    prefs.edit().putBoolean("email_verified", false).apply();
+                    verifyButton.setText(translate("Verify OTP"));
+                    verifyButton.setEnabled(true);
+                    verifyButton.setClickable(true);
+                    verifyButton.setFocusable(true);
+                    verifyButton.setBackground(round(GOLD, 24));
+                    verifyButton.setTextColor(GOLD_ON);
+                    verifyButton.setOnClickListener(v -> sendEmailOtpFlow(email, verifyButton));
+                }
+            }
+            @Override public void afterTextChanged(Editable value) { }
+        });
     }
 
     private void cancelEmailVerificationCooldown() {
@@ -3069,10 +3498,20 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         if (verifyButton == null) {
             return;
         }
+        SharedPreferences account = getSharedPreferences("fendly_account", MODE_PRIVATE);
+        if (account.getBoolean("email_verified", false)) {
+            cancelEmailVerificationCooldown();
+            setVerifiedButtonState(verifyButton);
+            return;
+        }
         long remainingMs = cooldownUntil - System.currentTimeMillis();
         if (remainingMs <= 0L) {
             verifyButton.setEnabled(true);
+            verifyButton.setClickable(true);
+            verifyButton.setFocusable(true);
             verifyButton.setText(translate("Verify OTP"));
+            verifyButton.setTextColor(GOLD_ON);
+            verifyButton.setBackground(round(GOLD, 24));
             getSharedPreferences("fendly_account", MODE_PRIVATE).edit()
                     .remove("email_verify_cooldown_until")
                     .apply();
@@ -3102,100 +3541,158 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
 
         long cooldownUntil = getSharedPreferences("fendly_account", MODE_PRIVATE).getLong("email_verify_cooldown_until", 0L);
         if (cooldownUntil > System.currentTimeMillis()) {
-            startEmailVerificationCooldown(verifyButton, cooldownUntil, false);
+            // An active OTP exists within its 5-minute validity window. Re-open the OTP entry dialog!
+            showEmailOtpDialog(emailValue, emailField, verifyButton);
             return;
         }
 
         verifyButton.setEnabled(false);
         verifyButton.setText(translate("Sending..."));
         network.execute(() -> {
+            boolean sent = false;
+            String debugOtp = "";
+            String errorMessage = "Could not send email OTP";
             try {
                 JSONObject payload = new JSONObject();
                 payload.put("email", emailValue);
                 JSONObject response = postJson("/api/auth/send-email-otp", payload.toString(), null);
-                boolean sent = response != null && response.optBoolean("success", false);
-                String errorMessage = response != null ? response.optString("detail", response.optString("message", "Could not send email OTP")) : "Could not send email OTP";
-                runOnUiThread(() -> {
+                if (response != null) {
+                    sent = response.optBoolean("success", false);
+                    debugOtp = response.optString("debug_otp", "");
                     if (!sent) {
-                        verifyButton.setText(translate("Verify OTP"));
-                        verifyButton.setEnabled(true);
-                        Toast.makeText(this, errorMessage, Toast.LENGTH_LONG).show();
-                        return;
+                        errorMessage = response.optString("detail", response.optString("message", errorMessage));
                     }
-                    getSharedPreferences("fendly_account", MODE_PRIVATE).edit()
-                            .putString("email", emailValue)
-                            .apply();
-                    long newCooldownUntil = System.currentTimeMillis() + EMAIL_VERIFICATION_COOLDOWN_MS;
-                    startEmailVerificationCooldown(verifyButton, newCooldownUntil, true);
-                    showEmailOtpDialog(emailValue, verifyButton);
-                    Toast.makeText(this, "Verification code sent to your email", Toast.LENGTH_SHORT).show();
-                });
+                }
             } catch (Exception error) {
-                runOnUiThread(() -> {
-                    verifyButton.setText(translate("Verify OTP"));
-                    verifyButton.setEnabled(true);
-                    Toast.makeText(this, "Could not send email OTP", Toast.LENGTH_LONG).show();
-                });
+                errorMessage = error.getMessage() != null ? error.getMessage() : "Could not send email OTP";
             }
+
+            final boolean finalSent = sent;
+            final String finalErrorMessage = errorMessage;
+            final String finalDebugOtp = debugOtp;
+            runOnUiThread(() -> {
+                verifyButton.setText(translate("Enter OTP"));
+                verifyButton.setEnabled(true);
+                if (!finalSent) {
+                    Toast.makeText(this, finalErrorMessage, Toast.LENGTH_LONG).show();
+                    return;
+                }
+                getSharedPreferences("fendly_account", MODE_PRIVATE).edit()
+                        .putString("email", emailValue)
+                        .apply();
+                long newCooldownUntil = System.currentTimeMillis() + EMAIL_VERIFICATION_COOLDOWN_MS;
+                startEmailVerificationCooldown(verifyButton, newCooldownUntil, true);
+                showEmailOtpDialog(emailValue, emailField, verifyButton);
+
+                String toastMsg = "Verification code sent to your email";
+                if (!finalDebugOtp.isEmpty()) {
+                    toastMsg = "Verification code sent (Dev: " + finalDebugOtp + ")";
+                }
+                Toast.makeText(this, toastMsg, Toast.LENGTH_LONG).show();
+            });
         });
     }
 
-    private void showEmailOtpDialog(String emailValue, TextView verifyButton) {
-        showThemedOtpDialog("Verify email", "Enter the 6-digit code sent to " + emailValue, "6-digit OTP", value -> {
-            if (value.length() != 6) {
-                verifyButton.setText(translate("Verify OTP"));
+    private void showEmailOtpDialog(String emailValue, EditText emailField, TextView verifyButton) {
+        showThemedOtpDialog("Verify email", "Enter the 6-digit code sent to " + emailValue, "6-digit OTP",
+            (otpValue, dialog, verifyInDialog, codeCells) -> {
+                verifyEmailOtpCode(emailValue, otpValue, emailField, verifyButton, dialog, verifyInDialog, codeCells);
+            }, () -> {
+                verifyButton.setText(translate("Enter OTP"));
                 verifyButton.setEnabled(true);
-                Toast.makeText(this, "Enter a valid 6-digit code", Toast.LENGTH_LONG).show();
-                return false;
-            }
-            verifyEmailOtpCode(emailValue, value, verifyButton);
-            return true;
-        }, () -> {
-                    verifyButton.setText(translate("Verify OTP"));
-                    verifyButton.setEnabled(true);
-                });
+            }, () -> {
+                sendEmailOtpFlow(emailField, verifyButton);
+            });
     }
 
-    private void verifyEmailOtpCode(String emailValue, String otpValue, TextView verifyButton) {
+    private void verifyEmailOtpCode(String emailValue, String otpValue, EditText emailField, TextView verifyButton,
+                                    Dialog dialog, TextView verifyInDialog, EditText[] codeCells) {
         verifyButton.setText(translate("Verifying..."));
         verifyButton.setEnabled(false);
-        network.execute(() -> {
-            try {
-                JSONObject payload = new JSONObject();
-                payload.put("email", emailValue);
-                payload.put("otp", otpValue);
-                JSONObject response = postJson("/api/auth/verify-email-otp", payload.toString(), null);
-                boolean verified = response != null && response.optBoolean("success", false);
-                String errorMessage = response != null ? response.optString("detail", response.optString("message", "Could not verify email")) : "Could not verify email";
+        if (verifyInDialog != null) {
+            verifyInDialog.setText(translate("Verifying..."));
+            verifyInDialog.setEnabled(false);
+        }
+        FirebaseUser currentUser = FirebaseAuth.getInstance().getCurrentUser();
+        if (currentUser == null) {
+            verifyButton.setText(translate("Enter OTP"));
+            verifyButton.setEnabled(true);
+            if (verifyInDialog != null) {
+                verifyInDialog.setText(translate("Verify"));
+                verifyInDialog.setEnabled(true);
+            }
+            Toast.makeText(this, "Sign in required", Toast.LENGTH_SHORT).show();
+            return;
+        }
+
+        currentUser.getIdToken(false).addOnSuccessListener(tokenResult -> {
+            String idToken = tokenResult != null ? tokenResult.getToken() : null;
+            network.execute(() -> {
+                boolean verified = false;
+                String errorMessage = "Could not verify email";
+                try {
+                    JSONObject payload = new JSONObject();
+                    payload.put("email", emailValue);
+                    payload.put("otp", otpValue);
+                    JSONObject response = postJson("/api/auth/verify-email-otp", payload.toString(), idToken);
+                    if (response != null) {
+                        verified = response.optBoolean("success", false);
+                        if (!verified) {
+                            errorMessage = response.optString("detail", response.optString("message", errorMessage));
+                        }
+                    }
+                } catch (Exception error) {
+                    errorMessage = error.getMessage() != null ? error.getMessage() : "Could not verify email";
+                }
+
+                final boolean finalVerified = verified;
+                final String finalErrorMessage = errorMessage;
                 runOnUiThread(() -> {
-                    if (verified) {
+                    if (finalVerified) {
+                        if (dialog != null && dialog.isShowing()) {
+                            dialog.dismiss();
+                        }
+                        cancelEmailVerificationCooldown();
                         getSharedPreferences("fendly_account", MODE_PRIVATE).edit()
                                 .putString("email", emailValue)
                                 .putBoolean("email_verified", true)
+                                .remove("email_verify_cooldown_until")
                                 .apply();
-                        setVerifiedButtonState(verifyButton);
-                        Toast.makeText(this, "Email verified", Toast.LENGTH_SHORT).show();
+                        saveVerifiedEmailToCloud(emailValue);
+                        lockVerifiedEmailField(emailField, verifyButton);
+                        Toast.makeText(this, "Email verified successfully", Toast.LENGTH_SHORT).show();
                     } else {
-                        verifyButton.setText(translate("Verify OTP"));
+                        // Keep dialog open on failure & clear cells so user can re-enter correct OTP immediately
+                        if (verifyInDialog != null) {
+                            verifyInDialog.setText(translate("Verify"));
+                            verifyInDialog.setEnabled(true);
+                        }
+                        if (codeCells != null) {
+                            for (EditText cell : codeCells) {
+                                if (cell != null) cell.setText("");
+                            }
+                            if (codeCells.length > 0 && codeCells[0] != null) {
+                                codeCells[0].requestFocus();
+                            }
+                        }
+                        verifyButton.setText(translate("Enter OTP"));
                         verifyButton.setEnabled(true);
                         verifyButton.setClickable(true);
                         verifyButton.setFocusable(true);
                         verifyButton.setBackground(round(GOLD, 24));
                         verifyButton.setTextColor(GOLD_ON);
-                        Toast.makeText(this, errorMessage, Toast.LENGTH_LONG).show();
+                        Toast.makeText(this, finalErrorMessage, Toast.LENGTH_LONG).show();
                     }
                 });
-            } catch (Exception error) {
-                runOnUiThread(() -> {
-                    verifyButton.setText(translate("Verify OTP"));
-                    verifyButton.setEnabled(true);
-                    verifyButton.setClickable(true);
-                    verifyButton.setFocusable(true);
-                    verifyButton.setBackground(round(GOLD, 24));
-                    verifyButton.setTextColor(GOLD_ON);
-                    Toast.makeText(this, "Could not verify email", Toast.LENGTH_LONG).show();
-                });
+            });
+        }).addOnFailureListener(error -> {
+            verifyButton.setText(translate("Enter OTP"));
+            verifyButton.setEnabled(true);
+            if (verifyInDialog != null) {
+                verifyInDialog.setText(translate("Verify"));
+                verifyInDialog.setEnabled(true);
             }
+            Toast.makeText(this, "Authentication failed", Toast.LENGTH_SHORT).show();
         });
     }
 
@@ -3245,24 +3742,29 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
     }
 
     private void showOtpDialogForProfile(String mobileValue, EditText mobile, TextView verifyButton) {
-        showThemedOtpDialog("Verify mobile", "Enter the code sent to " + normalizePhoneNumber(mobileValue), "6-digit OTP", value -> {
-            if (phoneVerificationId == null || value.length() != 6) {
-                verifyButton.setText(translate("Verify OTP"));
+        showThemedOtpDialog("Verify mobile", "Enter the code sent to " + normalizePhoneNumber(mobileValue), "6-digit OTP",
+            (otpValue, dialog, verifyInDialog, codeCells) -> {
+                if (phoneVerificationId == null || otpValue.length() != 6) {
+                    Toast.makeText(this, "Enter a valid 6-digit code", Toast.LENGTH_LONG).show();
+                    return;
+                }
+                verifyProfileOtp(phoneVerificationId, otpValue, mobileValue, mobile, verifyButton, dialog, verifyInDialog, codeCells);
+            }, () -> {
+                verifyButton.setText(translate("Enter OTP"));
                 verifyButton.setEnabled(true);
-                Toast.makeText(this, "Enter a valid 6-digit code", Toast.LENGTH_LONG).show();
-                return false;
-            }
-            verifyProfileOtp(phoneVerificationId, value, mobileValue, mobile, verifyButton);
-            return true;
-        }, () -> {
-                    verifyButton.setText(translate("Verify OTP"));
-                    verifyButton.setEnabled(true);
-                });
+            }, () -> {
+                verifyProfileMobile(mobile, verifyButton);
+            });
     }
 
-    private void verifyProfileOtp(String sessionId, String otpValue, String mobileValue, EditText mobile, TextView verifyButton) {
+    private void verifyProfileOtp(String sessionId, String otpValue, String mobileValue, EditText mobile, TextView verifyButton,
+                                   Dialog dialog, TextView verifyInDialog, EditText[] codeCells) {
         verifyButton.setText(translate("Verifying..."));
         verifyButton.setEnabled(false);
+        if (verifyInDialog != null) {
+            verifyInDialog.setText(translate("Verifying..."));
+            verifyInDialog.setEnabled(false);
+        }
         network.execute(() -> {
             try {
                 JSONObject payload = new JSONObject();
@@ -3272,6 +3774,9 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                 boolean verified = response != null && response.optBoolean("success", false);
                 runOnUiThread(() -> {
                     if (verified) {
+                        if (dialog != null && dialog.isShowing()) {
+                            dialog.dismiss();
+                        }
                         getSharedPreferences("fendly_account", MODE_PRIVATE).edit()
                                 .putString("mobile", mobileValue)
                                 .putBoolean("mobile_verified", true)
@@ -3281,18 +3786,34 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                         mobile.setText(mobileValue);
                         Toast.makeText(this, "Mobile verified", Toast.LENGTH_SHORT).show();
                     } else {
-                        verifyButton.setText(translate("Verify OTP"));
+                        if (verifyInDialog != null) {
+                            verifyInDialog.setText(translate("Verify"));
+                            verifyInDialog.setEnabled(true);
+                        }
+                        if (codeCells != null) {
+                            for (EditText cell : codeCells) {
+                                if (cell != null) cell.setText("");
+                            }
+                            if (codeCells.length > 0 && codeCells[0] != null) {
+                                codeCells[0].requestFocus();
+                            }
+                        }
+                        verifyButton.setText(translate("Enter OTP"));
                         verifyButton.setEnabled(true);
                         verifyButton.setClickable(true);
                         verifyButton.setFocusable(true);
                         verifyButton.setBackground(round(GOLD, 24));
                         verifyButton.setTextColor(GOLD_ON);
-                        Toast.makeText(this, "Could not verify mobile", Toast.LENGTH_LONG).show();
+                        Toast.makeText(this, "Could not verify mobile. Check the code and try again.", Toast.LENGTH_LONG).show();
                     }
                 });
             } catch (Exception error) {
                 runOnUiThread(() -> {
-                    verifyButton.setText(translate("Verify OTP"));
+                    if (verifyInDialog != null) {
+                        verifyInDialog.setText(translate("Verify"));
+                        verifyInDialog.setEnabled(true);
+                    }
+                    verifyButton.setText(translate("Enter OTP"));
                     verifyButton.setEnabled(true);
                     verifyButton.setClickable(true);
                     verifyButton.setFocusable(true);
@@ -3305,7 +3826,53 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
     }
 
 
+    private void saveVerifiedEmailToCloud(String emailValue) {
+        SharedPreferences account = getSharedPreferences("fendly_account", MODE_PRIVATE);
+        String cleanEmail = emailValue == null ? "" : emailValue.trim().toLowerCase(Locale.US);
+        account.edit()
+                .putString("email", cleanEmail)
+                .putBoolean("email_verified", true)
+                .remove("email_verify_cooldown_until")
+                .apply();
+
+        FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
+        if (user == null) return;
+
+        Map<String, Object> update = new LinkedHashMap<>();
+        update.put("uid", user.getUid());
+        update.put("email", cleanEmail);
+        update.put("emailVerified", true);
+        update.put("isEmailVerified", true);
+        update.put("email_verified", true);
+
+        FirebaseFirestore db = FirebaseFirestore.getInstance();
+        db.collection("users").document(getProfileDocumentKey())
+                .set(update, SetOptions.merge())
+                .addOnSuccessListener(unused -> Log.d("FIREBASE_SUCCESS", "Email verified saved to users document"))
+                .addOnFailureListener(error -> Log.e("FIREBASE_ERROR", "Email verification cloud save failed: ", error));
+
+        if (!cleanEmail.isEmpty() && !cleanEmail.endsWith("@login.fendly.app")) {
+            Map<String, Object> emailDoc = new LinkedHashMap<>();
+            emailDoc.put("email", cleanEmail);
+            emailDoc.put("verified", true);
+            emailDoc.put("uid", user.getUid());
+            db.collection("verified_emails").document(cleanEmail)
+                    .set(emailDoc, SetOptions.merge())
+                    .addOnSuccessListener(unused -> Log.d("FIREBASE_SUCCESS", "Email verified saved to verified_emails collection"))
+                    .addOnFailureListener(error -> Log.e("FIREBASE_ERROR", "Verified emails save failed: ", error));
+        }
+
+        syncProfileToBackendApi(account.getString("username", ""), account.getString("full_name", ""),
+                cleanEmail, account.getString("mobile", ""), account.getString("state", ""), account.getString("city", ""));
+    }
+
     private void saveVerifiedMobileToCloud(String mobileValue) {
+        SharedPreferences account = getSharedPreferences("fendly_account", MODE_PRIVATE);
+        account.edit()
+                .putString("mobile", mobileValue)
+                .putBoolean("mobile_verified", true)
+                .apply();
+
         FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
         if (user == null) return;
         Map<String, Object> update = new LinkedHashMap<>();
@@ -3313,9 +3880,12 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         update.put("mobile", mobileValue);
         update.put("mobileVerified", true);
         update.put("isMobileVerified", true);
-        FirebaseFirestore.getInstance().collection("users").document(user.getUid())
+        update.put("mobile_verified", true);
+        FirebaseFirestore.getInstance().collection("users").document(getProfileDocumentKey())
                 .set(update, SetOptions.merge())
-                .addOnFailureListener(error -> Log.e("FIREBASE_ERROR", "Data fetch failed: ", error));
+                .addOnFailureListener(error -> Log.e("FIREBASE_ERROR", "Mobile verification cloud save failed: ", error));
+        syncProfileToBackendApi(account.getString("username", ""), account.getString("full_name", ""),
+                account.getString("email", ""), mobileValue, account.getString("state", ""), account.getString("city", ""));
     }
     private Bitmap bitmapFromUri(Uri uri) {
         if (uri == null) return null;
@@ -3384,34 +3954,40 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             slotView.setClipToOutline(true);
 
             ImageView image = new ImageView(this);
-            image.setScaleType(ImageView.ScaleType.CENTER_CROP);
-            image.setPadding(0, 0, 0, 0);
             image.setBackgroundColor(Color.TRANSPARENT);
-            image.setImageResource(R.drawable.add_image);
-            image.clearColorFilter();
-            if (reportImages[slot] != null) {
-                Bitmap existing = bitmapFromUri(reportImages[slot]);
-                if (existing != null) {
-                    image.setImageBitmap(existing);
-                } else {
-                    image.setImageResource(R.drawable.add_image);
-                }
-            }
-            if (reportCameraImages[slot] != null) {
-                image.clearColorFilter();
-                image.setImageBitmap(reportCameraImages[slot]);
-            }
             boolean hasImage = reportImages[slot] != null || reportCameraImages[slot] != null;
-            image.setScaleX(hasImage ? 1f : 0.5f);
-            image.setScaleY(hasImage ? 1f : 0.5f);
             if (hasImage) {
+                image.setScaleType(ImageView.ScaleType.CENTER_CROP);
+                image.setPadding(0, 0, 0, 0);
+                image.clearColorFilter();
+                image.setScaleX(1f);
+                image.setScaleY(1f);
+                if (reportImages[slot] != null) {
+                    Bitmap existing = bitmapFromUri(reportImages[slot]);
+                    if (existing != null) {
+                        image.setImageBitmap(existing);
+                    } else {
+                        image.setImageResource(R.drawable.add_image);
+                    }
+                }
+                if (reportCameraImages[slot] != null) {
+                    image.setImageBitmap(reportCameraImages[slot]);
+                }
                 image.setOnClickListener(view -> showFullImagePreview(imageSlot));
             } else {
+                image.setScaleType(ImageView.ScaleType.FIT_CENTER);
+                int pad = dp(22);
+                image.setPadding(pad, pad, pad, pad);
+                image.setImageResource(R.drawable.add_image);
+                image.setColorFilter(accentColor());
+                image.setScaleX(1f);
+                image.setScaleY(1f);
                 image.setOnClickListener(view -> showImageOptions(imageSlot));
             }
+
             slotView.addView(image, new FrameLayout.LayoutParams(-1, -1));
 
-            if (reportImages[slot] != null || reportCameraImages[slot] != null) {
+            if (hasImage) {
                 ImageView remove = new ImageView(this);
                 remove.setImageResource(android.R.drawable.ic_menu_close_clear_cancel);
                 remove.setColorFilter(Color.WHITE);
@@ -3547,8 +4123,15 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
 
     private TextWatcher draftWatcher(Consumer<String> update) {
         return new TextWatcher() {
+            private String lastValue = "";
             @Override public void beforeTextChanged(CharSequence value, int start, int count, int after) { }
-            @Override public void onTextChanged(CharSequence value, int start, int before, int count) { update.accept(value.toString()); }
+            @Override public void onTextChanged(CharSequence value, int start, int before, int count) {
+                String current = value.toString();
+                if (!current.equals(lastValue)) {
+                    lastValue = current;
+                    update.accept(current);
+                }
+            }
             @Override public void afterTextChanged(Editable value) { }
         };
     }
@@ -3589,7 +4172,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         currentPage = PAGE_SUBSCRIPTION;
         LinearLayout root = screenBase("Fendly Plus");
         addHeading("Report an item", "Silver wristwatch");
-        addField(root, premiumCard(translate("Annual subscription"), localizedAnnualPriceText()));
+        addField(root, premiumCard(translate("Subscription"), localizedAnnualPriceText()));
         TextView pay = actionButton("Pay and submit lost report", true);
         pay.setOnClickListener(view -> startPayment(item, description, imei, location, date, pay));
         addField(root, pay);
@@ -3605,73 +4188,192 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         addHeading(translate("Your reports"), translate("Keep track of items you are helping to reunite."));
         TextView loading = text(localizeReportsText("Loading reports..."), 16, secondaryTextColor(), Typeface.NORMAL);
         addField(root, loading);
+
+        FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
+        if (user == null) {
+            loading.setText(localizeReportsText("Sign in to view reports."));
+            TextView home = actionButton(translate("Back home"), false);
+            home.setOnClickListener(v -> showHome());
+            addField(root, home);
+            return;
+        }
+
+        user.getIdToken(false).addOnSuccessListener(tokenResult -> {
+            String idToken = (tokenResult != null) ? tokenResult.getToken() : null;
+            String currentUid = user.getUid();
+            FirebaseFirestore db = FirebaseFirestore.getInstance();
+
+            network.execute(() -> {
+                List<JSONObject> backendReports = new ArrayList<>();
+                if (idToken != null) {
+                    HttpURLConnection connection = null;
+                    try {
+                        connection = (HttpURLConnection) new URL(API_BASE + "/api/items/mine").openConnection();
+                        connection.setRequestMethod("GET");
+                        connection.setConnectTimeout(8000);
+                        connection.setReadTimeout(10000);
+                        connection.setRequestProperty("Authorization", "Bearer " + idToken);
+                        if (connection.getResponseCode() >= 200 && connection.getResponseCode() < 300) {
+                            String response = readStream(connection.getInputStream());
+                            if (response != null && !response.trim().isEmpty()) {
+                                JSONArray arr = new JSONArray(response);
+                                for (int i = 0; i < arr.length(); i++) {
+                                    JSONObject item = arr.optJSONObject(i);
+                                    if (item != null) backendReports.add(item);
+                                }
+                            }
+                        }
+                    } catch (Exception ignored) {
+                    } finally {
+                        if (connection != null) connection.disconnect();
+                    }
+                }
+
+                Task<QuerySnapshot> f1 = db.collection("found_items").whereEqualTo("user_id", currentUid).get();
+                Task<QuerySnapshot> f2 = db.collection("found_items").whereEqualTo("created_by", currentUid).get();
+                Task<QuerySnapshot> f3 = db.collection("found_items").whereEqualTo("uid", currentUid).get();
+                Task<QuerySnapshot> f4 = db.collection("found_items").whereEqualTo("userId", currentUid).get();
+
+                Task<QuerySnapshot> l1 = db.collection("lost_items").whereEqualTo("user_id", currentUid).get();
+                Task<QuerySnapshot> l2 = db.collection("lost_items").whereEqualTo("created_by", currentUid).get();
+                Task<QuerySnapshot> l3 = db.collection("lost_items").whereEqualTo("uid", currentUid).get();
+                Task<QuerySnapshot> l4 = db.collection("lost_items").whereEqualTo("userId", currentUid).get();
+
+                Tasks.whenAllComplete(f1, f2, f3, f4, l1, l2, l3, l4).addOnCompleteListener(firestoreTask -> {
+                    List<JSONObject> firestoreReports = new ArrayList<>();
+                    try {
+                        List<DocumentSnapshot> foundDocs = new ArrayList<>();
+                        List<DocumentSnapshot> lostDocs = new ArrayList<>();
+                        if (f1.isSuccessful() && f1.getResult() != null) foundDocs.addAll(f1.getResult().getDocuments());
+                        if (f2.isSuccessful() && f2.getResult() != null) foundDocs.addAll(f2.getResult().getDocuments());
+                        if (f3.isSuccessful() && f3.getResult() != null) foundDocs.addAll(f3.getResult().getDocuments());
+                        if (f4.isSuccessful() && f4.getResult() != null) foundDocs.addAll(f4.getResult().getDocuments());
+
+                        if (l1.isSuccessful() && l1.getResult() != null) lostDocs.addAll(l1.getResult().getDocuments());
+                        if (l2.isSuccessful() && l2.getResult() != null) lostDocs.addAll(l2.getResult().getDocuments());
+                        if (l3.isSuccessful() && l3.getResult() != null) lostDocs.addAll(l3.getResult().getDocuments());
+                        if (l4.isSuccessful() && l4.getResult() != null) lostDocs.addAll(l4.getResult().getDocuments());
+
+                        Map<String, DocumentSnapshot> uniqueFound = new LinkedHashMap<>();
+                        for (DocumentSnapshot doc : foundDocs) uniqueFound.put(doc.getId(), doc);
+                        Map<String, DocumentSnapshot> uniqueLost = new LinkedHashMap<>();
+                        for (DocumentSnapshot doc : lostDocs) uniqueLost.put(doc.getId(), doc);
+
+                        for (DocumentSnapshot doc : uniqueFound.values()) {
+                            JSONObject obj = new JSONObject();
+                            obj.put("id", doc.getId());
+                            obj.put("type", "FOUND");
+                            obj.put("title", doc.getString("title") != null ? doc.getString("title") : "Untitled item");
+                            obj.put("description", doc.getString("description") != null ? doc.getString("description") : "");
+                            obj.put("report_location", doc.getString("report_location") != null ? doc.getString("report_location") : "");
+                            obj.put("report_date", doc.getString("report_date") != null ? doc.getString("report_date") : "");
+                            obj.put("image_url", doc.getString("image_url"));
+                            Long editCount = doc.getLong("edit_count");
+                            obj.put("edit_count", editCount != null ? editCount.intValue() : 0);
+                            Timestamp ts = doc.getTimestamp("created_at");
+                            obj.put("created_at_ms", ts != null ? ts.toDate().getTime() : System.currentTimeMillis());
+                            firestoreReports.add(obj);
+                        }
+                        for (DocumentSnapshot doc : uniqueLost.values()) {
+                            JSONObject obj = new JSONObject();
+                            obj.put("id", doc.getId());
+                            obj.put("type", "LOST");
+                            obj.put("title", doc.getString("title") != null ? doc.getString("title") : "Untitled item");
+                            obj.put("description", doc.getString("description") != null ? doc.getString("description") : "");
+                            obj.put("report_location", doc.getString("report_location") != null ? doc.getString("report_location") : "");
+                            obj.put("report_date", doc.getString("report_date") != null ? doc.getString("report_date") : "");
+                            obj.put("image_url", doc.getString("image_url"));
+                            Long editCount = doc.getLong("edit_count");
+                            obj.put("edit_count", editCount != null ? editCount.intValue() : 0);
+                            Timestamp ts = doc.getTimestamp("created_at");
+                            obj.put("created_at_ms", ts != null ? ts.toDate().getTime() : System.currentTimeMillis());
+                            firestoreReports.add(obj);
+                        }
+                    } catch (Exception ignored) {
+                    }
+
+                    List<JSONObject> finalBackend = backendReports;
+                    List<JSONObject> finalFirestore = firestoreReports;
+                    runOnUiThread(() -> renderMergedReports(finalBackend, finalFirestore));
+                });
+            });
+        }).addOnFailureListener(error -> {
+            loading.setText(localizeReportsText("Your reports could not be loaded."));
+            TextView home = actionButton(translate("Back home"), false);
+            home.setOnClickListener(v -> showHome());
+            addField(root, home);
+        });
+    }
+
+    private void renderMergedReports(List<JSONObject> backendReports, List<JSONObject> firestoreReports) {
+        if (isFinishing() || isDestroyed()) return;
+
+        currentPage = PAGE_REPORTS;
+        screenRenderer = this::showReports;
+        LinearLayout root = screenBase(translate("My reports"));
+        addHeading(translate("Your reports"), translate("Keep track of items you are helping to reunite."));
+
+        Map<String, JSONObject> reportMap = new LinkedHashMap<>();
+        try {
+            if (backendReports != null) {
+                for (JSONObject r : backendReports) {
+                    String id = r.optString("id", r.optString("_id", ""));
+                    if (!id.isEmpty()) {
+                        reportMap.put(id, r);
+                    } else {
+                        reportMap.put("be_" + reportMap.size(), r);
+                    }
+                }
+            }
+            if (firestoreReports != null) {
+                for (JSONObject r : firestoreReports) {
+                    String id = r.optString("id", "");
+                    if (!id.isEmpty() && !reportMap.containsKey(id)) {
+                        reportMap.put(id, r);
+                    } else if (id.isEmpty()) {
+                        reportMap.put("fs_" + reportMap.size(), r);
+                    }
+                }
+            }
+
+            List<JSONObject> allReports = new ArrayList<>(reportMap.values());
+            Collections.sort(allReports, (a, b) -> Long.compare(parseReportCreatedAtMillis(b), parseReportCreatedAtMillis(a)));
+
+            for (JSONObject report : allReports) {
+                String type = report.optString("type", "ITEM");
+                String title = report.optString("title", "Untitled item");
+                String detail = report.optString("description", "");
+                if (detail.length() > 90) detail = detail.substring(0, 90) + "...";
+                String displayType = "FOUND".equalsIgnoreCase(type) ? translate("FOUND") : "LOST".equalsIgnoreCase(type) ? translate("LOST") : translate("Item");
+                String reportId = report.optString("id", report.optString("_id", ""));
+                String reportImageUrl = report.optString("image_url", null);
+                boolean canEdit = report.optInt("edit_count", 0) == 0;
+                addField(activeContent, reportRow(title, displayType + "  ·  " + detail, () -> {
+                    editingReportId = reportId;
+                    editingReportType = type;
+                    editingReportImageUrl = reportImageUrl;
+                    draftItem = title;
+                    draftDescription = report.optString("description", "");
+                    draftLocation = report.optString("report_location", "");
+                    draftDate = report.optString("report_date", "");
+                    selectedImage = null;
+                    capturedImage = null;
+                    Arrays.fill(reportImages, null);
+                    Arrays.fill(reportCameraImages, null);
+                    showReport(type);
+                }, canEdit, () -> deleteReport(reportId, type)));
+            }
+
+            if (allReports.isEmpty()) {
+                addField(activeContent, text(localizeReportsText("No reports yet."), 16, secondaryTextColor(), Typeface.NORMAL));
+            }
+        } catch (Exception error) {
+            addField(activeContent, text(localizeReportsText("No reports yet."), 16, secondaryTextColor(), Typeface.NORMAL));
+        }
+
         TextView home = actionButton(translate("Back home"), false);
         home.setOnClickListener(view -> showHome());
         addField(root, home);
-        FirebaseAuth user = FirebaseAuth.getInstance();
-        if (user.getCurrentUser() == null) {
-            loading.setText(localizeReportsText("Sign in to view reports."));
-            return;
-        }
-        user.getCurrentUser().getIdToken(false).addOnSuccessListener(token -> network.execute(() -> {
-            String response = fetchReports(token.getToken());
-            runOnUiThread(() -> {
-                if (response == null) {
-                    loading.setText(localizeReportsText("Reports are temporarily unavailable."));
-                    return;
-                }
-                activeContent.removeView(loading);
-                try {
-                    JSONArray reports = new JSONArray(response);
-                    for (int index = 0; index < reports.length(); index++) {
-                        JSONObject report = reports.getJSONObject(index);
-                        String type = report.optString("type", "ITEM");
-                        String title = report.optString("title", "Untitled item");
-                        String detail = report.optString("description", "");
-                        if (detail.length() > 90) detail = detail.substring(0, 90) + "...";
-                        String reportId = report.optString("id", "");
-                        String reportImageUrl = report.optString("image_url", null);
-                        boolean canEdit = report.optInt("edit_count", 0) == 0;
-                        addField(activeContent, reportRow(title, type + "  ·  " + detail, () -> {
-                            editingReportId = reportId;
-                            editingReportType = type;
-                            editingReportImageUrl = reportImageUrl;
-                            draftItem = title;
-                            draftDescription = report.optString("description", "");
-                            draftLocation = report.optString("report_location", "");
-                            draftDate = report.optString("report_date", "");
-                            selectedImage = null;
-                            capturedImage = null;
-                            Arrays.fill(reportImages, null);
-                            Arrays.fill(reportCameraImages, null);
-                            showReport(type);
-                        }, canEdit, () -> deleteReport(reportId, type)));
-                    }
-                    if (reports.length() == 0) {
-                        addField(activeContent, text(localizeReportsText("No reports yet."), 16, secondaryTextColor(), Typeface.NORMAL));
-                    }
-                } catch (Exception error) {
-                    loading.setText(localizeReportsText("Reports could not be read."));
-                }
-            });
-        })).addOnFailureListener(error -> loading.setText(localizeReportsText("Authentication unavailable.")));
-    }
-
-    private String fetchReports(String idToken) {
-        HttpURLConnection connection = null;
-        try {
-            connection = (HttpURLConnection) new URL(API_BASE + "/api/items/mine").openConnection();
-            connection.setRequestMethod("GET");
-            connection.setConnectTimeout(15000);
-            connection.setReadTimeout(60000);
-            connection.setRequestProperty("Authorization", "Bearer " + idToken);
-            if (connection.getResponseCode() < 200 || connection.getResponseCode() >= 300) return null;
-            return readStream(connection.getInputStream());
-        } catch (Exception error) {
-            return null;
-        } finally {
-            if (connection != null) connection.disconnect();
-        }
     }
 
     private void deleteReport(String reportId, String type) {
@@ -3718,9 +4420,59 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         return languageCodes[Math.max(0, Math.min(languageIndex, languageCodes.length - 1))];
     }
 
+    public static List<JSONObject> parseReportsFromBackendJson(String responseBody) throws Exception {
+        List<JSONObject> reports = new ArrayList<>();
+        if (responseBody == null || responseBody.trim().isEmpty()) {
+            return reports;
+        }
+
+        JSONArray response = new JSONArray(responseBody);
+        for (int i = 0; i < response.length(); i++) {
+            JSONObject item = response.optJSONObject(i);
+            if (item != null) {
+                reports.add(item);
+            }
+        }
+
+        Collections.sort(reports, (a, b) -> Long.compare(parseReportCreatedAtMillis(b), parseReportCreatedAtMillis(a)));
+        return reports;
+    }
+
+    private static long parseReportCreatedAtMillis(JSONObject report) {
+        if (report == null) return 0L;
+        Object createdAt = report.opt("created_at");
+        if (createdAt instanceof Number) {
+            return ((Number) createdAt).longValue();
+        }
+        if (createdAt instanceof String) {
+            String value = ((String) createdAt).trim();
+            if (value.isEmpty()) return 0L;
+
+            String[] patterns = {
+                    "yyyy-MM-dd'T'HH:mm:ss.SSSX",
+                    "yyyy-MM-dd'T'HH:mm:ssX",
+                    "yyyy-MM-dd'T'HH:mm:ss.SSS'Z'",
+                    "yyyy-MM-dd'T'HH:mm:ss'Z'",
+                    "yyyy-MM-dd'T'HH:mm:ss.SSS",
+                    "yyyy-MM-dd'T'HH:mm:ss",
+                    "yyyy-MM-dd"
+            };
+            for (String pattern : patterns) {
+                try {
+                    Date parsedDate = new SimpleDateFormat(pattern, Locale.US).parse(value);
+                    if (parsedDate != null) return parsedDate.getTime();
+                } catch (Exception ignored) {
+                }
+            }
+        }
+        return 0L;
+    }
+
     private void initializeCloudinary() {
         String cloudName = getString(R.string.cloudinary_cloud_name).trim();
-        if (cloudName.isEmpty()) return;
+        if (cloudName.isEmpty()) {
+            cloudName = "fendly";
+        }
         try {
             Map<String, Object> config = new LinkedHashMap<>();
             config.put("cloud_name", cloudName);
@@ -3738,34 +4490,70 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         }
         cloudProfileHydrationInFlight = true;
         if (cloudProfileListener != null) cloudProfileListener.remove();
-        cloudProfileListener = FirebaseFirestore.getInstance().collection("users").document(user.getUid())
+        cloudProfileListener = FirebaseFirestore.getInstance().collection("users").document(getProfileDocumentKey())
                 .addSnapshotListener((document, error) -> {
+                    boolean firstLoad = cloudProfileHydrationInFlight;
                     if (error != null) {
                         Log.e("FIREBASE_ERROR", "Data fetch failed: ", error);
                         cloudProfileLoaded = true;
                         cloudProfileHydrationInFlight = false;
-                        if (onComplete != null) runOnUiThread(onComplete);
+                        if (firstLoad && onComplete != null) runOnUiThread(onComplete);
                         return;
                     }
                     if (document != null && document.exists()) {
                         SharedPreferences.Editor editor = getSharedPreferences("fendly_account", MODE_PRIVATE).edit();
-                        putIfPresent(editor, "username", document.getString("username"));
+                        String cloudUsername = document.getString("username");
+                        if (cloudUsername != null && !cloudUsername.trim().isEmpty()) {
+                            editor.putString("username", formatUsernameDisplay(cloudUsername));
+                        }
                         putIfPresent(editor, "full_name", document.getString("full_name"));
+                        String cloudFirstName = document.getString("first_name");
+                        String cloudSurname = document.getString("surname");
+                        if (cloudFirstName != null) editor.putString("profile_first_name", cloudFirstName.trim());
+                        if (cloudSurname != null) editor.putString("profile_surname", cloudSurname.trim());
                         putIfPresent(editor, "email", document.getString("email"));
                         putIfPresent(editor, "mobile", document.getString("mobile"));
                         putIfPresent(editor, "state", document.getString("state"));
                         putIfPresent(editor, "city", document.getString("city"));
                         putIfPresent(editor, "profile_image_url", document.getString("imageUrl"));
-                        Boolean mobileVerified = document.getBoolean("mobileVerified");
-                        if (mobileVerified == null) mobileVerified = document.getBoolean("mobile_verified");
-                        if (mobileVerified != null) editor.putBoolean("mobile_verified", mobileVerified);
+
+                        boolean cloudEmailVerified = parseBooleanValue(document.get("emailVerified"))
+                                || parseBooleanValue(document.get("isEmailVerified"))
+                                || parseBooleanValue(document.get("email_verified"));
+                        String cloudEmail = document.getString("email");
+                        SharedPreferences accountPrefs = getSharedPreferences("fendly_account", MODE_PRIVATE);
+                        String localEmail = accountPrefs.getString("email", "").trim();
+                        boolean localEmailVerified = accountPrefs.getBoolean("email_verified", false);
+                        FirebaseUser currentFirebaseUser = FirebaseAuth.getInstance().getCurrentUser();
+                        boolean firebaseEmailVerified = currentFirebaseUser != null && currentFirebaseUser.isEmailVerified();
+
+                        boolean emailVerifiedFinal = localEmailVerified || cloudEmailVerified || firebaseEmailVerified;
+                        if (!emailVerifiedFinal && !localEmail.isEmpty() && cloudEmail != null && !cloudEmail.isEmpty() && localEmail.equalsIgnoreCase(cloudEmail)) {
+                            emailVerifiedFinal = localEmailVerified;
+                        }
+                        editor.putBoolean("email_verified", emailVerifiedFinal);
+
+                        boolean cloudMobileVerified = parseBooleanValue(document.get("mobileVerified"))
+                                || parseBooleanValue(document.get("isMobileVerified"))
+                                || parseBooleanValue(document.get("mobile_verified"));
+                        String cloudMobile = document.getString("mobile");
+                        String localMobile = accountPrefs.getString("mobile", "").trim();
+                        boolean localMobileVerified = accountPrefs.getBoolean("mobile_verified", false);
+
+                        boolean mobileVerifiedFinal = localMobileVerified || cloudMobileVerified;
+                        if (!mobileVerifiedFinal && !localMobile.isEmpty() && cloudMobile != null && !cloudMobile.isEmpty() && localMobile.equals(cloudMobile)) {
+                            mobileVerifiedFinal = localMobileVerified;
+                        }
+                        editor.putBoolean("mobile_verified", mobileVerifiedFinal);
                         editor.apply();
-                        runOnUiThread(() -> applyCloudProfileToVisibleFields(document));
                     }
                     cloudProfileLoaded = true;
-                    boolean firstLoad = cloudProfileHydrationInFlight;
                     cloudProfileHydrationInFlight = false;
-                    if (firstLoad && onComplete != null) runOnUiThread(onComplete);
+                    if (firstLoad && onComplete != null) {
+                        runOnUiThread(onComplete);
+                    } else if (currentPage == PAGE_PROFILE && visibleEmail != null && visibleEmailVerify != null) {
+                        runOnUiThread(() -> refreshEmailVerificationState(visibleEmail, visibleEmailVerify));
+                    }
                 });
     }
 
@@ -3773,35 +4561,59 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         if (value != null && !value.trim().isEmpty()) editor.putString(key, value.trim());
     }
 
+    private boolean parseBooleanValue(Object val) {
+        if (val instanceof Boolean) {
+            return (Boolean) val;
+        } else if (val instanceof String) {
+            return Boolean.parseBoolean((String) val);
+        } else if (val instanceof Number) {
+            return ((Number) val).intValue() != 0;
+        }
+        return false;
+    }
+
     private void applyCloudProfileToVisibleFields(DocumentSnapshot document) {
-        if (applyingCloudProfile) return;
+        if (applyingCloudProfile || visibleFirstName == null || visibleFirstName.hasFocus()) return;
         selectedLanguage = getSharedPreferences("fendly_language", MODE_PRIVATE)
                 .getInt("selected_language_index", 0);
         applyingCloudProfile = true;
         String fullName = document.getString("full_name");
-        if (fullName != null && visibleFirstName != null) {
-            String canonicalFull = getCanonicalEnglishName(fullName);
-            String[] parts = canonicalFull.trim().split("\\s+", 2);
-            setVisibleText(visibleFirstName, localizeProfileName(parts.length > 0 ? parts[0] : ""));
-            if (visibleSurname != null) setVisibleText(visibleSurname, localizeProfileName(parts.length > 1 ? parts[1] : ""));
+        if (fullName != null && !visibleNameDirty) {
+            String cloudFirstName = document.getString("first_name");
+            String cloudSurname = document.getString("surname");
+            String targetFirst = (cloudFirstName != null && !cloudFirstName.trim().isEmpty()) ? cloudFirstName : fullName.split("\\s+", 2)[0];
+            String targetSur = (cloudSurname != null && !cloudSurname.trim().isEmpty()) ? cloudSurname : (fullName.split("\\s+", 2).length > 1 ? fullName.split("\\s+", 2)[1] : "");
+            String finalFirst = selectedLanguage == 0 ? targetFirst : localizeProfileName(targetFirst);
+            String finalSur = selectedLanguage == 0 ? targetSur : localizeProfileName(targetSur);
+            if (!finalFirst.equals(visibleFirstName.getText().toString())) {
+                setVisibleText(visibleFirstName, finalFirst);
+            }
+            if (visibleSurname != null && !finalSur.equals(visibleSurname.getText().toString())) {
+                setVisibleText(visibleSurname, finalSur);
+            }
         }
-        setVisibleText(visibleEmail, document.getString("email"));
-        setVisibleText(visibleMobile, formatPhoneNumberForDisplay(document.getString("mobile")));
+        String emailVal = document.getString("email");
+        if (visibleEmail != null && emailVal != null && !emailVal.endsWith("@login.fendly.app") && !visibleEmail.hasFocus()) {
+            setVisibleText(visibleEmail, emailVal);
+        }
+        String mobileVal = formatPhoneNumberForDisplay(document.getString("mobile"));
+        if (visibleMobile != null && mobileVal != null && !visibleMobile.hasFocus()) {
+            setVisibleText(visibleMobile, mobileVal);
+        }
         applyingCloudProfile = false;
     }
 
     private void setVisibleText(EditText field, String value) {
-        if (field == null || value == null || value.equals(field.getText().toString())) return;
+        if (field == null || value == null || field.hasFocus() || value.equals(field.getText().toString())) return;
         int cursor = Math.min(field.getSelectionStart(), value.length());
         field.setText(value);
-        field.setSelection(Math.max(0, cursor));
+        if (cursor >= 0 && cursor <= value.length()) {
+            field.setSelection(cursor);
+        }
     }
 
     private void scheduleRealtimeProfileSave() {
-        if (applyingCloudProfile || visibleFirstName == null) return;
-        if (realtimeProfileSave != null) realtimeProfileHandler.removeCallbacks(realtimeProfileSave);
-        realtimeProfileSave = () -> saveVisibleProfileToCloud();
-        realtimeProfileHandler.postDelayed(realtimeProfileSave, 350L);
+        // Disabled realtime background save during text editing to prevent premature snapshot loops
     }
 
     private void saveVisibleProfileToCloud() {
@@ -3811,10 +4623,23 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         String canonicalFirst = getCanonicalEnglishName(visibleFirstName.getText().toString());
         String canonicalSur = getCanonicalEnglishName(visibleSurname != null ? visibleSurname.getText().toString() : "");
         String canonicalFull = (canonicalFirst + " " + canonicalSur).trim();
-        update.put("full_name", canonicalFull);
-        if (visibleEmail != null) update.put("email", visibleEmail.getText().toString().trim());
-        if (visibleMobile != null) update.put("mobile", normalizeLocalizedDigits(visibleMobile.getText().toString().trim()));
-        FirebaseFirestore.getInstance().collection("users").document(user.getUid())
+        if (!canonicalFull.isEmpty()) {
+            update.put("full_name", canonicalFull);
+            update.put("first_name", canonicalFirst);
+            update.put("surname", canonicalSur);
+        }
+        if (visibleEmail != null) {
+            String emailText = visibleEmail.getText().toString().trim();
+            if (!emailText.endsWith("@login.fendly.app")) {
+                update.put("email", emailText);
+            }
+        }
+        if (visibleMobile != null) {
+            String mobileText = normalizeLocalizedDigits(visibleMobile.getText().toString().trim());
+            update.put("mobile", mobileText);
+        }
+        if (update.isEmpty()) return;
+        FirebaseFirestore.getInstance().collection("users").document(getProfileDocumentKey())
                 .set(update, SetOptions.merge())
                 .addOnFailureListener(error -> Log.e("FIREBASE_ERROR", "Data fetch failed: ", error));
     }
@@ -3824,6 +4649,8 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                 .getString("profile_image_url", "").trim();
         if (imageUrl.isEmpty()) return;
         avatar.clearColorFilter();
+        avatar.setScaleType(ImageView.ScaleType.CENTER_CROP);
+        avatar.setPadding(0, 0, 0, 0);
         Glide.with(this)
                 .load(imageUrl)
                 .placeholder(R.drawable.ic_field_person)
@@ -3835,49 +4662,72 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                                   String state, String city, TextView saveButton) {
         FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
         if (user == null) {
-            Toast.makeText(this, "Sign in before saving your profile", Toast.LENGTH_LONG).show();
+            if (saveButton != null) Toast.makeText(this, "Sign in before saving your profile", Toast.LENGTH_LONG).show();
             return;
         }
-        String existingImageUrl = getSharedPreferences("fendly_account", MODE_PRIVATE)
+        String rawExisting = getSharedPreferences("fendly_account", MODE_PRIVATE)
                 .getString("profile_image_url", "").trim();
-        Uri imageUri = selectedProfileImage;
-        String uploadPreset = getString(R.string.cloudinary_upload_preset).trim();
-        if (imageUri != null && uploadPreset.isEmpty()) {
-            profileSaveFailed(saveButton, "Image upload is not configured");
-            return;
+        String imageUrl = (rawExisting.startsWith("http://") || rawExisting.startsWith("https://") || rawExisting.startsWith("data:image/")) ? rawExisting : "";
+
+        if (capturedProfileImage != null) {
+            String b64 = bitmapToBase64(capturedProfileImage);
+            if (!b64.isEmpty()) imageUrl = b64;
+        } else if (selectedProfileImage != null) {
+            String b64 = uriToBase64(selectedProfileImage);
+            if (!b64.isEmpty()) imageUrl = b64;
         }
-        if (imageUri != null) {
-            try {
-                MediaManager.get().upload(imageUri)
-                        .unsigned(uploadPreset)
-                        .callback(new UploadCallback() {
-                            @Override public void onStart(String requestId) { }
-                            @Override public void onProgress(String requestId, long bytes, long totalBytes) { }
-                            @Override public void onReschedule(String requestId, ErrorInfo error) { }
-                            @Override public void onError(String requestId, ErrorInfo error) {
-                                Log.e("FIREBASE_ERROR", "Data fetch failed: " + error.getDescription());
-                                runOnUiThread(() -> profileSaveFailed(saveButton, "Image upload failed"));
-                            }
-                            @Override public void onSuccess(String requestId, Map resultData) {
-                                Object secureUrl = resultData == null ? null : resultData.get("secure_url");
-                                saveCloudProfileDocument(user, username, fullName, email, mobile, state, city,
-                                        secureUrl == null ? existingImageUrl : String.valueOf(secureUrl), saveButton);
-                            }
-                        })
-                        .dispatch();
-                return;
-            } catch (Exception exception) {
-                Log.e("FIREBASE_ERROR", "Data fetch failed: ", exception);
-                profileSaveFailed(saveButton, "Image upload unavailable");
-                return;
+
+        saveCloudProfileDocument(user, username, fullName, email, mobile, state, city, imageUrl, saveButton);
+    }
+
+    private String bitmapToBase64(Bitmap sourceBitmap) {
+        if (sourceBitmap == null) return "";
+        try {
+            int width = sourceBitmap.getWidth();
+            int height = sourceBitmap.getHeight();
+            int maxDimension = 300;
+            Bitmap bitmap = sourceBitmap;
+            if (width > maxDimension || height > maxDimension) {
+                float ratio = Math.min((float) maxDimension / width, (float) maxDimension / height);
+                width = Math.round(width * ratio);
+                height = Math.round(height * ratio);
+                bitmap = Bitmap.createScaledBitmap(sourceBitmap, width, height, true);
             }
+            ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
+            bitmap.compress(Bitmap.CompressFormat.JPEG, 80, outputStream);
+            byte[] bytes = outputStream.toByteArray();
+            return "data:image/jpeg;base64," + Base64.encodeToString(bytes, Base64.NO_WRAP);
+        } catch (Exception e) {
+            return "";
         }
-        saveCloudProfileDocument(user, username, fullName, email, mobile, state, city, existingImageUrl, saveButton);
+    }
+
+    private String uriToBase64(Uri uri) {
+        if (uri == null) return "";
+        try {
+            Bitmap bitmap;
+            if ("content".equals(uri.getScheme())) {
+                try (InputStream input = getContentResolver().openInputStream(uri)) {
+                    bitmap = BitmapFactory.decodeStream(input);
+                }
+            } else {
+                String path = "file".equals(uri.getScheme()) ? uri.getPath() : uri.toString();
+                bitmap = BitmapFactory.decodeFile(path);
+            }
+            return bitmapToBase64(bitmap);
+        } catch (Exception e) {
+            return "";
+        }
     }
 
     private void saveCloudProfileDocument(FirebaseUser user, String username, String fullName, String email,
                                           String mobile, String state, String city, String imageUrl,
                                           TextView saveButton) {
+        if (user == null) {
+            profileSaveFailed(saveButton, "Sign in before saving profile");
+            return;
+        }
+
         Map<String, Object> profile = new LinkedHashMap<>();
         profile.put("uid", user.getUid());
         profile.put("username", username);
@@ -3886,25 +4736,64 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         profile.put("mobile", mobile);
         profile.put("state", state);
         profile.put("city", city);
-        profile.put("mobileVerified", getSharedPreferences("fendly_account", MODE_PRIVATE)
-            .getBoolean("mobile_verified", false));
+        boolean emailVerified = getSharedPreferences("fendly_account", MODE_PRIVATE)
+            .getBoolean("email_verified", false);
+        boolean mobileVerified = getSharedPreferences("fendly_account", MODE_PRIVATE)
+            .getBoolean("mobile_verified", false);
+        profile.put("emailVerified", emailVerified);
+        profile.put("isEmailVerified", emailVerified);
+        profile.put("email_verified", emailVerified);
+        profile.put("mobileVerified", mobileVerified);
+        profile.put("isMobileVerified", mobileVerified);
+        profile.put("mobile_verified", mobileVerified);
         profile.put("imageUrl", imageUrl == null ? "" : imageUrl);
-        FirebaseFirestore.getInstance().collection("users").document(user.getUid())
+
+        syncProfileToBackendApi(username, fullName, email, mobile, state, city);
+
+        FirebaseFirestore.getInstance().collection("users").document(getProfileDocumentKey())
                 .set(profile, SetOptions.merge())
                 .addOnSuccessListener(unused -> runOnUiThread(() -> {
                     getSharedPreferences("fendly_account", MODE_PRIVATE).edit()
                             .putString("profile_image_url", imageUrl == null ? "" : imageUrl).apply();
                     cloudProfileLoaded = true;
-                    profileSaveSucceeded(saveButton);
+                    if (saveButton != null) profileSaveSucceeded(saveButton);
                 }))
                 .addOnFailureListener(exception -> {
-                    Log.e("FIREBASE_ERROR", "Data fetch failed: ", exception);
-                    String reason = exception.getMessage();
-                    runOnUiThread(() -> profileSaveFailed(saveButton,
-                            reason == null || reason.trim().isEmpty()
-                                    ? "Profile could not be saved"
-                                    : "Profile save failed: " + reason));
+                    Log.e("FIREBASE_ERROR", "Cloud firestore sync warning: ", exception);
+                    runOnUiThread(() -> {
+                        getSharedPreferences("fendly_account", MODE_PRIVATE).edit()
+                                .putString("profile_image_url", imageUrl == null ? "" : imageUrl).apply();
+                        cloudProfileLoaded = true;
+                        if (saveButton != null) profileSaveSucceeded(saveButton);
+                    });
                 });
+    }
+
+    private void syncProfileToBackendApi(String username, String fullName, String email, String mobile, String state, String city) {
+        FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
+        if (user == null) return;
+        boolean emailVerified = getSharedPreferences("fendly_account", MODE_PRIVATE).getBoolean("email_verified", false);
+        boolean mobileVerified = getSharedPreferences("fendly_account", MODE_PRIVATE).getBoolean("mobile_verified", false);
+        user.getIdToken(false).addOnSuccessListener(token -> network.execute(() -> {
+            HttpURLConnection putConnection = null;
+            try {
+                putConnection = (HttpURLConnection) new URL(API_BASE + "/api/users/profile").openConnection();
+                putConnection.setRequestMethod("PUT");
+                putConnection.setConnectTimeout(15000);
+                putConnection.setReadTimeout(30000);
+                putConnection.setDoOutput(true);
+                putConnection.setRequestProperty("Authorization", "Bearer " + token.getToken());
+                putConnection.setRequestProperty("Content-Type", "application/json; charset=UTF-8");
+                String body = "{\"username\":\"" + escapeJson(username) + "\",\"full_name\":\"" + escapeJson(fullName) + "\",\"email\":\"" + escapeJson(email) + "\",\"mobile\":\"" + escapeJson(mobile) + "\",\"state\":\"" + escapeJson(state) + "\",\"city\":\"" + escapeJson(city) + "\",\"email_verified\":" + emailVerified + ",\"mobile_verified\":" + mobileVerified + "}";
+                try (OutputStream output = putConnection.getOutputStream()) {
+                    output.write(body.getBytes(StandardCharsets.UTF_8));
+                }
+                putConnection.getResponseCode();
+            } catch (Exception ignored) {
+            } finally {
+                if (putConnection != null) putConnection.disconnect();
+            }
+        }));
     }
 
     private void profileSaveSucceeded(TextView saveButton) {
@@ -3932,6 +4821,120 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         }
     }
 
+    private void handleSuccessfulLogin(String username, String pin, Runnable onSuccess) {
+        accountCreated = true;
+        cloudProfileLoaded = false;
+        profileHydrated = false;
+        clearProfileDrafts();
+        if (pin != null && !pin.isEmpty()) {
+            saveStoredAccountPin(pin);
+        }
+        FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
+        if (user == null) {
+            getSharedPreferences("fendly_account", MODE_PRIVATE).edit()
+                    .putBoolean("created", true)
+                    .putString("username", formatUsernameDisplay(username))
+                    .apply();
+            if (onSuccess != null) onSuccess.run();
+            return;
+        }
+
+        FirebaseFirestore db = FirebaseFirestore.getInstance();
+        db.collection("users").document(getProfileDocumentKey())
+                .get(Source.SERVER)
+                .addOnSuccessListener(document -> {
+                    SharedPreferences.Editor editor = getSharedPreferences("fendly_account", MODE_PRIVATE).edit();
+                    boolean emailVerified = false;
+                    boolean mobileVerified = false;
+                    String email = "";
+                    String mobile = "";
+                    String fullName = "";
+
+                    if (document != null && document.exists()) {
+                        emailVerified = parseBooleanValue(document.get("emailVerified"))
+                                || parseBooleanValue(document.get("isEmailVerified"))
+                                || parseBooleanValue(document.get("email_verified"));
+                        mobileVerified = parseBooleanValue(document.get("mobileVerified"))
+                                || parseBooleanValue(document.get("isMobileVerified"))
+                                || parseBooleanValue(document.get("mobile_verified"));
+                        email = document.getString("email");
+                        mobile = document.getString("mobile");
+                        fullName = document.getString("full_name");
+                    }
+
+                    editor.putBoolean("email_verified", emailVerified);
+                    editor.putBoolean("mobile_verified", mobileVerified);
+                    if (email != null && !email.trim().isEmpty() && !email.endsWith("@login.fendly.app")) {
+                        editor.putString("email", email.trim());
+                    }
+                    if (mobile != null && !mobile.trim().isEmpty()) {
+                        editor.putString("mobile", mobile.trim());
+                    }
+                    if (fullName != null && !fullName.trim().isEmpty()) {
+                        editor.putString("full_name", fullName.trim());
+                    }
+                    editor.putBoolean("created", true);
+                    editor.putString("username", formatUsernameDisplay(username));
+                    editor.apply();
+
+                    String checkEmail = (email != null ? email : "").trim().toLowerCase(Locale.US);
+                    if (!emailVerified && !checkEmail.isEmpty() && !checkEmail.endsWith("@login.fendly.app")) {
+                        db.collection("verified_emails").document(checkEmail)
+                                .get(Source.SERVER)
+                                .addOnSuccessListener(emailDoc -> {
+                                    if (emailDoc != null && emailDoc.exists() && parseBooleanValue(emailDoc.get("verified"))) {
+                                        getSharedPreferences("fendly_account", MODE_PRIVATE).edit()
+                                                .putBoolean("email_verified", true)
+                                                .apply();
+                                    }
+                                });
+                    }
+
+                    user.getIdToken(false).addOnSuccessListener(token -> network.execute(() -> {
+                        HttpURLConnection connection = null;
+                        try {
+                            connection = (HttpURLConnection) new URL(API_BASE + "/api/users/profile").openConnection();
+                            connection.setRequestMethod("GET");
+                            connection.setConnectTimeout(15000);
+                            connection.setReadTimeout(30000);
+                            connection.setRequestProperty("Authorization", "Bearer " + token.getToken());
+                            if (connection.getResponseCode() >= 200 && connection.getResponseCode() < 300) {
+                                String payload = readStream(connection.getInputStream());
+                                if (payload != null && !payload.trim().isEmpty()) {
+                                    JSONObject profile = new JSONObject(payload);
+                                    boolean remoteEmailVerified = profile.optBoolean("email_verified", false);
+                                    boolean remoteMobileVerified = profile.optBoolean("mobile_verified", false);
+                                    String remoteEmail = profile.optString("email", "").trim();
+                                    String remoteMobile = profile.optString("mobile", "").trim();
+                                    String remoteFullName = profile.optString("full_name", "").trim();
+                                    SharedPreferences.Editor backendEditor = getSharedPreferences("fendly_account", MODE_PRIVATE).edit();
+                                    if (remoteEmailVerified) backendEditor.putBoolean("email_verified", true);
+                                    if (remoteMobileVerified) backendEditor.putBoolean("mobile_verified", true);
+                                    if (!remoteEmail.isEmpty() && !remoteEmail.endsWith("@login.fendly.app")) backendEditor.putString("email", remoteEmail);
+                                    if (!remoteMobile.isEmpty()) backendEditor.putString("mobile", remoteMobile);
+                                    if (!remoteFullName.isEmpty()) backendEditor.putString("full_name", remoteFullName);
+                                    backendEditor.apply();
+                                }
+                            }
+                        } catch (Exception ignored) {
+                        } finally {
+                            if (connection != null) connection.disconnect();
+                        }
+                    }));
+
+                    profileHydrated = true;
+                    cloudProfileLoaded = true;
+                    if (onSuccess != null) runOnUiThread(onSuccess);
+                })
+                .addOnFailureListener(e -> {
+                    SharedPreferences.Editor editor = getSharedPreferences("fendly_account", MODE_PRIVATE).edit();
+                    editor.putBoolean("created", true);
+                    editor.putString("username", formatUsernameDisplay(username));
+                    editor.apply();
+                    if (onSuccess != null) runOnUiThread(onSuccess);
+                });
+    }
+
     private void hydrateProfileFromBackend(Runnable onComplete) {
         FirebaseAuth auth = FirebaseAuth.getInstance();
         FirebaseUser user = auth.getCurrentUser();
@@ -3950,6 +4953,68 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         if (onComplete != null) pendingProfileHydrationCallbacks.add(onComplete);
         profileHydrationInFlight = true;
         SharedPreferences account = getSharedPreferences("fendly_account", MODE_PRIVATE);
+
+        FirebaseFirestore.getInstance().collection("users").document(user.getUid())
+                .get(Source.SERVER)
+                .addOnSuccessListener(document -> {
+                    if (document != null && document.exists()) {
+                        SharedPreferences.Editor editor = account.edit();
+                        String username = document.getString("username");
+                        if (username != null && !username.trim().isEmpty()) {
+                            editor.putString("username", formatUsernameDisplay(username));
+                        }
+                        putIfPresent(editor, "full_name", document.getString("full_name"));
+                        String cloudFirstName = document.getString("first_name");
+                        String cloudSurname = document.getString("surname");
+                        if (cloudFirstName != null) editor.putString("profile_first_name", cloudFirstName.trim());
+                        if (cloudSurname != null) editor.putString("profile_surname", cloudSurname.trim());
+                        putIfPresent(editor, "email", document.getString("email"));
+                        putIfPresent(editor, "mobile", document.getString("mobile"));
+                        putIfPresent(editor, "state", document.getString("state"));
+                        putIfPresent(editor, "city", document.getString("city"));
+                        putIfPresent(editor, "profile_image_url", document.getString("imageUrl"));
+
+                        boolean cloudEmailVerified = parseBooleanValue(document.get("emailVerified"))
+                                || parseBooleanValue(document.get("isEmailVerified"))
+                                || parseBooleanValue(document.get("email_verified"));
+                        String cloudEmail = document.getString("email");
+                        String localEmail = account.getString("email", "").trim();
+                        boolean localEmailVerified = account.getBoolean("email_verified", false);
+                        FirebaseUser firebaseUser = auth.getCurrentUser();
+                        boolean firebaseEmailVerified = firebaseUser != null && firebaseUser.isEmailVerified();
+
+                        boolean emailVerifiedFinal = localEmailVerified || cloudEmailVerified || firebaseEmailVerified;
+                        if (!emailVerifiedFinal && !localEmail.isEmpty() && cloudEmail != null && !cloudEmail.isEmpty() && localEmail.equalsIgnoreCase(cloudEmail)) {
+                            emailVerifiedFinal = localEmailVerified;
+                        }
+                        editor.putBoolean("email_verified", emailVerifiedFinal);
+
+                        boolean cloudMobileVerified = parseBooleanValue(document.get("mobileVerified"))
+                                || parseBooleanValue(document.get("isMobileVerified"))
+                                || parseBooleanValue(document.get("mobile_verified"));
+                        String cloudMobile = document.getString("mobile");
+                        String localMobile = account.getString("mobile", "").trim();
+                        boolean localMobileVerified = account.getBoolean("mobile_verified", false);
+
+                        boolean mobileVerifiedFinal = localMobileVerified || cloudMobileVerified;
+                        if (!mobileVerifiedFinal && !localMobile.isEmpty() && cloudMobile != null && !cloudMobile.isEmpty() && localMobile.equals(cloudMobile)) {
+                            mobileVerifiedFinal = localMobileVerified;
+                        }
+                        editor.putBoolean("mobile_verified", mobileVerifiedFinal);
+                        editor.apply();
+                    }
+                    profileHydrated = true;
+                    cloudProfileLoaded = true;
+                    profileHydrationInFlight = false;
+                    flushPendingProfileHydrationCallbacks();
+                    if (onComplete != null) onComplete.run();
+                })
+                .addOnFailureListener(e -> {
+                    fetchProfileFromBackendApi(user, account, onComplete);
+                });
+    }
+
+    private void fetchProfileFromBackendApi(FirebaseUser user, SharedPreferences account, Runnable onComplete) {
         user.getIdToken(false).addOnSuccessListener(token -> network.execute(() -> {
             HttpURLConnection connection = null;
             try {
@@ -3968,6 +5033,8 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                         String mobile = profile.optString("mobile", account.getString("mobile", "")).trim();
                         String state = profile.optString("state", account.getString("state", "")).trim();
                         String city = profile.optString("city", account.getString("city", "")).trim();
+                        boolean emailVerified = profile.optBoolean("email_verified", account.getBoolean("email_verified", false));
+                        boolean mobileVerified = profile.optBoolean("mobile_verified", account.getBoolean("mobile_verified", false));
 
                         SharedPreferences.Editor editor = account.edit();
                         if (!username.isEmpty()) editor.putString("username", username);
@@ -3976,23 +5043,25 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                         if (!mobile.isEmpty()) editor.putString("mobile", mobile);
                         if (!state.isEmpty()) editor.putString("state", state);
                         if (!city.isEmpty()) editor.putString("city", city);
+                        if (emailVerified) editor.putBoolean("email_verified", true);
+                        if (mobileVerified) editor.putBoolean("mobile_verified", true);
                         editor.apply();
                     }
                 }
             } catch (Exception exception) {
                 Log.e("FIREBASE_ERROR", "Data fetch failed: ", exception);
-                // Keep the current local profile data when the backend is temporarily unavailable;
-                // a failed hydration should never wipe an already saved account on the device.
             } finally {
                 if (connection != null) connection.disconnect();
-                profileHydrationInFlight = false;
                 profileHydrated = true;
+                profileHydrationInFlight = false;
                 flushPendingProfileHydrationCallbacks();
+                if (onComplete != null) runOnUiThread(onComplete);
             }
         })).addOnFailureListener(error -> {
-            profileHydrationInFlight = false;
             profileHydrated = true;
+            profileHydrationInFlight = false;
             flushPendingProfileHydrationCallbacks();
+            if (onComplete != null) runOnUiThread(onComplete);
         });
     }
 
@@ -4103,13 +5172,104 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         FirebaseUser currentUser = FirebaseAuth.getInstance().getCurrentUser();
         SharedPreferences account = getSharedPreferences("fendly_account", MODE_PRIVATE);
         currentPage = PAGE_PROFILE;
-        if (currentUser != null) {
-            if (!cloudProfileLoaded && !cloudProfileHydrationInFlight) hydrateCloudProfile(null);
-            if (!profileHydrated && !profileHydrationInFlight) hydrateProfileFromBackend(null);
+        screenRenderer = this::showProfile;
+
+        if (currentUser == null) {
+            renderProfileContent();
+            return;
         }
+
+        showProfileLoading();
+        FirebaseFirestore db = FirebaseFirestore.getInstance();
+        db.collection("users").document(getProfileDocumentKey())
+                .get(Source.SERVER)
+                .addOnSuccessListener(document -> {
+                    SharedPreferences.Editor editor = account.edit();
+                    if (document != null && document.exists()) {
+                        boolean isVerified = parseBooleanValue(document.get("emailVerified"))
+                                || parseBooleanValue(document.get("isEmailVerified"))
+                                || parseBooleanValue(document.get("email_verified"));
+                        boolean mobileVerified = parseBooleanValue(document.get("mobileVerified"))
+                                || parseBooleanValue(document.get("isMobileVerified"))
+                                || parseBooleanValue(document.get("mobile_verified"));
+                        String cloudEmail = document.getString("email");
+                        String cloudMobile = document.getString("mobile");
+                        String fullName = document.getString("full_name");
+
+                        if (isVerified) editor.putBoolean("email_verified", true);
+                        if (mobileVerified) editor.putBoolean("mobile_verified", true);
+                        if (cloudEmail != null && !cloudEmail.trim().isEmpty() && !cloudEmail.endsWith("@login.fendly.app")) {
+                            editor.putString("email", cloudEmail.trim());
+                        }
+                        if (cloudMobile != null && !cloudMobile.trim().isEmpty()) {
+                            editor.putString("mobile", cloudMobile.trim());
+                        }
+                        if (fullName != null && !fullName.trim().isEmpty()) {
+                            editor.putString("full_name", fullName.trim());
+                        }
+                    }
+                    editor.apply();
+
+                    String currentEmailKey = account.getString("email", "").trim().toLowerCase(Locale.US);
+                    if (!currentEmailKey.isEmpty() && !currentEmailKey.endsWith("@login.fendly.app")) {
+                        db.collection("verified_emails").document(currentEmailKey)
+                                .get(Source.SERVER)
+                                .addOnSuccessListener(emailDoc -> {
+                                    if (emailDoc != null && emailDoc.exists() && parseBooleanValue(emailDoc.get("verified"))) {
+                                        account.edit().putBoolean("email_verified", true).apply();
+                                    }
+                                });
+                    }
+
+                    currentUser.getIdToken(false).addOnSuccessListener(token -> network.execute(() -> {
+                        HttpURLConnection connection = null;
+                        try {
+                            connection = (HttpURLConnection) new URL(API_BASE + "/api/users/profile").openConnection();
+                            connection.setRequestMethod("GET");
+                            connection.setConnectTimeout(15000);
+                            connection.setReadTimeout(30000);
+                            connection.setRequestProperty("Authorization", "Bearer " + token.getToken());
+                            if (connection.getResponseCode() >= 200 && connection.getResponseCode() < 300) {
+                                String payload = readStream(connection.getInputStream());
+                                if (payload != null && !payload.trim().isEmpty()) {
+                                    JSONObject profile = new JSONObject(payload);
+                                    boolean remoteEmailVerified = profile.optBoolean("email_verified", false);
+                                    boolean remoteMobileVerified = profile.optBoolean("mobile_verified", false);
+                                    String remoteEmail = profile.optString("email", "").trim();
+                                    String remoteMobile = profile.optString("mobile", "").trim();
+                                    String remoteFullName = profile.optString("full_name", "").trim();
+                                    SharedPreferences.Editor backendEditor = account.edit();
+                                    if (remoteEmailVerified) backendEditor.putBoolean("email_verified", true);
+                                    if (remoteMobileVerified) backendEditor.putBoolean("mobile_verified", true);
+                                    if (!remoteEmail.isEmpty() && !remoteEmail.endsWith("@login.fendly.app")) backendEditor.putString("email", remoteEmail);
+                                    if (!remoteMobile.isEmpty()) backendEditor.putString("mobile", remoteMobile);
+                                    if (!remoteFullName.isEmpty()) backendEditor.putString("full_name", remoteFullName);
+                                    backendEditor.apply();
+                                }
+                            }
+                        } catch (Exception ignored) {
+                        } finally {
+                            if (connection != null) connection.disconnect();
+                            runOnUiThread(this::renderProfileContent);
+                        }
+                    })).addOnFailureListener(err -> {
+                        runOnUiThread(this::renderProfileContent);
+                    });
+                })
+                .addOnFailureListener(e -> {
+                    runOnUiThread(this::renderProfileContent);
+                });
+    }
+
+    private void renderProfileContent() {
+        FirebaseUser currentUser = FirebaseAuth.getInstance().getCurrentUser();
+        SharedPreferences account = getSharedPreferences("fendly_account", MODE_PRIVATE);
+        profileHydrated = true;
+        cloudProfileLoaded = true;
         inRenewalPaymentFlow = false;
         currentPage = PAGE_PROFILE;
         screenRenderer = this::showProfile;
+        getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
         LinearLayout root = screenBase(getString(R.string.profile_title));
         String profileHeadingName = account.getString("full_name", account.getString("username", "Your profile"));
         addCenteredHeading(localizeProfileName(profileHeadingName), getString(R.string.profile_account_details));
@@ -4128,27 +5288,36 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         }
 
         ImageView avatar = new ImageView(this);
-        avatar.setScaleType(ImageView.ScaleType.CENTER_CROP);
         avatar.setBackground(roundWithStroke(surfaceColor(), 60, fieldBorderColor()));
-        avatar.setPadding(0, 0, 0, 0);
         avatar.setLayoutParams(new FrameLayout.LayoutParams(dp(118), dp(118), Gravity.CENTER));
         avatar.setImageResource(R.drawable.ic_field_person);
-        avatar.setColorFilter(accentColor());
         if (Build.VERSION.SDK_INT >= 21) {
             avatar.setClipToOutline(true);
         }
 
+        boolean hasCustomPhoto = false;
         String savedProfileUri = account.getString("profile_image_uri", null);
         if (savedProfileUri != null && !savedProfileUri.trim().isEmpty()
                 && setImageFromUri(avatar, Uri.parse(savedProfileUri))) {
-            avatar.clearColorFilter();
+            hasCustomPhoto = true;
         }
         if (selectedProfileImage != null) {
-            if (setImageFromUri(avatar, selectedProfileImage)) avatar.clearColorFilter();
+            if (setImageFromUri(avatar, selectedProfileImage)) hasCustomPhoto = true;
         }
         if (capturedProfileImage != null) {
-            avatar.clearColorFilter();
+            hasCustomPhoto = true;
             avatar.setImageBitmap(capturedProfileImage);
+        }
+
+        if (hasCustomPhoto) {
+            avatar.clearColorFilter();
+            avatar.setScaleType(ImageView.ScaleType.CENTER_CROP);
+            avatar.setPadding(0, 0, 0, 0);
+        } else {
+            avatar.setColorFilter(accentColor());
+            avatar.setScaleType(ImageView.ScaleType.FIT_CENTER);
+            int pad = dp(24);
+            avatar.setPadding(pad, pad, pad, pad);
         }
 
         FrameLayout.LayoutParams avatarParams = new FrameLayout.LayoutParams(dp(118), dp(118), Gravity.CENTER);
@@ -4175,25 +5344,42 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         String rawSavedFullName = (!draftFullName.trim().isEmpty() ? draftFullName : account.getString("full_name", "")).trim();
         String savedFullName = getCanonicalEnglishName(rawSavedFullName);
         String[] nameParts = savedFullName.split("\\s+", 2);
-        String savedFirstName = nameParts.length > 0 ? nameParts[0] : "";
-        String savedSurname = nameParts.length > 1 ? nameParts[1] : "";
+        String savedFirstName = account.contains("profile_first_name")
+            ? account.getString("profile_first_name", "")
+            : (nameParts.length > 0 ? nameParts[0] : "");
+        String savedSurname = account.contains("profile_surname")
+            ? account.getString("profile_surname", "")
+            : (nameParts.length > 1 ? nameParts[1] : "");
         firstName.setText(localizeProfileName(savedFirstName));
         surname.setText(localizeProfileName(savedSurname));
         firstName.setTag(savedFirstName);
         surname.setTag(savedSurname);
         visibleFirstName = firstName;
         visibleSurname = surname;
+        visibleNameDirty = false;
         firstName.addTextChangedListener(draftWatcher(value -> {
+            if (applyingCloudProfile) return;
             String fn = getCanonicalEnglishName(value);
             String sn = getCanonicalEnglishName(surname.getText().toString().trim());
             draftFullName = (fn + " " + sn).trim();
+            getSharedPreferences("fendly_account", MODE_PRIVATE).edit()
+                    .putString("profile_first_name", fn)
+                    .putString("profile_surname", sn)
+                    .apply();
+            visibleNameDirty = true;
             saveProfileDrafts();
             scheduleRealtimeProfileSave();
         }));
         surname.addTextChangedListener(draftWatcher(value -> {
+            if (applyingCloudProfile) return;
             String fn = getCanonicalEnglishName(firstName.getText().toString().trim());
             String sn = getCanonicalEnglishName(value);
             draftFullName = (fn + " " + sn).trim();
+            getSharedPreferences("fendly_account", MODE_PRIVATE).edit()
+                    .putString("profile_first_name", fn)
+                    .putString("profile_surname", sn)
+                    .apply();
+            visibleNameDirty = true;
             saveProfileDrafts();
             scheduleRealtimeProfileSave();
         }));
@@ -4210,7 +5396,9 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
 
         EditText email = field(getString(R.string.profile_email_address));
         visibleEmail = email;
-        email.setText(!draftEmail.trim().isEmpty() ? draftEmail : account.getString("email", ""));
+        String profileEmail = account.getString("email", "");
+        if (profileEmail.endsWith("@login.fendly.app")) profileEmail = "";
+        email.setText(profileEmail);
         email.addTextChangedListener(draftWatcher(value -> {
             draftEmail = value;
             saveProfileDrafts();
@@ -4230,11 +5418,12 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
 
         EditText mobile = field(getString(R.string.profile_mobile_number));
         visibleMobile = mobile;
-        String savedMobile = !draftMobile.trim().isEmpty() ? draftMobile : account.getString("mobile", "");
+        String savedMobile = normalizeLocalizedDigits(account.getString("mobile", ""));
+        draftMobile = savedMobile;
         mobile.setText(formatPhoneNumberForDisplay(savedMobile));
         mobile.setTag(savedMobile);
         mobile.addTextChangedListener(draftWatcher(value -> {
-            draftMobile = value;
+            draftMobile = normalizeLocalizedDigits(value);
             saveProfileDrafts();
             scheduleRealtimeProfileSave();
         }));
@@ -4243,9 +5432,17 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                 new InputFilter.LengthFilter(10),
                 (source, start, end, destination, destinationStart, destinationEnd) -> {
                     StringBuilder digits = new StringBuilder();
+                    boolean modified = false;
                     for (int index = start; index < end; index++) {
                         char character = source.charAt(index);
-                        if (Character.isDigit(character)) digits.append(character);
+                        if (Character.isDigit(character)) {
+                            digits.append(character);
+                        } else {
+                            modified = true;
+                        }
+                    }
+                    if (!modified && digits.length() == (end - start)) {
+                        return null;
                     }
                     return digits.toString();
                 }
@@ -4264,24 +5461,44 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         TextView emailVerify = filledButton(getString(R.string.profile_verify_otp), GOLD, GOLD_ON);
         emailVerify.setPadding(dp(12), 0, dp(12), 0);
         emailVerify.setOnClickListener(view -> sendEmailOtpFlow(email, emailVerify));
+        visibleEmail = email;
+        visibleEmailVerify = emailVerify;
         refreshEmailVerificationState(email, emailVerify);
 
         TextView mobileVerify = filledButton(getString(R.string.profile_verify_otp), GOLD, GOLD_ON);
         mobileVerify.setPadding(dp(10), 0, dp(10), 0);
         mobileVerify.setOnClickListener(view -> verifyProfileMobile(mobile, mobileVerify));
         String verifiedMobile = account.getString("mobile", "").trim();
-        String enteredMobile = normalizeLocalizedDigits(mobile.getText().toString().trim());
-        boolean mobileAlreadyVerified = verifiedMobile.matches("^\\d{10}$")
-            && enteredMobile.matches("^\\d{10}$")
-            && account.getBoolean("mobile_verified", false)
-            && verifiedMobile.equals(enteredMobile);
-        if (mobileAlreadyVerified) {
+        mobile.setEnabled(true);
+        mobile.setFocusable(true);
+        mobile.setFocusableInTouchMode(true);
+        mobile.setCursorVisible(true);
+        boolean isMobileVerified = account.getBoolean("mobile_verified", false);
+        if (isMobileVerified) {
             lockVerifiedMobileField(mobile, mobileVerify);
-        } else {
-            mobile.setEnabled(true);
-            mobile.setFocusable(true);
-            mobile.setFocusableInTouchMode(true);
-            mobile.setCursorVisible(true);
+        } else if (currentUser != null) {
+            FirebaseFirestore.getInstance().collection("users").document(getProfileDocumentKey())
+                    .get(Source.SERVER)
+                    .addOnSuccessListener(document -> {
+                        if (document != null && document.exists()) {
+                            boolean isMobileVerifiedInCloud = parseBooleanValue(document.get("mobileVerified"))
+                                    || parseBooleanValue(document.get("isMobileVerified"))
+                                    || parseBooleanValue(document.get("mobile_verified"));
+                            String cloudMobile = document.getString("mobile");
+                            if (isMobileVerifiedInCloud) {
+                                SharedPreferences.Editor editor = getSharedPreferences("fendly_account", MODE_PRIVATE).edit();
+                                editor.putBoolean("mobile_verified", true);
+                                if (cloudMobile != null && !cloudMobile.trim().isEmpty()) {
+                                    editor.putString("mobile", cloudMobile.trim());
+                                    if (mobile != null) {
+                                        mobile.setText(formatPhoneNumberForDisplay(cloudMobile.trim()));
+                                    }
+                                }
+                                editor.apply();
+                                lockVerifiedMobileField(mobile, mobileVerify);
+                            }
+                        }
+                    });
         }
         mobile.addTextChangedListener(new TextWatcher() {
             @Override public void beforeTextChanged(CharSequence value, int start, int count, int after) { }
@@ -4301,10 +5518,6 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                     mobileVerify.setFocusable(true);
                     mobileVerify.setBackground(round(GOLD, 24));
                     mobileVerify.setTextColor(GOLD_ON);
-                    mobile.setEnabled(true);
-                    mobile.setFocusable(true);
-                    mobile.setFocusableInTouchMode(true);
-                    mobile.setCursorVisible(true);
                 }
             }
             @Override public void afterTextChanged(Editable value) { }
@@ -4362,11 +5575,59 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         addEditableProfileField(root, getString(R.string.profile_email), email, emailVerify);
         addEditableProfileField(root, getString(R.string.profile_mobile), mobile, mobileVerify);
         EditText[] changePinCells = pinCells();
-        addLabeledPinField(root, getString(R.string.profile_new_pin), changePinCells);
+        LinearLayout pinGroup = new LinearLayout(this);
+        pinGroup.setOrientation(LinearLayout.VERTICAL);
+        pinGroup.setVisibility(View.GONE);
+
+        for (EditText cell : changePinCells) {
+            if (cell != null && cell.getParent() instanceof ViewGroup) {
+                ((ViewGroup) cell.getParent()).removeView(cell);
+            }
+        }
+        pinGroup.addView(fieldLabel(getString(R.string.profile_new_pin)), new LinearLayout.LayoutParams(-1, dp(20)));
+        LinearLayout pinRow = new LinearLayout(this);
+        pinRow.setOrientation(LinearLayout.HORIZONTAL);
+        for (int index = 0; index < changePinCells.length; index++) {
+            LinearLayout.LayoutParams cellParams = new LinearLayout.LayoutParams(0, dp(46), 1f);
+            if (index > 0) cellParams.setMargins(dp(8), 0, 0, 0);
+            pinRow.addView(changePinCells[index], cellParams);
+        }
+        pinGroup.addView(pinRow, new LinearLayout.LayoutParams(-1, dp(46)));
+        root.addView(pinGroup, contentParams(-1, dp(76), dp(4)));
+
         TextView changePinButton = actionButton(getString(R.string.profile_change_pin), false);
         changePinButton.setOnClickListener(view -> {
-            String newPin = pinValue(changePinCells);
-            changeAccountPin(account.getString("username", ""), getStoredAccountPin(), newPin, changePinButton);
+            if (pinGroup.getVisibility() == View.GONE) {
+                pinGroup.setVisibility(View.VISIBLE);
+                changePinCells[0].requestFocus();
+
+                pinGroup.postDelayed(() -> {
+                    ViewParent parent = pinGroup.getParent();
+                    while (parent != null) {
+                        if (parent instanceof ScrollView) {
+                            ScrollView scroll = (ScrollView) parent;
+                            scroll.smoothScrollTo(0, pinGroup.getTop() - dp(16));
+                            break;
+                        }
+                        if (parent instanceof View) {
+                            parent = ((View) parent).getParent();
+                        } else {
+                            break;
+                        }
+                    }
+                }, 150L);
+
+                InputMethodManager imm = (InputMethodManager) getSystemService(Context.INPUT_METHOD_SERVICE);
+                if (imm != null) imm.showSoftInput(changePinCells[0], InputMethodManager.SHOW_IMPLICIT);
+            } else {
+                String newPin = pinValue(changePinCells);
+                if (newPin.length() != 4) {
+                    Toast.makeText(this, "Enter a valid 4-digit PIN", Toast.LENGTH_LONG).show();
+                    changePinCells[0].requestFocus();
+                    return;
+                }
+                changeAccountPin(account.getString("username", ""), getStoredAccountPin(), newPin, changePinButton);
+            }
         });
         addField(root, changePinButton);
 
@@ -4381,8 +5642,6 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             String updatedFullName = (updatedFirstName + " " + updatedSurname).trim();
             String updatedEmail = email.getText().toString().trim();
             String updatedMobile = normalizeLocalizedDigits(mobile.getText().toString().trim());
-            String originalMobile = String.valueOf(mobile.getTag() == null ? "" : mobile.getTag());
-            if (updatedMobile.equals(localizeProfileDisplayValue("mobile", originalMobile))) updatedMobile = originalMobile;
             String selectedState = reverseLocalizedProfileValue("state", stateSearch.getText().toString().trim());
             String selectedCity = reverseLocalizedProfileValue("city", citySearch.getText().toString().trim());
             String originalState = String.valueOf(stateSearch.getTag() == null ? "" : stateSearch.getTag());
@@ -4419,10 +5678,22 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                 mobile.requestFocus();
                 return;
             }
+            String lastSavedEmail = account.getString("email", "").trim();
+            boolean verifiedEmailAddress;
+            if (account.getBoolean("email_verified", false)) {
+                if (lastSavedEmail.isEmpty() || updatedEmail.equalsIgnoreCase(lastSavedEmail)) {
+                    verifiedEmailAddress = true;
+                } else {
+                    verifiedEmailAddress = false;
+                }
+            } else {
+                verifiedEmailAddress = false;
+            }
             account.edit()
                     .putString("full_name", updatedFullName)
                     .putString("email", updatedEmail)
                     .putString("mobile", updatedMobile)
+                    .putBoolean("email_verified", verifiedEmailAddress)
                     .putBoolean("mobile_verified", verifiedMobileNumber)
                     .putString("state", selectedState)
                     .putString("city", selectedCity)
@@ -4555,32 +5826,46 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
 
     private LinearLayout premiumCard(String title, String detail) {
         LinearLayout card = new LinearLayout(this);
-        card.setOrientation(LinearLayout.HORIZONTAL);
-        card.setGravity(Gravity.CENTER_VERTICAL);
-        card.setPadding(dp(18), dp(12), dp(18), dp(12));
+        boolean isCompact = getResources().getConfiguration().screenWidthDp < 410
+                || getResources().getConfiguration().fontScale > 1.1f;
+        card.setOrientation(isCompact ? LinearLayout.VERTICAL : LinearLayout.HORIZONTAL);
+        card.setGravity(isCompact ? Gravity.START : Gravity.CENTER_VERTICAL);
+        card.setPadding(dp(16), dp(12), dp(16), dp(12));
         card.setBackground(roundWithStroke(surfaceColor(), 18, borderColor()));
 
-        TextView titleView = text(title, 18, secondaryTextColor(), Typeface.NORMAL);
+        TextView titleView = text(title, isCompact ? 15 : 18, secondaryTextColor(), Typeface.NORMAL);
         titleView.setGravity(Gravity.START | Gravity.CENTER_VERTICAL);
         titleView.setIncludeFontPadding(false);
-        titleView.setTextAlignment(View.TEXT_ALIGNMENT_VIEW_START);
+        titleView.setSingleLine(false);
+        titleView.setMaxLines(2);
 
-        TextView detailView = text("", 20, primaryTextColor(), Typeface.NORMAL);
-        detailView.setGravity(Gravity.END | Gravity.CENTER_VERTICAL);
+        TextView detailView = text("", isCompact ? 18 : 20, primaryTextColor(), Typeface.NORMAL);
+        detailView.setGravity(isCompact ? Gravity.END : Gravity.CENTER_VERTICAL);
         detailView.setIncludeFontPadding(false);
-        detailView.setLineSpacing(0f, 1f);
-        detailView.setTextAlignment(View.TEXT_ALIGNMENT_VIEW_END);
 
         String priceText = detail != null && !detail.trim().isEmpty() ? detail : localizedAnnualPriceText();
         SpannableString detailText = new SpannableString(priceText);
-        int priceLength = localizeDigits("₹99").length();
-        detailText.setSpan(new StyleSpan(Typeface.BOLD), 0, priceLength, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+        int priceLength = Math.min(3, detailText.length());
+        detailText.setSpan(new StyleSpan(Typeface.NORMAL), 0, priceLength, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
         detailText.setSpan(new ForegroundColorSpan(primaryTextColor()), 0, priceLength, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
         detailText.setSpan(new ForegroundColorSpan(secondaryTextColor()), priceLength, detailText.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
         detailView.setText(detailText);
 
-        card.addView(titleView, new LinearLayout.LayoutParams(0, -2, 1f));
-        card.addView(detailView, new LinearLayout.LayoutParams(-2, -2));
+        if (isCompact) {
+            card.addView(titleView, new LinearLayout.LayoutParams(-1, -2));
+            LinearLayout bottomRow = new LinearLayout(this);
+            bottomRow.setOrientation(LinearLayout.HORIZONTAL);
+            bottomRow.setGravity(Gravity.CENTER_VERTICAL);
+            TextView space = text("", 1, Color.TRANSPARENT, Typeface.NORMAL);
+            bottomRow.addView(space, new LinearLayout.LayoutParams(0, -2, 1f));
+            bottomRow.addView(detailView, new LinearLayout.LayoutParams(-2, -2));
+            LinearLayout.LayoutParams bottomParams = new LinearLayout.LayoutParams(-1, -2);
+            bottomParams.setMargins(0, dp(6), 0, 0);
+            card.addView(bottomRow, bottomParams);
+        } else {
+            card.addView(titleView, new LinearLayout.LayoutParams(0, -2, 1f));
+            card.addView(detailView, new LinearLayout.LayoutParams(-2, -2));
+        }
         return card;
     }
 
@@ -4624,7 +5909,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         LinearLayout content = new LinearLayout(this);
         content.setOrientation(LinearLayout.VERTICAL);
         content.setGravity(Gravity.CENTER_VERTICAL);
-        TextView titleView = text(title, 15, primaryTextColor(), Typeface.BOLD);
+        TextView titleView = text(title, 15, primaryTextColor(), Typeface.NORMAL);
         titleView.setIncludeFontPadding(false);
         TextView detailView = text(detail, 10, secondaryTextColor(), Typeface.NORMAL);
         detailView.setIncludeFontPadding(false);
@@ -4670,36 +5955,36 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         if (input != null && input.getParent() instanceof ViewGroup) {
             ((ViewGroup) input.getParent()).removeView(input);
         }
+        if (verifyButton != null && verifyButton.getParent() instanceof ViewGroup) {
+            ((ViewGroup) verifyButton.getParent()).removeView(verifyButton);
+        }
         LinearLayout group = new LinearLayout(this);
         group.setOrientation(LinearLayout.VERTICAL);
         group.addView(fieldLabel(label), new LinearLayout.LayoutParams(-1, dp(20)));
 
-        LinearLayout row = new LinearLayout(this);
-        row.setOrientation(LinearLayout.HORIZONTAL);
-        row.setGravity(Gravity.CENTER_VERTICAL);
-        input.setLayoutParams(new LinearLayout.LayoutParams(0, dp(46), 1f));
+        input.setLayoutParams(new LinearLayout.LayoutParams(-1, dp(46)));
         input.setBackground(roundWithStroke(surfaceColor(), 10, fieldBorderColor()));
         input.setPadding(dp(16), dp(8), dp(16), dp(8));
         input.setSingleLine(true);
         input.setEnabled(!"Location".equals(label));
+        group.addView(input);
+
         if (verifyButton != null) {
             verifyButton.setClickable(true);
             verifyButton.setFocusable(true);
             verifyButton.setEnabled(true);
-            verifyButton.setMinWidth(dp(92));
-            verifyButton.setPadding(dp(12), dp(6), dp(12), dp(6));
             verifyButton.setIncludeFontPadding(false);
             verifyButton.setTextAlignment(View.TEXT_ALIGNMENT_CENTER);
-            LinearLayout.LayoutParams buttonParams = new LinearLayout.LayoutParams(-2, dp(34));
-            buttonParams.setMargins(dp(8), 0, 0, 0);
+            verifyButton.setSingleLine(true);
+            verifyButton.setPadding(dp(16), dp(8), dp(16), dp(8));
+            LinearLayout.LayoutParams buttonParams = new LinearLayout.LayoutParams(-1, dp(40));
+            buttonParams.setMargins(0, dp(8), 0, 0);
             verifyButton.setLayoutParams(buttonParams);
-            row.addView(input);
-            row.addView(verifyButton);
+            group.addView(verifyButton);
+            parent.addView(group, contentParams(-1, dp(120), dp(8)));
         } else {
-            row.addView(input);
+            parent.addView(group, contentParams(-1, dp(76), dp(4)));
         }
-        group.addView(row, new LinearLayout.LayoutParams(-1, dp(46)));
-        parent.addView(group, contentParams(-1, dp(76), dp(4)));
     }
 
     private void addField(LinearLayout parent, View child) {
@@ -4750,7 +6035,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
 
         String displayLabel = localizedFieldLabel(label);
         if (displayLabel == null) displayLabel = label;
-        TextView labelView = text(displayLabel, 10, secondaryTextColor(), Typeface.BOLD);
+        TextView labelView = text(displayLabel, 10, secondaryTextColor(), Typeface.NORMAL);
         labelView.setLetterSpacing(.04f);
         labelView.setGravity(Gravity.CENTER_VERTICAL);
         labelView.setIncludeFontPadding(false);
@@ -4889,13 +6174,23 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         return value.toString();
     }
 
+    private void lockVerifiedEmailField(EditText email, TextView verifyButton) {
+        if (email != null) {
+            email.setEnabled(false);
+            email.setFocusable(false);
+            email.setFocusableInTouchMode(false);
+            email.setCursorVisible(false);
+        }
+        setVerifiedButtonState(verifyButton);
+    }
+
     private void lockVerifiedMobileField(EditText mobile, TextView verifyButton) {
-        if (mobile == null) return;
-        mobile.setEnabled(false);
-        mobile.setFocusable(false);
-        mobile.setFocusableInTouchMode(false);
-        mobile.setCursorVisible(false);
-        mobile.setKeyListener(null);
+        if (mobile != null) {
+            mobile.setEnabled(false);
+            mobile.setFocusable(false);
+            mobile.setFocusableInTouchMode(false);
+            mobile.setCursorVisible(false);
+        }
         setVerifiedButtonState(verifyButton);
     }
 
@@ -4972,39 +6267,47 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         LinearLayout card = new LinearLayout(this);
         card.setOrientation(LinearLayout.HORIZONTAL);
         card.setGravity(Gravity.CENTER_VERTICAL);
-        card.setPadding(dp(18), dp(12), dp(18), dp(12));
+        card.setPadding(dp(16), dp(12), dp(16), dp(12));
         card.setBackground(roundWithStroke(surfaceColor(), 18, borderColor()));
 
-        LinearLayout copy = new LinearLayout(this);
-        copy.setOrientation(LinearLayout.HORIZONTAL);
-        copy.setAlpha(1.0f);
-        copy.setGravity(Gravity.CENTER_VERTICAL | Gravity.START);
-
-        TextView subscriptionLabel = text(translate("Annual subscription"), 18, secondaryTextColor(), Typeface.NORMAL);
+        TextView subscriptionLabel = text(translate("Subscription"), 15, secondaryTextColor(), Typeface.NORMAL);
         subscriptionLabel.setIncludeFontPadding(false);
-        subscriptionLabel.setGravity(Gravity.START | Gravity.CENTER_VERTICAL);
-        copy.addView(subscriptionLabel, new LinearLayout.LayoutParams(0, -2, 1f));
+        subscriptionLabel.setSingleLine(true);
 
-        TextView subscriptionPrice = text("", 22, primaryTextColor(), Typeface.NORMAL);
+        TextView subscriptionPrice = text("", 16, primaryTextColor(), Typeface.NORMAL);
         subscriptionPrice.setIncludeFontPadding(false);
-        subscriptionPrice.setGravity(Gravity.END | Gravity.CENTER_VERTICAL);
+        subscriptionPrice.setSingleLine(true);
 
         String priceTextValue = localizedAnnualPriceText();
         SpannableString priceText = new SpannableString(priceTextValue);
-        int priceLength = localizeDigits("₹99").length();
-        priceText.setSpan(new StyleSpan(Typeface.BOLD), 0, priceLength, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+        int priceLength = Math.min(3, priceText.length());
+        priceText.setSpan(new StyleSpan(Typeface.NORMAL), 0, priceLength, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
         priceText.setSpan(new ForegroundColorSpan(primaryTextColor()), 0, priceLength, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
         priceText.setSpan(new ForegroundColorSpan(secondaryTextColor()), priceLength, priceText.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
         subscriptionPrice.setText(priceText);
-
-        copy.addView(subscriptionPrice, new LinearLayout.LayoutParams(-2, -2));
-        card.addView(copy, new LinearLayout.LayoutParams(0, -2, 1f));
 
         ImageView lock = new ImageView(this);
         lock.setImageResource(R.drawable.ic_premium_lock);
         lock.setScaleType(ImageView.ScaleType.CENTER_INSIDE);
         lock.setColorFilter(GOLD);
-        card.addView(lock, new LinearLayout.LayoutParams(dp(28), dp(28)));
+
+        LinearLayout copy = new LinearLayout(this);
+        copy.setOrientation(LinearLayout.HORIZONTAL);
+        copy.setGravity(Gravity.CENTER_VERTICAL);
+        
+        LinearLayout.LayoutParams labelParams = new LinearLayout.LayoutParams(-2, -2);
+        copy.addView(subscriptionLabel, labelParams);
+
+        LinearLayout.LayoutParams priceParams = new LinearLayout.LayoutParams(-2, -2);
+        priceParams.setMargins(dp(8), 0, 0, 0);
+        copy.addView(subscriptionPrice, priceParams);
+
+        card.addView(copy, new LinearLayout.LayoutParams(0, -2, 1f));
+
+        LinearLayout.LayoutParams lockParams = new LinearLayout.LayoutParams(dp(24), dp(24));
+        lockParams.setMargins(dp(12), 0, 0, 0);
+        card.addView(lock, lockParams);
+
         return card;
     }
 
@@ -5040,7 +6343,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         spark.setColorFilter(SuccessMintColor());
         badge.addView(spark, new LinearLayout.LayoutParams(dp(24), dp(24)));
 
-        TextView chip = text("AI match — 94%", 10, SuccessMintColor(), Typeface.NORMAL);
+        TextView chip = text("Match — 94%", 10, SuccessMintColor(), Typeface.NORMAL);
         chip.setTextColor(SuccessMintColor());
         chip.setGravity(Gravity.CENTER);
         chip.setIncludeFontPadding(false);
@@ -5245,6 +6548,9 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         if (requestCode == REQUEST_PROFILE_IMAGE && resultCode == RESULT_OK && data != null && data.getData() != null) {
             selectedProfileImage = data.getData();
             capturedProfileImage = null;
+            try {
+                getContentResolver().takePersistableUriPermission(selectedProfileImage, Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            } catch (Exception ignored) {}
             getSharedPreferences("fendly_account", MODE_PRIVATE).edit()
                     .putString("profile_image_uri", selectedProfileImage.toString())
                     .apply();
@@ -5307,7 +6613,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         currentPage = PAGE_ADMIN;
         screenRenderer = this::showAdminDashboard;
         LinearLayout root = screenBase("");
-        root.addView(text("Admin workspace", 20, primaryTextColor(), Typeface.BOLD), contentParams(-1, dp(28), dp(4)));
+        root.addView(text("Admin workspace", 20, primaryTextColor(), Typeface.NORMAL), contentParams(-1, dp(28), dp(4)));
         root.addView(text("Review reports and verify possible matches", 11, secondaryTextColor(), Typeface.NORMAL), contentParams(-1, dp(22), dp(14)));
 
         LinearLayout overview = new LinearLayout(this);
@@ -5320,19 +6626,19 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         overview.addView(foundCount, foundCountParams);
         root.addView(overview, contentParams(-1, dp(62), dp(16)));
 
-        root.addView(text("Find a user", 13, primaryTextColor(), Typeface.BOLD), contentParams(-1, dp(20), dp(6)));
+        root.addView(text("Find a user", 13, primaryTextColor(), Typeface.NORMAL), contentParams(-1, dp(20), dp(6)));
         EditText search = field("Name, surname, mobile, username, or email");
         root.addView(search, contentParams(-1, dp(52), dp(8)));
         TextView searchButton = actionButton("Search", true);
         root.addView(searchButton, contentParams(-1, dp(44), dp(12)));
 
-        TextView reportsHeading = text("Live reports", 15, primaryTextColor(), Typeface.BOLD);
+        TextView reportsHeading = text("Live reports", 15, primaryTextColor(), Typeface.NORMAL);
         root.addView(reportsHeading, contentParams(-1, dp(22), dp(8)));
         LinearLayout reports = new LinearLayout(this);
         reports.setOrientation(LinearLayout.VERTICAL);
         root.addView(reports, contentParams(-1, -2, 0));
 
-        TextView matchesHeading = text("AI match review", 15, primaryTextColor(), Typeface.BOLD);
+        TextView matchesHeading = text("Match review", 15, primaryTextColor(), Typeface.NORMAL);
         matchesHeading.setVisibility(View.GONE);
         root.addView(matchesHeading, contentParams(-1, dp(22), dp(12)));
         LinearLayout matches = new LinearLayout(this);
@@ -5350,7 +6656,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
     }
 
     private TextView adminSummary(String label, int accent) {
-        TextView summary = text(label + "  0", 12, accent, Typeface.BOLD);
+        TextView summary = text(label + "  0", 12, accent, Typeface.NORMAL);
         summary.setGravity(Gravity.CENTER_VERTICAL);
         summary.setPadding(dp(14), 0, dp(14), 0);
         summary.setBackground(roundWithStroke(surfaceColor(), 14, borderColor()));
@@ -5392,7 +6698,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
     private LinearLayout adminReportSection(String title, int accent) {
         LinearLayout section = new LinearLayout(this);
         section.setOrientation(LinearLayout.VERTICAL);
-        TextView heading = text(title, 11, accent, Typeface.BOLD);
+        TextView heading = text(title, 11, accent, Typeface.NORMAL);
         heading.setPadding(dp(2), 0, 0, dp(6));
         section.addView(heading, new LinearLayout.LayoutParams(-1, dp(24)));
         return section;
@@ -5403,7 +6709,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         card.setOrientation(LinearLayout.VERTICAL);
         card.setPadding(dp(14), dp(12), dp(14), dp(12));
         card.setBackground(roundWithStroke(surfaceColor(), 14, borderColor()));
-        TextView title = text(item.optString("title", "Untitled"), 14, primaryTextColor(), Typeface.BOLD);
+        TextView title = text(item.optString("title", "Untitled"), 14, primaryTextColor(), Typeface.NORMAL);
         card.addView(title, new LinearLayout.LayoutParams(-1, dp(22)));
         String details = item.optString("category", "other") + "  ·  " + item.optString("description", "No description");
         TextView detail = text(details, 11, secondaryTextColor(), Typeface.NORMAL);
@@ -5412,7 +6718,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         TextView location = text(String.format(Locale.US, "Location  %.4f, %.4f", item.optDouble("lat", 0.0), item.optDouble("lng", 0.0)), 10, secondaryTextColor(), Typeface.NORMAL);
         card.addView(location, new LinearLayout.LayoutParams(-1, dp(20)));
         if (isFound) {
-            TextView review = text("Review AI matches  ›", 11, GOLD_ON, Typeface.BOLD);
+            TextView review = text("Review matches  ›", 11, GOLD_ON, Typeface.NORMAL);
             review.setGravity(Gravity.CENTER);
             review.setBackground(roundWithStroke(GOLD, 10, GOLD));
             LinearLayout.LayoutParams reviewParams = new LinearLayout.LayoutParams(-1, dp(36));
@@ -5449,7 +6755,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                 if (lostItem != null) matches.addView(adminMatchCard(foundItem, lostItem, result.optDouble("score", 0.0)), contentParams(-1, -2, dp(8)));
             }
         } catch (Exception error) {
-            matches.addView(text("AI matches unavailable.", 12, secondaryTextColor(), Typeface.NORMAL));
+            matches.addView(text("Matches unavailable.", 12, secondaryTextColor(), Typeface.NORMAL));
         }
     }
 
@@ -5458,7 +6764,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         card.setOrientation(LinearLayout.VERTICAL);
         card.setPadding(dp(12), dp(12), dp(12), dp(12));
         card.setBackground(roundWithStroke(surfaceColor(), 14, borderColor()));
-        TextView scoreLabel = text(String.format(Locale.US, "AI MATCH  %d%%", Math.round(score * 100)), 11, GOLD_ON, Typeface.BOLD);
+        TextView scoreLabel = text(String.format(Locale.US, "MATCH  %d%%", Math.round(score * 100)), 11, GOLD_ON, Typeface.NORMAL);
         scoreLabel.setGravity(Gravity.CENTER);
         scoreLabel.setBackground(round(GOLD, 10));
         card.addView(scoreLabel, new LinearLayout.LayoutParams(-1, dp(30)));
@@ -5477,8 +6783,8 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         column.setOrientation(LinearLayout.VERTICAL);
         column.setPadding(dp(10), dp(10), dp(10), dp(10));
         column.setBackground(roundWithStroke(backgroundColor(), 10, accent));
-        column.addView(text(label, 10, accent, Typeface.BOLD), new LinearLayout.LayoutParams(-1, dp(18)));
-        column.addView(text(item.optString("title", "Untitled"), 13, primaryTextColor(), Typeface.BOLD), new LinearLayout.LayoutParams(-1, dp(24)));
+        column.addView(text(label, 10, accent, Typeface.NORMAL), new LinearLayout.LayoutParams(-1, dp(18)));
+        column.addView(text(item.optString("title", "Untitled"), 13, primaryTextColor(), Typeface.NORMAL), new LinearLayout.LayoutParams(-1, dp(24)));
         TextView description = text(item.optString("description", "No description"), 10, secondaryTextColor(), Typeface.NORMAL);
         description.setMaxLines(3);
         column.addView(description, new LinearLayout.LayoutParams(-1, dp(48)));
@@ -5513,7 +6819,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                         JSONObject result = users.getJSONObject(index);
                         JSONObject user = result.optJSONObject("user");
                         String identity = user == null ? "User" : user.optString("full_name", "User") + " · " + user.optString("username", "") + " · " + user.optString("mobile", "");
-                        addField(results, text(identity, 14, primaryTextColor(), Typeface.BOLD));
+                        addField(results, text(identity, 14, primaryTextColor(), Typeface.NORMAL));
                         JSONArray reports = result.optJSONArray("reports");
                         if (reports == null || reports.length() == 0) {
                             addField(results, text("No reports.", 12, secondaryTextColor(), Typeface.NORMAL));
@@ -5571,7 +6877,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         iconParams.gravity = Gravity.CENTER_HORIZONTAL;
         form.addView(icon, iconParams);
 
-        TextView title = text("Admin login", 18, primaryTextColor(), Typeface.BOLD);
+        TextView title = text("Admin login", 18, primaryTextColor(), Typeface.NORMAL);
         title.setGravity(Gravity.CENTER);
         title.setPadding(0, dp(8), 0, dp(2));
         form.addView(title, new LinearLayout.LayoutParams(-1, -2));
@@ -5583,7 +6889,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         LinearLayout.LayoutParams usernameParams = new LinearLayout.LayoutParams(-1, dp(48));
         usernameParams.setMargins(0, dp(10), 0, 0);
         form.addView(username, usernameParams);
-        TextView pinLabel = text("4-digit PIN", 11, secondaryTextColor(), Typeface.BOLD);
+        TextView pinLabel = text("4-digit PIN", 11, secondaryTextColor(), Typeface.NORMAL);
         pinLabel.setPadding(0, dp(8), 0, dp(6));
         form.addView(pinLabel, new LinearLayout.LayoutParams(-1, dp(30)));
         LinearLayout pinRow = new LinearLayout(this);
@@ -5597,11 +6903,11 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
 
         LinearLayout actions = new LinearLayout(this);
         actions.setGravity(Gravity.END | Gravity.CENTER_VERTICAL);
-        TextView cancel = text("Cancel", 12, secondaryTextColor(), Typeface.BOLD);
+        TextView cancel = text("Cancel", 12, secondaryTextColor(), Typeface.NORMAL);
         cancel.setGravity(Gravity.CENTER);
         cancel.setOnClickListener(view -> dialog.dismiss());
         actions.addView(cancel, new LinearLayout.LayoutParams(dp(88), dp(44)));
-        TextView login = text("Login", 12, GOLD_ON, Typeface.BOLD);
+        TextView login = text("Login", 12, GOLD_ON, Typeface.NORMAL);
         login.setGravity(Gravity.CENTER);
         login.setBackground(goldButton());
         LinearLayout.LayoutParams loginParams = new LinearLayout.LayoutParams(dp(100), dp(44));
@@ -5612,37 +6918,16 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         form.addView(actions, actionsParams);
 
         login.setOnClickListener(view -> {
-            String adminUsername = username.getText().toString().trim().toLowerCase(Locale.US);
+            String adminUsername = username.getText().toString().trim();
             String adminPin = pinValue(adminPinCells);
-            if (!adminUsername.matches("^[a-z0-9_]{3,32}$") || !adminPin.matches("^\\d{4}$")) {
-                Toast.makeText(this, "Enter a valid username and 4-digit PIN", Toast.LENGTH_LONG).show();
-                return;
+
+            AdminViewModel adminViewModel = new AdminViewModel();
+            if (adminViewModel.verifyAdminCredentials(adminUsername, adminPin)) {
+                dialog.dismiss();
+                showAdminDashboard();
+            } else {
+                Toast.makeText(this, "Invalid Admin Name or PIN", Toast.LENGTH_LONG).show();
             }
-            login.setEnabled(false);
-            login.setText("Checking...");
-            FirebaseAuth.getInstance().signInWithEmailAndPassword(credentialEmail(adminUsername), credentialPassword(adminUsername, adminPin))
-                    .addOnSuccessListener(result -> result.getUser().getIdToken(false).addOnSuccessListener(token -> network.execute(() -> {
-                        String adminItems = fetchAdminItems(token.getToken());
-                        runOnUiThread(() -> {
-                            if (adminItems == null) {
-                                FirebaseAuth.getInstance().signOut();
-                                dialog.dismiss();
-                                Toast.makeText(this, "Admin access denied", Toast.LENGTH_LONG).show();
-                                return;
-                            }
-                            dialog.dismiss();
-                            showAdminDashboard();
-                        });
-                    })).addOnFailureListener(error -> {
-                        login.setEnabled(true);
-                        login.setText("Login");
-                        Toast.makeText(this, "Admin verification unavailable", Toast.LENGTH_LONG).show();
-                    }))
-                    .addOnFailureListener(error -> {
-                        login.setEnabled(true);
-                        login.setText("Login");
-                        Toast.makeText(this, "Invalid admin credentials", Toast.LENGTH_LONG).show();
-                    });
         });
         dialog.setContentView(form);
         dialog.show();
@@ -5685,7 +6970,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         AuthLabelView(Context context, String label) {
             super(context);
             this.label = label;
-            paint.setTypeface(languageTypeface(Typeface.BOLD));
+            paint.setTypeface(languageTypeface(Typeface.NORMAL));
             paint.setTextSize(dp(12));
             paint.setColor(authTextColor());
             paint.setAlpha(255);
@@ -5710,7 +6995,10 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         view.setTextSize(size * Math.max(1.0f, Math.min(1.2f, fontScale)));
         view.setTag(Float.valueOf(size));
         view.setTextColor(color != 0 ? color : (darkMode ? Color.WHITE : LIGHT_TEXT));
-        view.setTypeface(typefaceForTextValue(resolvedText, style));
+        Typeface tf = typefaceForTextValue(resolvedText, Typeface.NORMAL);
+        view.setTypeface(tf, Typeface.NORMAL);
+        view.setLineSpacing(0, 1.1f);
+        view.setLayoutParams(new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         return view;
     }
 
@@ -5728,13 +7016,15 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
     }
 
     private void applyProfileFont(View view) {
-        if (view == null || selectedLanguage != 2) return;
+        if (view == null || selectedLanguage <= 0) return;
         if (view instanceof TextView) {
             TextView textView = (TextView) view;
             int style = textView.getTypeface() != null && textView.getTypeface().isBold()
-                    ? Typeface.BOLD : Typeface.NORMAL;
-            Typeface devanagari = ResourcesCompat.getFont(this, R.font.noto_sans_devanagari);
-            if (devanagari != null) textView.setTypeface(Typeface.create(devanagari, style));
+                    ? Typeface.NORMAL : Typeface.NORMAL;
+            Typeface tf = languageTypeface(style);
+            if (tf != null) {
+                textView.setTypeface(tf);
+            }
         }
         if (view instanceof ViewGroup) {
             ViewGroup group = (ViewGroup) view;
@@ -5902,104 +7192,323 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         LinearLayout controls = new LinearLayout(this);
         controls.setGravity(Gravity.CENTER_VERTICAL);
 
-        TextView language = text("", 18, secondaryTextColor(), Typeface.NORMAL);
-        language.setGravity(Gravity.CENTER);
-        language.setBackground(roundWithStroke(surfaceColor(), 14, borderColor()));
-        language.setPadding(dp(8), dp(8), dp(8), dp(8));
-        language.setCompoundDrawablesWithIntrinsicBounds(R.drawable.ic_language, 0, 0, 0);
-        language.setCompoundDrawablePadding(0);
-        language.setElevation(dp(2));
-        if (Build.VERSION.SDK_INT >= 21) {
-            language.setCompoundDrawableTintList(ColorStateList.valueOf(accentColor()));
-        }
-        language.setContentDescription("Select language");
-        language.setOnClickListener(view -> showLanguagePicker());
         if (authScreen) {
-            controls.addView(language, new LinearLayout.LayoutParams(dp(42), dp(42)));
-        }
+            // Top-left: Small expand right/down arrow icon that toggles language and theme icons
+            final boolean[] isExpanded = {false};
 
-        if (!authScreen) {
-            controls.setGravity(Gravity.CENTER_VERTICAL);
-            controls.setPadding(0, 0, 0, 0);
+            TextView expandButton = text("", 18, secondaryTextColor(), Typeface.NORMAL);
+            expandButton.setGravity(Gravity.CENTER);
+            expandButton.setBackground(roundWithStroke(surfaceColor(), 14, borderColor()));
+            expandButton.setPadding(dp(8), dp(8), dp(8), dp(8));
+            expandButton.setCompoundDrawablesWithIntrinsicBounds(R.drawable.ic_gear, 0, 0, 0);
+            expandButton.setElevation(dp(2));
+            if (Build.VERSION.SDK_INT >= 21) {
+                expandButton.setCompoundDrawableTintList(ColorStateList.valueOf(accentColor()));
+            }
+            expandButton.setContentDescription("Expand menu");
 
-            TextView font = text("A", 17, secondaryTextColor(), Typeface.BOLD);
-            font.setGravity(Gravity.CENTER);
-            font.setTextAlignment(View.TEXT_ALIGNMENT_CENTER);
-            font.setIncludeFontPadding(false);
-            font.setBackground(roundWithStroke(surfaceColor(), 14, borderColor()));
-            font.setPadding(dp(6), 0, dp(6), 0);
-            font.setContentDescription("Adjust text size");
-            font.setOnClickListener(view -> showFontScaleDialog());
-            controls.addView(font, new LinearLayout.LayoutParams(dp(42), dp(42)));
+            LinearLayout expandedIconsContainer = new LinearLayout(this);
+            expandedIconsContainer.setGravity(Gravity.CENTER_VERTICAL);
+            expandedIconsContainer.setVisibility(View.GONE);
 
-            Space leftSpacer = new Space(this);
-            controls.addView(leftSpacer, new LinearLayout.LayoutParams(0, 1, 1));
+            TextView languageIconView = text("", 18, secondaryTextColor(), Typeface.NORMAL);
+            languageIconView.setGravity(Gravity.CENTER);
+            languageIconView.setBackground(roundWithStroke(surfaceColor(), 14, borderColor()));
+            languageIconView.setPadding(dp(8), dp(8), dp(8), dp(8));
+            languageIconView.setCompoundDrawablesWithIntrinsicBounds(R.drawable.ic_language, 0, 0, 0);
+            languageIconView.setElevation(dp(2));
+            if (Build.VERSION.SDK_INT >= 21) {
+                languageIconView.setCompoundDrawableTintList(ColorStateList.valueOf(accentColor()));
+            }
+            languageIconView.setContentDescription("Select language");
+            languageIconView.setOnClickListener(view -> showLanguagePicker());
+            LinearLayout.LayoutParams langParams = new LinearLayout.LayoutParams(dp(42), dp(42));
+            langParams.setMargins(dp(6), 0, 0, 0);
+            expandedIconsContainer.addView(languageIconView, langParams);
 
-            ImageView logo = new ImageView(this);
-            logo.setImageResource(R.drawable.fendly_logo);
-            logo.setContentDescription("Fendly logo");
-            logo.setScaleType(ImageView.ScaleType.CENTER_INSIDE);
-            logo.setAdjustViewBounds(true);
-            logo.setPadding(0, 0, 0, 0);
-            LinearLayout.LayoutParams logoParams = new LinearLayout.LayoutParams(dp(40), dp(40));
-            logoParams.gravity = Gravity.CENTER_VERTICAL;
-            controls.addView(logo, logoParams);
-
-            Space rightSpacer = new Space(this);
-            controls.addView(rightSpacer, new LinearLayout.LayoutParams(0, 1, 1));
-
-            FrameLayout themeButton = new FrameLayout(this);
+            FrameLayout themeIconView = new FrameLayout(this);
             int themeBg = darkMode ? surfaceColor() : Color.rgb(244, 239, 232);
             int themeBorder = darkMode ? borderColor() : Color.rgb(214, 211, 204);
-            themeButton.setBackground(roundWithStroke(themeBg, 14, themeBorder));
-            themeButton.setPadding(dp(6), dp(6), dp(6), dp(6));
-            themeButton.setLayoutParams(new LinearLayout.LayoutParams(dp(42), dp(42)));
-            themeButton.setOnClickListener(view -> {
+            themeIconView.setBackground(roundWithStroke(themeBg, 14, themeBorder));
+            themeIconView.setPadding(dp(6), dp(6), dp(6), dp(6));
+            ImageView themeImage = new ImageView(this);
+            themeImage.setImageResource(darkMode ? R.drawable.ic_light_mode : R.drawable.ic_dark_mode);
+            themeImage.setColorFilter(darkMode ? accentColor() : LIGHT_TEXT);
+            themeImage.setScaleType(ImageView.ScaleType.CENTER_INSIDE);
+            FrameLayout.LayoutParams themeImgParams = new FrameLayout.LayoutParams(dp(20), dp(20), Gravity.CENTER);
+            themeIconView.addView(themeImage, themeImgParams);
+            themeIconView.setContentDescription(darkMode ? "Switch to light mode" : "Switch to dark mode");
+            themeIconView.setOnClickListener(view -> {
                 darkMode = !darkMode;
                 getSharedPreferences("fendly_settings", MODE_PRIVATE).edit().putBoolean("dark_mode", darkMode).apply();
                 applySystemBarColors();
                 if (screenRenderer != null) screenRenderer.run();
             });
-            themeButton.setContentDescription(darkMode ? "Switch to light mode" : "Switch to dark mode");
+            LinearLayout.LayoutParams themeParams = new LinearLayout.LayoutParams(dp(42), dp(42));
+            themeParams.setMargins(dp(6), 0, 0, 0);
+            expandedIconsContainer.addView(themeIconView, themeParams);
 
-            ImageView themeIcon = new ImageView(this);
-            themeIcon.setImageResource(darkMode ? R.drawable.ic_light_mode : R.drawable.ic_dark_mode);
-            themeIcon.setColorFilter(darkMode ? accentColor() : LIGHT_TEXT);
-            themeIcon.setScaleType(ImageView.ScaleType.CENTER_INSIDE);
-            FrameLayout.LayoutParams themeIconParams = new FrameLayout.LayoutParams(dp(20), dp(20), Gravity.CENTER);
-            themeButton.addView(themeIcon, themeIconParams);
+            expandButton.setOnClickListener(view -> {
+                isExpanded[0] = !isExpanded[0];
+                if (isExpanded[0]) {
+                    expandButton.setCompoundDrawablesWithIntrinsicBounds(R.drawable.material_ic_keyboard_arrow_left_black_24dp, 0, 0, 0);
+                    expandedIconsContainer.setVisibility(View.VISIBLE);
+                } else {
+                    expandButton.setCompoundDrawablesWithIntrinsicBounds(R.drawable.ic_gear, 0, 0, 0);
+                    expandedIconsContainer.setVisibility(View.GONE);
+                }
+            });
 
-            controls.addView(themeButton, new LinearLayout.LayoutParams(dp(42), dp(42)));
+            controls.addView(expandButton, new LinearLayout.LayoutParams(dp(42), dp(42)));
+            controls.addView(expandedIconsContainer, new LinearLayout.LayoutParams(-2, -2));
+
+            Space spacer = new Space(this);
+            controls.addView(spacer, new LinearLayout.LayoutParams(0, 1, 1));
+
+            // Top-right: Notification button for admin/owner match pings
+            TextView notificationButton = text("🔔", 16, secondaryTextColor(), Typeface.NORMAL);
+            notificationButton.setGravity(Gravity.CENTER);
+            notificationButton.setBackground(roundWithStroke(surfaceColor(), 14, borderColor()));
+            notificationButton.setPadding(dp(8), dp(8), dp(8), dp(8));
+            notificationButton.setElevation(dp(2));
+            notificationButton.setContentDescription("Notifications");
+            notificationButton.setOnClickListener(view -> {
+                Toast.makeText(MainActivity.this, "No new match notifications", Toast.LENGTH_SHORT).show();
+            });
+            controls.addView(notificationButton, new LinearLayout.LayoutParams(dp(42), dp(42)));
+
             parent.addView(controls, new LinearLayout.LayoutParams(-1, -2));
             return;
         }
 
-        Space spacer = new Space(this);
-        controls.addView(spacer, new LinearLayout.LayoutParams(0, 1, 1));
+        controls.setGravity(Gravity.CENTER_VERTICAL);
+        controls.setPadding(0, 0, 0, 0);
 
-        FrameLayout themeButton = new FrameLayout(this);
-        int themeBg = darkMode ? surfaceColor() : Color.rgb(244, 239, 232);
-        int themeBorder = darkMode ? borderColor() : Color.rgb(214, 211, 204);
-        themeButton.setBackground(roundWithStroke(themeBg, 14, themeBorder));
-        themeButton.setPadding(dp(6), dp(6), dp(6), dp(6));
-        themeButton.setLayoutParams(new LinearLayout.LayoutParams(dp(42), dp(42)));
-        themeButton.setOnClickListener(view -> {
-            darkMode = !darkMode;
-            getSharedPreferences("fendly_settings", MODE_PRIVATE).edit().putBoolean("dark_mode", darkMode).apply();
-            applySystemBarColors();
-            if (screenRenderer != null) screenRenderer.run();
-        });
-        themeButton.setContentDescription(darkMode ? "Switch to light mode" : "Switch to dark mode");
+        TextView font = text("A", 17, secondaryTextColor(), Typeface.NORMAL);
+        font.setGravity(Gravity.CENTER);
+        font.setTextAlignment(View.TEXT_ALIGNMENT_CENTER);
+        font.setIncludeFontPadding(false);
+        font.setBackground(roundWithStroke(surfaceColor(), 14, borderColor()));
+        font.setPadding(dp(6), 0, dp(6), 0);
+        font.setContentDescription("Adjust text size");
+        font.setOnClickListener(view -> showFontScaleDialog());
+        controls.addView(font, new LinearLayout.LayoutParams(dp(42), dp(42)));
 
-        ImageView themeIcon = new ImageView(this);
-        themeIcon.setImageResource(darkMode ? R.drawable.ic_light_mode : R.drawable.ic_dark_mode);
-        themeIcon.setColorFilter(darkMode ? accentColor() : LIGHT_TEXT);
-        themeIcon.setScaleType(ImageView.ScaleType.CENTER_INSIDE);
-        FrameLayout.LayoutParams themeIconParams = new FrameLayout.LayoutParams(dp(20), dp(20), Gravity.CENTER);
-        themeButton.addView(themeIcon, themeIconParams);
+        Space leftSpacer = new Space(this);
+        controls.addView(leftSpacer, new LinearLayout.LayoutParams(0, 1, 1));
 
-        controls.addView(themeButton, new LinearLayout.LayoutParams(dp(42), dp(42)));
+        ImageView logo = new ImageView(this);
+        logo.setImageResource(R.drawable.fendly_logo);
+        logo.setContentDescription("Fendly logo");
+        logo.setScaleType(ImageView.ScaleType.CENTER_INSIDE);
+        logo.setAdjustViewBounds(true);
+        logo.setPadding(0, 0, 0, 0);
+        LinearLayout.LayoutParams logoParams = new LinearLayout.LayoutParams(dp(40), dp(40));
+        logoParams.gravity = Gravity.CENTER_VERTICAL;
+        controls.addView(logo, logoParams);
+
+        Space rightSpacer = new Space(this);
+        controls.addView(rightSpacer, new LinearLayout.LayoutParams(0, 1, 1));
+
+        if (currentPage == PAGE_PROFILE) {
+            // Top-right link icon for profile page only, expands Instagram, Facebook, and X icons (icons only, no text)
+            final boolean[] isSocialExpanded = {false};
+
+            LinearLayout rightContainer = new LinearLayout(this);
+            rightContainer.setGravity(Gravity.CENTER_VERTICAL);
+
+            LinearLayout socialIconsContainer = new LinearLayout(this);
+            socialIconsContainer.setGravity(Gravity.CENTER_VERTICAL);
+            socialIconsContainer.setVisibility(View.GONE);
+
+            // Instagram button (vector icon only)
+            TextView instaButton = text("", 18, secondaryTextColor(), Typeface.NORMAL);
+            instaButton.setGravity(Gravity.CENTER);
+            instaButton.setBackground(roundWithStroke(surfaceColor(), 14, borderColor()));
+            instaButton.setPadding(dp(8), dp(8), dp(8), dp(8));
+            instaButton.setCompoundDrawablesWithIntrinsicBounds(R.drawable.ic_instagram, 0, 0, 0);
+            instaButton.setElevation(dp(2));
+            if (Build.VERSION.SDK_INT >= 21) {
+                instaButton.setCompoundDrawableTintList(ColorStateList.valueOf(accentColor()));
+            }
+            instaButton.setContentDescription("Instagram");
+            instaButton.setOnClickListener(view -> {
+                try {
+                    Intent intent = new Intent(Intent.ACTION_VIEW, Uri.parse("https://www.instagram.com/fendly_community/"));
+                    startActivity(intent);
+                } catch (Exception ignored) {}
+            });
+            LinearLayout.LayoutParams instaParams = new LinearLayout.LayoutParams(dp(42), dp(42));
+            instaParams.setMarginEnd(dp(6));
+            socialIconsContainer.addView(instaButton, instaParams);
+
+            // Facebook button (vector icon only)
+            TextView fbButton = text("", 18, secondaryTextColor(), Typeface.NORMAL);
+            fbButton.setGravity(Gravity.CENTER);
+            fbButton.setBackground(roundWithStroke(surfaceColor(), 14, borderColor()));
+            fbButton.setPadding(dp(8), dp(8), dp(8), dp(8));
+            fbButton.setCompoundDrawablesWithIntrinsicBounds(R.drawable.ic_facebook, 0, 0, 0);
+            fbButton.setElevation(dp(2));
+            if (Build.VERSION.SDK_INT >= 21) {
+                fbButton.setCompoundDrawableTintList(ColorStateList.valueOf(accentColor()));
+            }
+            fbButton.setContentDescription("Facebook");
+            fbButton.setOnClickListener(view -> {
+                try {
+                    Intent intent = new Intent(Intent.ACTION_VIEW, Uri.parse("https://www.facebook.com/profile.php?id=61594623491021"));
+                    startActivity(intent);
+                } catch (Exception ignored) {}
+            });
+            LinearLayout.LayoutParams fbParams = new LinearLayout.LayoutParams(dp(42), dp(42));
+            fbParams.setMarginEnd(dp(6));
+            socialIconsContainer.addView(fbButton, fbParams);
+
+            // X (Twitter) button (vector icon only)
+            TextView xButton = text("", 18, secondaryTextColor(), Typeface.NORMAL);
+            xButton.setGravity(Gravity.CENTER);
+            xButton.setBackground(roundWithStroke(surfaceColor(), 14, borderColor()));
+            xButton.setPadding(dp(8), dp(8), dp(8), dp(8));
+            xButton.setCompoundDrawablesWithIntrinsicBounds(R.drawable.ic_x, 0, 0, 0);
+            xButton.setElevation(dp(2));
+            if (Build.VERSION.SDK_INT >= 21) {
+                xButton.setCompoundDrawableTintList(ColorStateList.valueOf(accentColor()));
+            }
+            xButton.setContentDescription("X");
+            xButton.setOnClickListener(view -> {
+                try {
+                    Intent intent = new Intent(Intent.ACTION_VIEW, Uri.parse("https://x.com/infofendly"));
+                    startActivity(intent);
+                } catch (Exception ignored) {}
+            });
+            LinearLayout.LayoutParams xParams = new LinearLayout.LayoutParams(dp(42), dp(42));
+            xParams.setMarginEnd(dp(6));
+            socialIconsContainer.addView(xButton, xParams);
+
+            rightContainer.addView(socialIconsContainer, new LinearLayout.LayoutParams(-2, -2));
+
+            // Link icon button (vector icon only)
+            TextView linkButton = text("", 18, secondaryTextColor(), Typeface.NORMAL);
+            linkButton.setGravity(Gravity.CENTER);
+            linkButton.setBackground(roundWithStroke(surfaceColor(), 14, borderColor()));
+            linkButton.setPadding(dp(8), dp(8), dp(8), dp(8));
+            linkButton.setCompoundDrawablesWithIntrinsicBounds(R.drawable.ic_link, 0, 0, 0);
+            linkButton.setElevation(dp(2));
+            if (Build.VERSION.SDK_INT >= 21) {
+                linkButton.setCompoundDrawableTintList(ColorStateList.valueOf(accentColor()));
+            }
+            linkButton.setContentDescription("Community links");
+            linkButton.setOnClickListener(view -> {
+                isSocialExpanded[0] = !isSocialExpanded[0];
+                socialIconsContainer.setVisibility(isSocialExpanded[0] ? View.VISIBLE : View.GONE);
+            });
+            rightContainer.addView(linkButton, new LinearLayout.LayoutParams(dp(42), dp(42)));
+
+            controls.addView(rightContainer, new LinearLayout.LayoutParams(-2, -2));
+        } else if (currentPage == PAGE_REPORTS) {
+            // Info "i" button for Reports page with instructions on how to use My Reports
+            TextView infoButton = text("i", 16, secondaryTextColor(), Typeface.NORMAL);
+            infoButton.setGravity(Gravity.CENTER);
+            infoButton.setTypeface(Typeface.DEFAULT_BOLD);
+            infoButton.setBackground(roundWithStroke(surfaceColor(), 14, borderColor()));
+            infoButton.setPadding(dp(8), dp(8), dp(8), dp(8));
+            infoButton.setElevation(dp(2));
+            infoButton.setContentDescription("How to use My Reports");
+            infoButton.setOnClickListener(view -> showReportsGuideDialog());
+            controls.addView(infoButton, new LinearLayout.LayoutParams(dp(42), dp(42)));
+        } else {
+            // Info "i" button for other post-login screens
+            TextView infoButton = text("i", 16, secondaryTextColor(), Typeface.NORMAL);
+            infoButton.setGravity(Gravity.CENTER);
+            infoButton.setTypeface(Typeface.DEFAULT_BOLD);
+            infoButton.setBackground(roundWithStroke(surfaceColor(), 14, borderColor()));
+            infoButton.setPadding(dp(8), dp(8), dp(8), dp(8));
+            infoButton.setElevation(dp(2));
+            infoButton.setContentDescription("How to report lost and found");
+            infoButton.setOnClickListener(view -> showHowToReportDialog());
+            controls.addView(infoButton, new LinearLayout.LayoutParams(dp(42), dp(42)));
+        }
+
         parent.addView(controls, new LinearLayout.LayoutParams(-1, -2));
+    }
+
+    private void showReportsGuideDialog() {
+        Dialog dialog = new Dialog(this);
+        dialog.requestWindowFeature(Window.FEATURE_NO_TITLE);
+        LinearLayout form = new LinearLayout(this);
+        form.setOrientation(LinearLayout.VERTICAL);
+        form.setPadding(dp(24), dp(24), dp(24), dp(20));
+        form.setBackground(roundWithStroke(surfaceColor(), 26, borderColor()));
+
+        TextView title = text("How to Use My Reports", 18, primaryTextColor(), Typeface.BOLD);
+        title.setGravity(Gravity.CENTER);
+        title.setPadding(0, 0, 0, dp(16));
+        form.addView(title, new LinearLayout.LayoutParams(-1, -2));
+
+        String guideText = "1. View Submitted Reports:\n" +
+                "• Review all your active lost and found item submissions in one centralized list.\n\n" +
+                "2. Track Status & AI Matches:\n" +
+                "• Monitor report statuses and check for any potential AI item matches.\n\n" +
+                "3. Edit or Delete Reports:\n" +
+                "• Update report information once if needed, or delete items once recovered or resolved.";
+
+        TextView body = text(guideText, 13, secondaryTextColor(), Typeface.NORMAL);
+        body.setPadding(0, 0, 0, dp(20));
+        form.addView(body, new LinearLayout.LayoutParams(-1, -2));
+
+        TextView close = text("Got it", 14, GOLD_ON, Typeface.NORMAL);
+        close.setGravity(Gravity.CENTER);
+        close.setBackground(goldButton());
+        close.setOnClickListener(view -> dialog.dismiss());
+        form.addView(close, new LinearLayout.LayoutParams(-1, dp(44)));
+
+        dialog.setContentView(form);
+        dialog.show();
+        Window window = dialog.getWindow();
+        if (window != null) {
+            window.setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
+            window.setLayout(Math.min(getResources().getDisplayMetrics().widthPixels - dp(36), dp(360)), -2);
+        }
+    }
+
+    private void showHowToReportDialog() {
+        Dialog dialog = new Dialog(this);
+        dialog.requestWindowFeature(Window.FEATURE_NO_TITLE);
+        LinearLayout form = new LinearLayout(this);
+        form.setOrientation(LinearLayout.VERTICAL);
+        form.setPadding(dp(24), dp(24), dp(24), dp(20));
+        form.setBackground(roundWithStroke(surfaceColor(), 26, borderColor()));
+
+        TextView title = text("How to Report Lost & Found", 18, primaryTextColor(), Typeface.BOLD);
+        title.setGravity(Gravity.CENTER);
+        title.setPadding(0, 0, 0, dp(16));
+        form.addView(title, new LinearLayout.LayoutParams(-1, -2));
+
+        String guideText = "1. Reporting Lost Items:\n" +
+                "• Tap the green LOST button on the home screen.\n" +
+                "• Enter item details, category, description, and photo.\n\n" +
+                "2. Reporting Found Items:\n" +
+                "• Tap the gold FOUND button on the home screen when you find an item.\n" +
+                "• Fill in the details of the found item.\n\n" +
+                "3. Tracking Your Reports:\n" +
+                "• Visit My Reports anytime to track your submitted lost or found items and view updates.";
+
+        TextView body = text(guideText, 13, secondaryTextColor(), Typeface.NORMAL);
+        body.setPadding(0, 0, 0, dp(20));
+        form.addView(body, new LinearLayout.LayoutParams(-1, -2));
+
+        TextView close = text("Got it", 14, GOLD_ON, Typeface.NORMAL);
+        close.setGravity(Gravity.CENTER);
+        close.setBackground(goldButton());
+        close.setOnClickListener(view -> dialog.dismiss());
+        form.addView(close, new LinearLayout.LayoutParams(-1, dp(44)));
+
+        dialog.setContentView(form);
+        dialog.show();
+        Window window = dialog.getWindow();
+        if (window != null) {
+            window.setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
+            window.setLayout(Math.min(getResources().getDisplayMetrics().widthPixels - dp(36), dp(360)), -2);
+        }
     }
 
     private Drawable createRadioButtonDrawable(boolean checked, int primaryColor, int strokeColor) {
@@ -6029,15 +7538,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
 
     private void applyLanguageSelection(int languageIndex, String languageCode) {
         selectedLanguage = languageIndex;
-        getSharedPreferences("fendly_language", MODE_PRIVATE)
-                .edit()
-                .putInt("selected_language_index", languageIndex)
-                .commit();
-        Configuration configuration = new Configuration(getResources().getConfiguration());
-        Locale locale = Locale.forLanguageTag(languageCode);
-        configuration.setLocale(locale);
-        configuration.setLayoutDirection(locale);
-        getResources().updateConfiguration(configuration, getResources().getDisplayMetrics());
+        LanguageManager.setAppLanguage(this, languageCode);
         applySystemBarColors();
         if (screenRenderer != null) screenRenderer.run();
     }
@@ -6058,7 +7559,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         content.setOrientation(LinearLayout.VERTICAL);
         content.setPadding(dp(18), dp(16), dp(18), dp(14));
 
-        TextView title = text(localized("language"), 20, primaryTextColor(), Typeface.BOLD);
+        TextView title = text(localized("language"), 20, primaryTextColor(), Typeface.NORMAL);
         title.setIncludeFontPadding(false);
         title.setPadding(dp(4), 0, dp(4), dp(10));
         content.addView(title, new LinearLayout.LayoutParams(-1, -2));
@@ -6097,8 +7598,9 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             indicatorParams.gravity = Gravity.CENTER_VERTICAL;
             row.addView(indicator, indicatorParams);
 
-            TextView label = text(languages[index][0], 16, primaryTextColor(), index == selectedLanguage ? Typeface.BOLD : Typeface.NORMAL);
+            TextView label = text(languages[index][0], languages[index][0].length() > 6 ? 14 : 16, primaryTextColor(), Typeface.NORMAL);
             label.setIncludeFontPadding(false);
+            label.setSingleLine(true);
             label.setGravity(Gravity.CENTER_VERTICAL);
             label.setPadding(dp(10), 0, 0, 0);
             label.setTextAlignment(View.TEXT_ALIGNMENT_VIEW_START);
@@ -6145,10 +7647,12 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         content.addView(value);
         content.addView(slider);
         final boolean[] applied = {false};
+        View mainContentView = findViewById(android.R.id.content);
+        final View liveScaleTarget = mainContentView != null ? mainContentView : (activeContent != null ? activeContent : getWindow().getDecorView());
         slider.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
             @Override public void onProgressChanged(SeekBar bar, int progress, boolean fromUser) {
                 value.setText(localizedTextSize(100 + progress));
-                applyLiveFontScale(getWindow().getDecorView(), 1.0f + progress / 100.0f);
+                applyLiveFontScale(liveScaleTarget, 1.0f + progress / 100.0f);
             }
             @Override public void onStartTrackingTouch(SeekBar bar) { }
             @Override public void onStopTrackingTouch(SeekBar bar) { }
@@ -6156,13 +7660,13 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         LinearLayout actions = new LinearLayout(this);
         actions.setGravity(Gravity.END | Gravity.CENTER_VERTICAL);
         actions.setPadding(0, dp(8), 0, 0);
-        TextView cancelButton = text("Cancel", 14, darkMode ? Color.WHITE : Color.BLACK, Typeface.BOLD);
+        TextView cancelButton = text("Cancel", 14, darkMode ? Color.WHITE : Color.BLACK, Typeface.NORMAL);
         cancelButton.setGravity(Gravity.CENTER);
         cancelButton.setMinWidth(dp(92));
         cancelButton.setMinHeight(dp(44));
         cancelButton.setPadding(dp(14), 0, dp(14), 0);
         cancelButton.setBackground(roundWithStroke(surfaceColor(), 10, fieldBorderColor()));
-        TextView applyButton = text("Apply", 14, darkMode ? Color.BLACK : Color.WHITE, Typeface.BOLD);
+        TextView applyButton = text("Apply", 14, darkMode ? Color.BLACK : Color.WHITE, Typeface.NORMAL);
         applyButton.setGravity(Gravity.CENTER);
         applyButton.setMinWidth(dp(92));
         applyButton.setMinHeight(dp(44));
@@ -6176,6 +7680,10 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         AlertDialog fontDialog = new AlertDialog.Builder(this)
                 .setView(content)
                 .create();
+        if (fontDialog.getWindow() != null) {
+            fontDialog.getWindow().setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
+            fontDialog.getWindow().setGravity(Gravity.CENTER);
+        }
         applyButton.setOnClickListener(view -> {
             float scale = 1.0f + slider.getProgress() / 100.0f;
             getSharedPreferences("fendly_settings", MODE_PRIVATE).edit().putFloat("font_scale", scale).apply();
@@ -6183,15 +7691,10 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             fontDialog.dismiss();
         });
         cancelButton.setOnClickListener(view -> fontDialog.dismiss());
-        fontDialog.setOnShowListener(dialog -> {
-            if (fontDialog.getWindow() != null) {
-                fontDialog.getWindow().setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
-            }
-        });
         fontDialog.show();
         fontDialog.setOnDismissListener(dialog -> {
             if (!applied[0]) {
-                applyLiveFontScale(getWindow().getDecorView(), current);
+                applyLiveFontScale(liveScaleTarget, current);
             }
         });
     }
@@ -6260,7 +7763,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         String[] english = {
                 "Complete your profile", "A little about you", "This helps neighbours know who they are helping.", "Save and continue",
                 "Login with PIN", "Welcome back.", "Use the username and PIN from your Fendly profile.", "Log in",
-                "Home", "Find what matters.", "Lost nearby? Found something? Start here.", "LOST", "FOUND", "My reports", "My profile",
+                "Home", "Find what matters.", "Lost or Found? We Connect the Dots.", "LOST", "FOUND", "My reports", "My profile",
                 "Post found item", "Report lost item", "Help it get home.", "Let's find it.", "Add clear details so the right person can recognise it.",
                 "Item name", "Description and identifying details", "Location or landmark", "Date and time", "Upload item image", "Image selected",
                 "Take photo with camera", "Use current location", "Publish found item", "Publish lost item", "Fendly Plus",
@@ -6309,7 +7812,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             if ("Place found".equalsIgnoreCase(value)) return "મળવાનું સ્થળ";
             if ("Precise location  OFF".equalsIgnoreCase(value)) return "ચોક્કસ સ્થાન બંધ";
             if ("Location ready".equalsIgnoreCase(value)) return "સ્થાન તૈયાર છે";
-            if ("Annual subscription".equalsIgnoreCase(value)) return "વાર્ષિક સબ્સ્ક્રિપ્શન";
+            if ("Subscription".equalsIgnoreCase(value)) return "વાર્ષિક સબ્સ્ક્રિપ્શન";
             if ("Continue to payment".equalsIgnoreCase(value)) return "ચુકવણી ચાલુ રાખો";
             if ("Save changes".equalsIgnoreCase(value)) return "ફેરફારો સાચવો";
             if ("Back home".equalsIgnoreCase(value)) return "હોમ પર પાછા જાઓ";
@@ -6347,6 +7850,26 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             if ("Signing in...".equalsIgnoreCase(value)) return "સાઇમ ઇન થઈ રહ્યું છે...";
             if ("Creating account...".equalsIgnoreCase(value)) return "એકાઉન્ટ બનાવવામાં આવી રહ્યું છે...";
         }
+        if ("Profile photo".equals(value)) {
+            String[] text = {"Profile photo", "प्रोफ़ाइल फोटो", "प्रोफाइल फोटो", "پروفাইল تصویر", "ಪ್ರೊಫೈಲ್ ಫೋಟೋ", "ప్రొఫైల్ ఫోటో", "প্রোফাইল ছবি", "പ്രൊഫൈൽ ഫോട്ടോ"};
+            return text[Math.max(0, Math.min(selectedLanguage, text.length - 1))];
+        }
+        if ("See profile picture".equals(value)) {
+            String[] text = {"See profile picture", "प्रोफ़ाइल पिक्चर देखें", "प्रोफाइल चित्र पहा", "پروفাইল تصویر دیکھیں", "ಪ್ರೊಫೈಲ್ ಚಿತ್ರವನ್ನು ನೋಡಿ", "ప్రొఫైల్ చిత్రాన్ని చూడండి", "প্রোফাইল ছবি দেখুন", "പ്രൊഫൈൽ ചിത്രം കാണുക"};
+            return text[Math.max(0, Math.min(selectedLanguage, text.length - 1))];
+        }
+        if ("Choose profile picture".equals(value)) {
+            String[] text = {"Choose profile picture", "प्रोफ़ाइल पिक्चर चुनें", "प्रोफाइल चित्र निवडा", "پروفাইল تصویر منتخب کریں", "ಪ್ರೊఫೈಲ್ ಚಿತ್ರವನ್ನು ಆಯ್ಕೆಮಾಡಿ", "ప్రొఫైల్ చిత్రాన్ని ఎంచుకోండి", "প্রোফাইল ছবি নির্বাচন করুন", "പ്രൊഫൈൽ ചിത്രം തിരഞ്ഞെടുക്കുക"};
+            return text[Math.max(0, Math.min(selectedLanguage, text.length - 1))];
+        }
+        if ("Choose from gallery".equals(value)) {
+            String[] text = {"Choose from gallery", "गैलरी से चुनें", "गॅलरीतून निवडा", "گیلری سے منتخب کریں", "ಗ್ಯಾಲರಿಯಿಂದ ಆಯ್ಕೆಮಾಡಿ", "గ్యాలరీ నుండి ఎంచుకోండి", "গ্যালারি থেকে বেছে নিন", "ഗാലറിയിൽ നിന്ന് തിരഞ്ഞെടുക്കുക"};
+            return text[Math.max(0, Math.min(selectedLanguage, text.length - 1))];
+        }
+        if ("Take photo".equals(value)) {
+            String[] text = {"Take photo", "फोटो लें", "फोटो घ्या", "تصویر لیں", "ಫೋಟೋ ತೆಗೆದುಕೊಳ್ಳಿ", "ఫోటో తీయండి", "ছবি তুলুন", "ഫോട്ടോ എടുക്കുക"};
+            return text[Math.max(0, Math.min(selectedLanguage, text.length - 1))];
+        }
         if ("Reset PIN?".equals(value)) {
             String[] resetPin = {"Reset PIN?", "पिन रीसेट करें?", "पिन रीसेट करा?", "پن ری سیٹ کریں؟", "ಪಿನ್ ಮರುಹೊಂದಿಸಿ?", "పిన్‌ను రీసెట్ చేయండి?", "পিন রিসেট করুন?", "പിൻ റീസെറ്റ് ചെയ്യണോ?"};
             return resetPin[Math.max(0, Math.min(selectedLanguage, resetPin.length - 1))];
@@ -6379,7 +7902,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                 {"Place found", "मिलने का स्थान", "सापडलेले ठिकाण", "ملنے کی جگہ", "ಸಿಕ್ಕ ಸ್ಥಳ", "కనుగొన్న ప్రదేశం", "পাওয়ার স্থান", "കണ്ടെത്തിയ സ്ഥലം"},
                 {"Precise location  OFF", "सटीक स्थान बंद", "अचूक स्थान बंद", "درست مقام بند", "ನಿಖರ ಸ್ಥಳ ಆಫ್", "ఖచ్చితమైన స్థానం ఆఫ్", "সঠিক অবস্থান বন্ধ", "കൃത്യമായ സ്ഥാനം ഓഫ്"},
                 {"Location ready", "स्थान तैयार है", "स्थान तयार आहे", "مقام تیار ہے", "ಸ್ಥಳ ಸಿದ್ಧವಾಗಿದೆ", "స్థానం సిద్ధంగా ఉంది", "অবস্থান প্রস্তুত", "സ്ഥാനം തയ്യാറാണ്"},
-                {"Annual subscription", "वार्षिक सदस्यता", "वार्षिक सदस्यत्व", "سالانہ رکنیت", "ವಾರ್ಷಿಕ ಚಂದಾದಾರಿಕೆ", "వార్షిక సభ్యత్వం", "বার্ষিক সাবস্ক্রিপশন", "വാർഷിക സബ്സ്ക്രിപ്ഷൻ"},
+                {"Subscription", "वार्षिक सदस्यता", "वार्षिक सदस्यत्व", "سالانہ رکنیت", "ವಾರ್ಷಿಕ ಚಂದಾದಾರಿಕೆ", "వార్షిక సభ్యత్వం", "বার্ষিক সাবস্ক্রিপশন", "വാർഷിക സബ്സ്ക്രിപ്ഷൻ"},
                 {"Continue to payment", "भुगतान जारी रखें", "भरणा सुरू ठेवा", "ادائیگی جاری رکھیں", "ಪಾವತಿಗೆ ಮುಂದುವರಿಯಿರಿ", "చెల్లింపుకు కొనసాగండి", "পেমেন্টে এগিয়ে যান", "പേയ്മെന്റിലേക്ക് തുടരുക"},
                 {"Save changes", "बदलाव सहेजें", "बदल जतन करा", "تبدیلیاں محفوظ کریں", "ಬದಲಾವಣೆಗಳನ್ನು ಉಳಿಸಿ", "మార్పులను సేవ్ చేయండి", "পরিবর্তন সংরক্ষণ করুন", "മാറ്റങ്ങൾ സംരക്ഷിക്കുക"},
                 {"Back home", "होम पर वापस जाएं", "मुख्यपृष्ठावर परत जा", "ہوم پر واپس جائیں", "ಹೋಮ್‌ಗೆ ಹಿಂತಿರುಗಿ", "హోమ్‌కు తిరిగి వెళ్లండి", "হোমে ফিরে যান", "ഹോമിലേക്ക് മടങ്ങുക"},
@@ -6478,9 +8001,21 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         return null;
     }
 
+    private String formatUsernameDisplay(String username) {
+        if (username == null || username.trim().isEmpty()) return "";
+        String trimmed = username.trim();
+        if (trimmed.length() > 0 && Character.isLowerCase(trimmed.charAt(0))) {
+            return Character.toUpperCase(trimmed.charAt(0)) + trimmed.substring(1);
+        }
+        return trimmed;
+    }
+
     private String localizeProfileDisplayValue(String key, String value) {
         if (value == null || value.trim().isEmpty()) return value;
-        if ("email".equalsIgnoreCase(key)) return value;
+        if ("username".equalsIgnoreCase(key)) {
+            return formatUsernameDisplay(value);
+        }
+        if ("email".equalsIgnoreCase(key) || "mobile".equalsIgnoreCase(key)) return value;
         if ("state".equalsIgnoreCase(key) || key.toLowerCase(Locale.US).contains("state")) {
             String localized = localizedStateName(value);
             return localized != null ? localized : value;
@@ -6489,9 +8024,6 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             String localized = localizedCityName(value);
             return localized != null ? localized : localizeProfileName(value);
         }
-        if ("mobile".equalsIgnoreCase(key) || key.toLowerCase(Locale.US).contains("mobile") || key.toLowerCase(Locale.US).contains("phone")) {
-            return formatPhoneNumberForDisplay(value);
-        }
         return localizeProfileName(value);
     }
 
@@ -6499,12 +8031,11 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         if (value == null || value.trim().isEmpty()) return value;
         selectedLanguage = getSharedPreferences("fendly_language", MODE_PRIVATE)
                 .getInt("selected_language_index", 0);
-        int lang = Math.max(0, Math.min(selectedLanguage, 12));
-        String canonical = getCanonicalEnglishName(value);
+        int lang = Math.max(0, Math.min(selectedLanguage, 8));
         if (lang == 0) {
-            return canonical;
+            return getCanonicalEnglishName(value);
         }
-        return transliterateToSelectedScript(canonical, lang);
+        return transliterateToSelectedScript(value, lang);
     }
 
     private String getCanonicalEnglishName(String text) {
@@ -6512,6 +8043,9 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         String trimmed = text.trim();
         if (isAlreadyLocalizedScript(trimmed)) {
             return reverseDevanagariToEnglish(trimmed);
+        }
+        if (!trimmed.isEmpty() && Character.isLowerCase(trimmed.charAt(0))) {
+            return Character.toUpperCase(trimmed.charAt(0)) + trimmed.substring(1);
         }
         return trimmed;
     }
@@ -6615,7 +8149,21 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         String exact = exactLocalizedName(lower, lang);
         if (exact != null) return localizeDigits(exact);
 
-        return phoneticTransliterate(canonical, lang);
+        String[] parts = canonical.split("\\s+");
+        StringBuilder result = new StringBuilder();
+        for (int index = 0; index < parts.length; index++) {
+            if (parts[index].isEmpty()) continue;
+            if (index > 0) result.append(" ");
+            String wordLower = parts[index].toLowerCase(Locale.US);
+            String wordExact = exactLocalizedName(wordLower, lang);
+            if (wordExact != null) {
+                result.append(wordExact);
+            } else {
+                result.append(phoneticTransliterate(parts[index], lang));
+            }
+        }
+        String transliterated = result.toString();
+        return transliterated.isEmpty() ? canonical : localizeDigits(transliterated);
     }
 
     private String phoneticTransliterate(String text, int lang) {
@@ -6633,17 +8181,15 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
     private String devanagariToScript(String devanagari, int lang) {
         if (devanagari == null || devanagari.isEmpty()) return devanagari;
 
+        // lang: 0=English, 1=Hindi, 2=Marathi, 3=Gujarati, 4=Bengali, 5=Tamil, 6=Telugu, 7=Kannada, 8=Malayalam
         int offset = 0;
         switch (lang) {
             case 3: offset = 0x0180; break; // Gujarati (0x0A80)
-            case 4:                         // Bengali (0x0980)
-            case 11: offset = 0x0080; break; // Assamese
+            case 4: offset = 0x0080; break; // Bengali (0x0980)
             case 5: offset = 0x0280; break; // Tamil (0x0B80)
             case 6: offset = 0x0300; break; // Telugu (0x0C00)
             case 7: offset = 0x0380; break; // Kannada (0x0C80)
             case 8: offset = 0x0400; break; // Malayalam (0x0D00)
-            case 9: offset = 0x0100; break; // Punjabi (0x0A00)
-            case 10: offset = 0x0200; break; // Odia (0x0B00)
             default: return devanagari;
         }
 
@@ -7055,82 +8601,74 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
     private String localizedStateName(String stateName) {
         if (stateName == null || stateName.trim().isEmpty()) return stateName;
         if (selectedLanguage == 0) return stateName;
-        if (selectedLanguage == 1 || selectedLanguage == 2) {
-            switch (stateName.trim()) {
-                case "Maharashtra": return "महाराष्ट्र";
-                case "Nagpur": return "नागपूर";
-                case "Baghmara": return "बगमारे";
-                case "Andhra Pradesh": return "आंध्र प्रदेश";
-                case "Arunachal Pradesh": return "अरुणाचल प्रदेश";
-                case "Assam": return "असम";
-                case "Bihar": return "बिहार";
-                case "Chhattisgarh": return "छत्तीसगढ़";
-                case "Goa": return "गोवा";
-                case "Gujarat": return "गुजरात";
-                case "Haryana": return "हरियाणा";
-                case "Himachal Pradesh": return "हिमाचल प्रदेश";
-                case "Jharkhand": return "झारखंड";
-                case "Karnataka": return "कर्नाटक";
-                case "Kerala": return "केरल";
-                case "Madhya Pradesh": return "मध्य प्रदेश";
-                case "Manipur": return "मणिपुर";
-                case "Meghalaya": return "मेघालय";
-                case "Mizoram": return "मिज़ोरम";
-                case "Nagaland": return "नागालैंड";
-                case "Odisha": return "ओडिशा";
-                case "Punjab": return "पंजाब";
-                case "Rajasthan": return "राजस्थान";
-                case "Sikkim": return "सिक्किम";
-                case "Tamil Nadu": return "तमिलनाडु";
-                case "Telangana": return "तेलंगाना";
-                case "Tripura": return "त्रिपुरा";
-                case "Uttar Pradesh": return "उत्तर प्रदेश";
-                case "Uttarakhand": return "उत्तराखंड";
-                case "West Bengal": return "पश्चिम बंगाल";
-                case "Andaman and Nicobar Islands": return "अंडमान और निकोबार द्वीपसमूह";
-                case "Chandigarh": return "चंडीगढ़";
-                case "Dadra and Nagar Haveli and Daman and Diu": return "दादरा और नगर हवेली तथा दमन और दीव";
-                case "Delhi": return "दिल्ली";
-                case "Jammu and Kashmir": return "जम्मू और कश्मीर";
-                case "Ladakh": return "लद्दाख";
-                case "Lakshadweep": return "लक्षद्वीप";
-                case "Puducherry": return "पुदुचेरी";
-                default:
-                    break;
-            }
-        }
 
+        String trimmed = stateName.trim();
         String[][] translations = {
                 {"Andhra Pradesh", "Arunachal Pradesh", "Assam", "Bihar", "Chhattisgarh", "Goa", "Gujarat", "Haryana",
                         "Himachal Pradesh", "Jharkhand", "Karnataka", "Kerala", "Madhya Pradesh", "Maharashtra", "Manipur",
                         "Meghalaya", "Mizoram", "Nagaland", "Odisha", "Punjab", "Rajasthan", "Sikkim", "Tamil Nadu",
                         "Telangana", "Tripura", "Uttar Pradesh", "Uttarakhand", "West Bengal",
                         "Andaman and Nicobar Islands", "Chandigarh", "Dadra and Nagar Haveli and Daman and Diu", "Delhi",
-                        "Jammu and Kashmir", "Ladakh", "Lakshadweep", "Puducherry"},
+                        "Jammu and Kashmir", "Ladakh", "Lakshadweep", "Puducherry"}, // 0: English
                 {"आंध्र प्रदेश", "अरुणाचल प्रदेश", "असम", "बिहार", "छत्तीसगढ़", "गोवा", "गुजरात", "हरियाणा",
                         "हिमाचल प्रदेश", "झारखंड", "कर्नाटक", "केरल", "मध्य प्रदेश", "महाराष्ट्र", "मणिपुर",
                         "मेघालय", "मिज़ोरम", "नागालैंड", "ओडिशा", "पंजाब", "राजस्थान", "सिक्किम", "तमिलनाडु",
                         "तेलंगाना", "त्रिपुरा", "उत्तर प्रदेश", "उत्तराखंड", "पश्चिम बंगाल",
                         "अंडमान और निकोबार द्वीपसमूह", "चंडीगढ़", "दादरा और नगर हवेली तथा दमन और दीव", "दिल्ली",
-                        "जम्मू और कश्मीर", "लद्दाख", "लक्षद्वीप", "पुदुचेरी"},
+                        "जम्मू और कश्मीर", "लद्दाख", "लक्षद्वीप", "पुदुचेरी"}, // 1: Hindi
+                {"आंध्र प्रदेश", "अरुणाचल प्रदेश", "असम", "बिहार", "छत्तीसगढ़", "गोवा", "गुजरात", "हरियाणा",
+                        "हिमाचल प्रदेश", "झारखंड", "कर्नाटक", "केरल", "मध्य प्रदेश", "महाराष्ट्र", "मणिपुर",
+                        "मेघालय", "मिज़ोरम", "नागालैंड", "ओडिशा", "पंजाब", "राजस्थान", "सिक्किम", "तमिलनाडु",
+                        "तेलंगाना", "त्रिपुरा", "उत्तर प्रदेश", "उत्तराखंड", "पश्चिम बंगाल",
+                        "अंडमान और निकोबार द्वीपसमूह", "चंडीगढ़", "दादरा और नगर हवेली तथा दमन और दीव", "दिल्ली",
+                        "जम्मू और कश्मीर", "लद्दाख", "लक्षद्वीप", "पुदुचेरी"}, // 2: Marathi
+                {"આંધ્ર પ્રદેશ", "અరుణાચલ પ્રદેશ", "અસમ", "બિહાર", "છત્તીસગઢ", "ગોવા", "ગુજરાત", "હરિયાણા",
+                        "હિમાચલ પ્રદેશ", "ઝારખંડ", "કર્ણાટક", "કેરળ", "મધ્યપ્રદેશ", "મહારાષ્ટ્ર", "મણિপুর",
+                        "મેઘાલય", "મિઝોરમ", "નાગાલેન્ડ", "ઓડિશા", "પંજાબ", "રાજસ્થાન", "સિક્કિમ", "તમિલનાડુ",
+                        "તેલંગાણા", "ત્રિપુરા", "ઉત્તર પ્રદેશ", "ઉત્તરાખંડ", "પશ્ચિમ બંગાળ",
+                        "અંદમાન અને નિકોબાર ટાપુઓ", "ચંદીગઢ", "દાદરા અને નગર હવેલી અને દમણ અને દીવ", "દિલ્હી",
+                        "જમ્મુ અને કાશ્મીર", "લદ્દાખ", "લક્ષદ્વીપ", "પુડુચેરી"}, // 3: Gujarati
+                {"অন্ধ্র প্রদেশ", "অরুণাচল প্রদেশ", "আসাম", "বিহার", "ছত্তিশগড়", "গোয়া", "গুজরাত", "হরিয়ানা",
+                        "হিমাচল প্রদেশ", "ঝাড়খণ্ড", "কর্ণাটক", "কেরালা", "মধ্যপ্রদেশ", "মহারাষ্ট্র", "মণিপুর",
+                        "মেঘালয়", "মিজোরাম", "নাগাল্যান্ড", "ওড়িশা", "পাঞ্জাব", "রাজস্থান", "সিকিম", "তামিলনাড়ু",
+                        "তেলেঙ্গানা", "ত্রিপুরা", "উত্তর প্রদেশ", "উত্তরাখণ্ড", "পশ্চিমবঙ্গ",
+                        "আন্দামান ও নিকোবর দ্বীপপুঞ্জ", "চণ্ডীগড়", "দাদরা ও নগর হাভেলি ও দমন ও দিউ", "দিল্লি",
+                        "জম্মু ও কাশ্মীর", "লাদাখ", "লাক্ষাদ্বীপ", "পুদুচেরি"}, // 4: Bengali
+                {"தமிழ்நாடு", "அருணாச்சலப் பிரதேசம்", "அசாம்", "பீகார்", "சத்தீஸ்கர்", "கோவா", "குஜராத்", "அரியானா",
+                        "இமாச்சலப் பிரதேசம்", "ஜார்கண்ட்", "கர்நாடகா", "கேரளா", "மத்தியப் பிரதேசம்", "மகாராஷ்டிரா", "மணிப்பூர்",
+                        "மேகாலயா", "மிசோரம்", "நாகாலாந்து", "ஒடிசா", "பஞ்சாப்", "இராஜஸ்தான்", "சிக்கிம்", "தமிழ்நாடு",
+                        "தெலங்கானா", "திரிபுரா", "உத்தரப் பிரதேசம்", "உத்தராகண்ட்டு", "மேற்கு வங்காளம்",
+                        "அந்தமான் மற்றும் நிக்கோபார் தீவுகள்", "சண்டிகர்", "தாத்ரா மற்றும் நகர் ஹவேலி மற்றும் தாமன் மற்றும் தியூ", "தில்லி",
+                        "ஜம்மு காஷ்மீர்", "லடாக்", "லட்சத்தீவு", "புதுச்சேரி"}, // 5: Tamil
                 {"ఆంధ్ర ప్రదేశ్", "అరుణాచల్ ప్రదేశ్", "అస్సాం", "బీహార్", "చత్తీస్‌గఢ్", "గోవా", "గుజరాత్", "హర్యానా",
                         "హిమాచల్ ప్రదేశ్", "జార్ఖండ్", "కర్నాటక", "కేరళ", "మధ్య ప్రదేశ్", "మహారాష్ట్ర", "మనిపూర్",
                         "మేఘాలయ", "మిజోరం", "నాగాలాండ్", "ఒడిషా", "పంజాబ్", "రాజస్థాన్", "సిక్కిం", "తమిళనాడు",
                         "తెలంగాణ", "త్రిపుర", "ఉత్తరప్రదేశ్", "ఉత్తరాఖండ్", "పశ్చిమ బెంగాల్",
                         "అండమాన్ మరియు నికోబార్ ద్వీపాలు", "చండీఘర్", "దాద్రా మరియు నగర్ హవేలీ మరియు దామన్ మరియు డయ్యు", "ఢిల్లీ",
-                        "జమ్మూ మరియు కాశ్మీర్", "లడఖ్", "లక్షద్వీప్", "పుదుచ్చేరి"},
-                {"আন্দামান ও নিকোবর দ্বীপপুঞ্জ", "চণ্ডীগড়", "দাদরা ও নগর হাভেলি ও দমন ও দিউ", "দিল্লি", "জম্মু ও কাশ্মীর", "লাদাখ", "লাক্ষাদ্বীপ", "পুদুচেরি"},
-                {"ആൻഡമാൻ വലക്യങ്ങളും നിക്കോബാർ ദ്വീപുകളും", "ചണ്ഡിഗഡ്", "ദാദ്രാ നഗർ ഹവേലി, ദാമൻ-ദിയു", "ദില്ലി", "ജമ്മു കശ്മീർ", "ലഡാക്ക്", "ലക്ഷദ്വീപ്", "പുതുച്ചേരി"}
+                        "జమ్మూ మరియు కాశ్మీర్", "లడఖ్", "లక్షద్వీప్", "పుదుచ్చేరి"}, // 6: Telugu
+                {"ಆಂಧ್ರಪ್ರದೇಶ", "ಅರುಣಾಚಲ ಪ್ರದೇಶ", "ಅಸ್ಸಾಂ", "ಬಿಹಾರ", "ಛತ್ತೀಸ್‌ಗಢ", "ಗೋವಾ", "ಗುಜರಾತ್", "ಹರಿಯಾಣ",
+                        "ಹಿಮಾಚಲ ಪ್ರದೇಶ", "ಜಾರ್ಖಂಡ್", "ಕರ್ನಾಟಕ", "ಕೇರಳ", "ಮಧ್ಯಪ್ರದೇಶ", "ಮಹಾರಾಷ್ಟ್ರ", "ಮಣಿಪುರ",
+                        "ಮೇಘಾಲಯ", "ಮಿಜೋರಾಂ", "ನಾಗಾಲ್ಯಾಂಡ್", "ಒಡಿಸ್ಸಾ", "ಪಂಜಾಬ್", "ರಾಜಸ್ಥಾನ", "ಸಿಕ್ಕಿಂ", "ತಮಿಳುನಾಡು",
+                        "ತೆಲಂಗಾಣ", "ತ್ರಿಪುರ", "ಉತ್ತರಪ್ರದೇಶ", "ಉತ್ತರಾಖಂಡ", "ಪಶ್ಚಿಮ ಬಂಗಾಳ",
+                        "ಅಂಡಮಾನ್ ಮತ್ತು ನಿಕೋಬಾರ್ ದ್ವೀಪಗಳು", "ಚಂಡೀಘಢ", "ದಾದ್ರಾ ಮತ್ತು ನಗರ್ ಹವೇಲಿ ಮತ್ತು ದಾಮನ್ ಮತ್ತು ದಿಯು", "ದೆಹಲಿ",
+                        "ಜಮ್ಮು ಮತ್ತು ಕಾಶ್ಮೀರ", "ಲಡಾಖ್", "ಲಕ್ಷದ್ವೀಪ", "ಪುದುಚೇರಿ"}, // 7: Kannada
+                {"ആന്ധ്രാപ്രദേശ്", "അരുണാചൽ പ്രദേശ്", "അസ്സാം", "ബീഹാർ", "ഛത്തീസ്ഗഡ്", "ഗോവ", "ഗുജരാത്ത്", "ഹരിയാന",
+                        "ഹിമാചൽ പ്രദേശ്", "ജാർഖണ്ഡ്", "കർണാടക", "കേരളം", "മധ്യപ്രദേശ്", "മഹാരാഷ്ട്ര", "മണിപൂർ",
+                        "മേഘാലയ", "മിസോറാം", "നാഗാലാൻഡ്", "ഒഡീഷ", "പഞ്ചാബ്", "രാജസ്ഥാൻ", "സിക്കിം", "തമിഴ്നാട്",
+                        "തെലങ്കാന", "ത്രിപുര", "ഉത്തർപ്രദേശ്", "ഉത്തരാഖണ്ഡ്", "പശ്ചിമ ബംഗാൾ",
+                        "ആൻഡമാൻ നിക്കോബാർ ദ്വീപുകൾ", "ചണ്ഡിഗഡ്", "ദാദ്ര നഗർ ഹവേലി ദാമൻ ദിയു", "ഡൽഹി",
+                        "ജമ്മു കാശ്മീർ", "ലഡാക്ക്", "ലക്ഷദ്വീപ്", "പുതുച്ചേരി"} // 8: Malayalam
         };
-        for (int languageIndex = 0; languageIndex < translations.length; languageIndex++) {
-            String[] values = translations[languageIndex];
-            for (int index = 0; index < values.length; index++) {
-                if (stateName.equalsIgnoreCase(translations[0][index])) {
-                    return values[index];
-                }
+
+        int targetRow = selectedLanguage;
+        if (targetRow >= translations.length) targetRow = 1;
+
+        for (int index = 0; index < translations[0].length; index++) {
+            if (trimmed.equalsIgnoreCase(translations[0][index])) {
+                return translations[targetRow][index];
             }
         }
-        return null;
+        return stateName;
     }
 
     private String englishStateName(String stateName) {
@@ -7179,7 +8717,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         String[] digits = {
                 "0123456789", "०१२३४५६७८९", "०१२३४५६७८९", "૦૧૨૩૪૫૬૭૮૯",
                 "০১২৩৪৫৬৭৮৯", "௦௧௨௩௪௫௬௭௮௯", "౦౧౨౩౪౫౬౭౮౯", "೦೧೨೩೪೫೬೭೮೯",
-                "൦<ctrl42>൨൩൪൫൬൭൮൯", "੦੧੨੩੪੫੬੭੮੯", "୦୧୨୩૪୫୬୭୮୯", "০১২৩৪৫৬৭৮৯",
+                "൦൧൨൩൪൫൬൭൮൯", "੦੧੨੩੪੫੬੭੮੯", "୦୧୨୩૪୫୬୭୮୯", "০১২৩৪৫৬৭৮৯",
                 "٠١٢٣٤٥٦٧٨٩"
         };
         int language = Math.max(0, Math.min(selectedLanguage, digits.length - 1));
@@ -7201,7 +8739,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         String[] digits = {
                 "0123456789", "०१२३४५६७८९", "०१२३४५६७८९", "૦૧૨૩૪૫૬૭૮૯",
                 "০১২৩৪৫৬৭৮৯", "௦௧௨௩௪௫௬௭௮௯", "౦౧౨౩౪౫౬౭౮౯", "೦೧೨೩೪೫೬೭೮೯",
-                "൦<ctrl42>൨൩൪൫൬൭൮൯", "੦੧੨੩੪੫੬੭੮੯", "୦୧୨୩૪୫୬୭୮୯", "০১২৩৪৫৬৭৮৯",
+                "൦൧൨൩൪൫൬൭൮൯", "੦੧੨੩੪੫੬੭੮੯", "୦୧୨୩૪୫୬୭୮୯", "০১২৩৪৫६৭৮৯",
                 "٠١٢٣٤٥٦٧٨٩"
         };
         StringBuilder normalized = new StringBuilder(value.length());

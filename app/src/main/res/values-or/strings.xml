@@ -1,5 +1,16 @@
-<?xml version="1.0" encoding="utf-8"?>
+<?xml version='1.0' encoding='utf-8'?>
 <resources>
+    <string name="app_name">Fendly</string>
+    <string name="login">ଲଗଇନ୍</string>
+    <string name="home">ହୋମ୍</string>
+    <string name="profile">ପ୍ରୋଫାଇଲ୍</string>
+    <string name="settings">ସେଟିଂସମୂହ</string>
+    <string name="balance">ବ୍ୟାଲେନ୍ସ</string>
+    <string name="account">ଖାତା</string>
+    <string name="notifications">ବିଜ୍ଞପ୍ତି</string>
+    <string name="history">ଇତିହାସ</string>
+    <string name="help">ସାହାଯ୍ୟ</string>
+    <string name="logout">ଲଗ୍ ଆଉଟ୍</string>
     <string name="abc_action_bar_home_description">ହୋମ୍ ପେଜ୍‌କୁ ନେଭିଗେଟ୍ କରନ୍ତୁ</string>
     <string name="abc_action_bar_up_description">ଉପରକୁ ନେଭିଗେଟ୍ କରନ୍ତୁ</string>
     <string name="abc_action_menu_overflow_description">ଅଧିକ ବିକଳ୍ପ</string>
@@ -215,4 +226,26 @@
     <string name="template_percent">ଶତକଡ଼ା %1_d।</string>
     <string name="tooltip_description">ଟୁଲଟିପ</string>
     <string name="tooltip_label">ଟୁଲଟିପ ଦେଖାନ୍ତୁ</string>
+<string name="profile_title">My profile</string>
+<string name="profile_account_details">Your account details and preferences.</string>
+<string name="profile_complete_title">Complete your profile</string>
+<string name="profile_first_name">First name</string>
+<string name="profile_surname">Surname</string>
+<string name="profile_email_address">Email address</string>
+<string name="profile_mobile_number">Mobile number</string>
+<string name="profile_state">State</string>
+<string name="profile_city">City</string>
+<string name="profile_email">Email</string>
+<string name="profile_mobile">Mobile</string>
+<string name="profile_new_pin">New PIN</string>
+<string name="profile_change_pin">Change PIN</string>
+<string name="profile_save_changes">Save changes</string>
+<string name="profile_saving">Saving...</string>
+<string name="profile_back_home">Back home</string>
+<string name="profile_tap_upload_photo">Tap to upload photo</string>
+<string name="profile_username_login">Username (login)</string>
+<string name="profile_username">Username</string>
+<string name="profile_four_digit_pin">4-digit PIN</string>
+<string name="profile_verify_otp">Verify OTP</string>
+<string name="profile_complete">Complete</string>
 </resources>

@@ -3,11 +3,16 @@ import io
 import math
 import os
 import re
+from datetime import datetime, timezone
 from pathlib import Path
+from typing import Optional
 from uuid import uuid4
 
+import firebase_admin
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+from firebase_admin import firestore
 import httpx
+from pydantic import BaseModel, Field
 from PIL import Image, UnidentifiedImageError
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -18,7 +23,7 @@ from database import SessionLocal, get_db
 from image_matching import cosine_similarity, create_image_embedding
 from moderation import moderate_content
 from models import FoundItem, LostItem
-from notifications import send_match_notifications
+from notifications import send_match_notifications, send_admin_match_email
 from routers.payments import verify_captured_payment
 from schemas import ItemCreate, ItemResponse, ItemUpdate, MatchRequest, MatchResponse
 
@@ -101,21 +106,29 @@ async def upload_image(
     image: UploadFile = File(...),
     _: str = Depends(get_current_user),
 ) -> dict[str, str]:
-    if image.content_type not in ALLOWED_IMAGE_TYPES:
-        raise HTTPException(415, "Only JPEG, PNG, and WebP images are supported")
-    data = await image.read(MAX_IMAGE_BYTES + 1)
-    if len(data) > MAX_IMAGE_BYTES:
-        raise HTTPException(413, "Image exceeds the 10 MB limit")
     try:
-        with Image.open(io.BytesIO(data)) as checked:
-            checked.verify()
-            extension = "jpg" if checked.format == "JPEG" else checked.format.lower()
-    except (UnidentifiedImageError, OSError) as exc:
-        raise HTTPException(400, "Invalid image") from exc
+        if image.content_type not in ALLOWED_IMAGE_TYPES:
+            raise HTTPException(415, "Only JPEG, PNG, and WebP images are supported")
+        data = await image.read(MAX_IMAGE_BYTES + 1)
+        if len(data) > MAX_IMAGE_BYTES:
+            raise HTTPException(413, "Image exceeds the 10 MB limit")
+        try:
+            with Image.open(io.BytesIO(data)) as checked:
+                checked.verify()
+                extension = "jpg" if checked.format == "JPEG" else checked.format.lower()
+        except (UnidentifiedImageError, OSError) as exc:
+            raise HTTPException(400, "Invalid image") from exc
 
-    filename = f"{uuid4().hex}.{extension}"
-    image_url = await _store_image(data, filename, image.content_type)
-    return {"url": image_url, "filename": filename}
+        filename = f"{uuid4().hex}.{extension}"
+        image_url = await _store_image(data, filename, image.content_type)
+        return {"url": image_url, "filename": filename}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(
+            status.HTTP_500_INTERNAL_SERVER_ERROR,
+            f"Image upload failed: {type(exc).__name__}: {str(exc)[:200]}",
+        ) from exc
 
 
 @router.post("/items/lost", response_model=ItemResponse, status_code=status.HTTP_201_CREATED)
@@ -282,10 +295,18 @@ async def match_items(
         for item in [result["item"]]
         if item.created_by != found_item.created_by
     }
+    max_score = max((float(result["score"]) for result in ranked_results), default=0.0)
     send_match_notifications(
         session,
         notified_uids,
         found_item.id,
-        max((float(result["score"]) for result in ranked_results), default=0.0),
+        max_score,
     )
+    for result in ranked_results:
+        score = float(result["score"])
+        if score >= 0.85:
+            item = result["item"]
+            details = f"Found item '{found_item.title}' matched with lost item '{item.title}' with confidence {score:.1%}"
+            send_admin_match_email(found_item.title, score, details)
+            break
     return ranked_results

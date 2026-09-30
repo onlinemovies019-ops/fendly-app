@@ -1,7 +1,9 @@
 package com.example.fendly.ui.theme
 
+import android.os.Build
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Typography
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.dynamicColorScheme
 import androidx.compose.material3.lightColorScheme
@@ -19,7 +21,7 @@ private val DarkColorScheme = darkColorScheme(
     secondary = LostGreen,
     secondaryContainer = LostGreenOn,
     background = DarkBlue,
-    surface = LightBlue,
+    surface = DarkSurface,
     surfaceVariant = Border,
     onPrimary = GoldOn,
     onSecondary = LostGreenOn,
@@ -30,7 +32,7 @@ private val DarkColorScheme = darkColorScheme(
     onErrorContainer = Color.White,
     inversePrimary = Gold,
     inverseSurface = DarkBlue,
-    inverseOnSurface = LightBlue,
+    inverseOnSurface = DarkSurface,
     surfaceTint = Gold,
     outline = Color.White
 )
@@ -40,9 +42,9 @@ private val LightColorScheme = lightColorScheme(
     primaryContainer = GoldOn,
     secondary = LostGreen,
     secondaryContainer = LostGreenOn,
-    background = LightBlue,
-    surface = DarkBlue,
-    surfaceVariant = Border,
+    background = LightBackground,
+    surface = LightSurface,
+    surfaceVariant = LightBorder,
     onPrimary = GoldOn,
     onSecondary = LostGreenOn,
     onBackground = Color.Black,
@@ -51,8 +53,8 @@ private val LightColorScheme = lightColorScheme(
     error = Color.Red,
     onErrorContainer = Color.Black,
     inversePrimary = Gold,
-    inverseSurface = LightBlue,
-    inverseOnSurface = DarkBlue,
+    inverseSurface = LightBackground,
+    inverseOnSurface = LightSurface,
     surfaceTint = Gold,
     outline = Color.Black
 )
@@ -74,63 +76,63 @@ fun FendlyTheme(
 
     MaterialTheme(
         colorScheme = colorScheme,
-        typography = Typography,
+        typography = AppTypography,
         content = content
     )
 }
 
-private val Typography = Typography(
-    body1 = TextStyle(
+private val AppTypography = Typography(
+    bodyLarge = TextStyle(
         fontFamily = FontFamily.Default,
         fontWeight = FontWeight.Normal,
         fontSize = 16.sp
     ),
-    body2 = TextStyle(
+    bodyMedium = TextStyle(
         fontFamily = FontFamily.Default,
         fontWeight = FontWeight.Medium,
         fontSize = 14.sp
     ),
-    headline1 = TextStyle(
+    headlineLarge = TextStyle(
         fontFamily = FontFamily.Default,
-        fontWeight = FontWeight.Bold,
+        fontWeight = FontWeight.Normal,
         fontSize = 24.sp
     ),
-    headline2 = TextStyle(
+    headlineMedium = TextStyle(
         fontFamily = FontFamily.Default,
-        fontWeight = FontWeight.Bold,
+        fontWeight = FontWeight.Normal,
         fontSize = 20.sp
     ),
-    headline3 = TextStyle(
+    headlineSmall = TextStyle(
         fontFamily = FontFamily.Default,
-        fontWeight = FontWeight.Bold,
+        fontWeight = FontWeight.Normal,
         fontSize = 18.sp
     ),
-    headline4 = TextStyle(
+    titleLarge = TextStyle(
         fontFamily = FontFamily.Default,
-        fontWeight = FontWeight.Bold,
+        fontWeight = FontWeight.Normal,
         fontSize = 16.sp
     ),
-    headline5 = TextStyle(
+    titleMedium = TextStyle(
         fontFamily = FontFamily.Default,
-        fontWeight = FontWeight.Bold,
+        fontWeight = FontWeight.Normal,
         fontSize = 14.sp
     ),
-    headline6 = TextStyle(
-        fontFamily = FontFamily.Default,
-        fontWeight = FontWeight.Bold,
-        fontSize = 12.sp
-    ),
-    button = TextStyle(
-        fontFamily = FontFamily.Default,
-        fontWeight = FontWeight.Bold,
-        fontSize = 14.sp
-    ),
-    caption = TextStyle(
+    titleSmall = TextStyle(
         fontFamily = FontFamily.Default,
         fontWeight = FontWeight.Normal,
         fontSize = 12.sp
     ),
-    overline = TextStyle(
+    labelLarge = TextStyle(
+        fontFamily = FontFamily.Default,
+        fontWeight = FontWeight.Normal,
+        fontSize = 14.sp
+    ),
+    labelMedium = TextStyle(
+        fontFamily = FontFamily.Default,
+        fontWeight = FontWeight.Normal,
+        fontSize = 12.sp
+    ),
+    labelSmall = TextStyle(
         fontFamily = FontFamily.Default,
         fontWeight = FontWeight.Normal,
         fontSize = 10.sp

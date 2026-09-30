@@ -2,7 +2,7 @@ from datetime import datetime
 from uuid import uuid4
 
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import DateTime, Float, String, Text, UniqueConstraint, func
+from sqlalchemy import Boolean, DateTime, Float, String, Text, UniqueConstraint, func
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -17,8 +17,15 @@ class User(Base):
     firebase_uid: Mapped[str] = mapped_column(String(128), unique=True, index=True)
     username: Mapped[str | None] = mapped_column(String(32), index=True)
     full_name: Mapped[str | None] = mapped_column(String(160), index=True)
+    first_name: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    surname: Mapped[str | None] = mapped_column(String(120), nullable=True)
     email: Mapped[str | None] = mapped_column(String(320), index=True)
     mobile: Mapped[str | None] = mapped_column(String(32), index=True)
+    state: Mapped[str | None] = mapped_column(String(120), index=True)
+    city: Mapped[str | None] = mapped_column(String(120), index=True)
+    profile_photo_url: Mapped[str | None] = mapped_column(String(1000))
+    email_verified: Mapped[bool] = mapped_column(Boolean, default=False)
+    mobile_verified: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 

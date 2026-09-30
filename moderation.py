@@ -21,7 +21,7 @@ async def moderate_content(title: str, description: str) -> str | None:
     if api_key:
         try:
             endpoint = os.getenv("OPENAI_MODERATION_URL", "https://api.openai.com/v1/moderations")
-            async with httpx.AsyncClient(timeout=20) as client:
+            async with httpx.AsyncClient(timeout=8) as client:
                 response = await client.post(
                     endpoint,
                     json={"model": os.getenv("OPENAI_MODERATION_MODEL", "omni-moderation-latest"), "input": text},

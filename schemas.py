@@ -6,8 +6,8 @@ from pydantic import BaseModel, ConfigDict, Field
 class ItemCreate(BaseModel):
     title: str = Field(min_length=1, max_length=160)
     description: str = Field(min_length=1, max_length=5000)
-    lat: float = Field(ge=-90, le=90)
-    lng: float = Field(ge=-180, le=180)
+    lat: float = Field(default=0.0, ge=-90, le=90)
+    lng: float = Field(default=0.0, ge=-180, le=180)
     report_date: str | None = Field(default=None, max_length=32)
     report_location: str | None = Field(default=None, max_length=500)
     image_url: str | None = Field(default=None, max_length=1000)
@@ -18,8 +18,8 @@ class ItemCreate(BaseModel):
 class ItemUpdate(BaseModel):
     title: str = Field(min_length=1, max_length=160)
     description: str = Field(min_length=1, max_length=5000)
-    lat: float = Field(ge=-90, le=90)
-    lng: float = Field(ge=-180, le=180)
+    lat: float = Field(default=0.0, ge=-90, le=90)
+    lng: float = Field(default=0.0, ge=-180, le=180)
     report_date: str | None = Field(default=None, max_length=32)
     report_location: str | None = Field(default=None, max_length=500)
     image_url: str | None = Field(default=None, max_length=1000)
@@ -55,7 +55,12 @@ class UsernameRequest(BaseModel):
 
 
 class ProfileUpdate(BaseModel):
-    username: str = Field(min_length=3, max_length=32, pattern=r"^[A-Za-z0-9_]+$")
-    full_name: str = Field(min_length=1, max_length=160)
-    email: str = Field(min_length=3, max_length=320)
-    mobile: str = Field(min_length=10, max_length=32)
+    username: str | None = Field(default=None, max_length=32, pattern=r"^[A-Za-z0-9_]+$")
+    full_name: str | None = Field(default=None, max_length=160)
+    email: str | None = Field(default=None, max_length=320)
+    mobile: str | None = Field(default=None, max_length=32)
+    state: str | None = Field(default=None, max_length=120)
+    city: str | None = Field(default=None, max_length=120)
+    profile_photo_url: str | None = Field(default=None, max_length=1000)
+    email_verified: bool | None = Field(default=None)
+    mobile_verified: bool | None = Field(default=None)

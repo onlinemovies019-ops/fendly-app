@@ -12,7 +12,7 @@ from auth import get_current_user
 from database import get_db
 from image_matching import cosine_similarity, create_image_embedding
 from models import FoundItem, LostItem, User
-from notifications import send_match_notifications
+from notifications import send_match_notifications, send_admin_match_email
 
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
@@ -129,7 +129,15 @@ async def find_matches(
             score = semantic_score * 0.3 + image_score * 0.45 + keyword_score * 0.1 + location_score * 0.15
         score = round(score, 4)
         matches.append({"item": item, "score": score})
-    return sorted(matches, key=lambda result: float(result["score"]), reverse=True)[:25]
+    ranked = sorted(matches, key=lambda result: float(result["score"]), reverse=True)[:25]
+    for result in ranked:
+        score = float(result["score"])
+        if score >= 0.85:
+            item = result["item"]
+            details = f"Match search: Found item '{found_item.title}' matched with lost item '{item.title}' with confidence {score:.1%}"
+            send_admin_match_email(found_item.title, score, details)
+            break
+    return ranked
 
 
 @router.post("/matches/{found_item_id}/notify")

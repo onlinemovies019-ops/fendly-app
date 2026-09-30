@@ -56,7 +56,7 @@ async def create_embedding(text: str) -> list[float] | None:
             "dimensions": EMBEDDING_DIMENSIONS,
         }
         try:
-            async with httpx.AsyncClient(timeout=30) as client:
+            async with httpx.AsyncClient(timeout=8) as client:
                 response = await client.post(endpoint, json=payload, headers={"Authorization": f"Bearer {api_key}"})
             response.raise_for_status()
             embedding = response.json()["data"][0]["embedding"]
