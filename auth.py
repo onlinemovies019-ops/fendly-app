@@ -397,7 +397,7 @@ async def get_me(
         "state": user.state or "",
         "city": user.city or "",
         "profile_photo_url": getattr(user, "profile_photo_url", ""),
-        "is_verified": bool(user.email_verified),
+        "is_verified": is_verified,
         "email_verified": bool(user.email_verified),
         "mobile_verified": bool(user.mobile_verified),
     }
