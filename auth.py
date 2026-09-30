@@ -3,8 +3,9 @@ import random
 from typing import Optional
 from fastapi import APIRouter, HTTPException, status
 import httpx
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel
 
+# MUST BE /api/auth
 router = APIRouter(prefix="/api/auth", tags=["Authentication"])
 
 # API Keys from Render Environment Variables
@@ -25,43 +26,43 @@ class EmailOTPRequest(BaseModel):
     email: EmailStr
     otp: str
 
+class SendOTPRequest(BaseModel):
+    phone_number: str
+
 # --- Mobile OTP Endpoints (2Factor.in) ---
 
 @router.post("/send-otp")
 @router.post("/send-otp/")
-async def send_mobile_otp(payload: MobileOTPRequest):
-    """
-    Triggers SMS OTP using 2Factor.in AUTOGEN API.
-    """
+async def send_otp(payload: SendOTPRequest):
     if not TWO_FACTOR_API_KEY:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="TWO_FACTOR_API_KEY is not configured on server"
+            detail="TWO_FACTOR_API_KEY is not set in Render environment variables"
         )
 
     clean_phone = payload.phone_number.replace(" ", "").replace("-", "")
-    url = f"https://2factor.in/API/V1/{TWO_FACTOR_API_KEY}/SMS/{clean_phone}/AUTOGEN"
+        url = f"https://2factor.in/API/V1/{TWO_FACTOR_API_KEY}/SMS/{clean_phone}/AUTOGEN"
 
     async with httpx.AsyncClient() as client:
-        try:
-            response = await client.get(url, timeout=10.0)
-            data = response.json()
-            if data.get("Status") == "Success":
-                return {
-                    "status": "success",
-                    "session_id": data.get("Details"),
-                    "message": "OTP sent successfully via SMS"
-                }
-            else:
+            try:
+                response = await client.get(url, timeout=10.0)
+                data = response.json()
+                if data.get("Status") == "Success":
+                    return {
+                        "status": "success",
+                        "session_id": data.get("Details"),
+                        "message": "OTP sent successfully"
+                    }
+                else:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail=data.get("Details", "Failed to send OTP")
+                    )
+            except Exception as e:
                 raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=data.get("Details", "Failed to send SMS OTP")
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail=f"SMS Gateway Error: {str(e)}"
                 )
-        except Exception as e:
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"2Factor API error: {str(e)}"
-            )
 
 @router.post("/verify-otp")
 @router.post("/verify-otp/")

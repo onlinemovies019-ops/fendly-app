@@ -10,12 +10,13 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, EmailStr
 from sqlalchemy import select, text
 from sqlalchemy.orm import Session
-from auth import router as auth_router, get_current_user
+from auth import router as auth_router
 from database import engine, get_db
 from models import Base, User
 from routers.items import router as items_router
 from routers.notifications import router as notifications_router
 from routers.users import router as users_router
+from fastapi import FastAPI
 from routers.admin import router as admin_router
 from routers.payments import router as payments_router
 
@@ -261,9 +262,14 @@ async def send_email_otp_direct(payload: EmailOTPRequest):
         )
 
 
+app = FastAPI()
+
+# Do NOT add prefix="/api/auth" here if it is already defined in auth.py
+app.include_router(auth_router)
+
 @app.get("/health")
 def health_check():
-    return {"status": "ok", "database": "active"}
+    return {"status": "ok"}
 
 
 @app.get("/user/me")
