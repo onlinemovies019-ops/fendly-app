@@ -12,7 +12,7 @@ security = HTTPBearer(auto_error=False)
 
 async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)):
     """
-    Authentication dependency required by protected endpoints (e.g., in routers/items.py).
+    Authentication dependency required by protected endpoints (e.g., in `routers/items.py`).
     """
     if not credentials:
         raise HTTPException(
@@ -22,7 +22,7 @@ async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(s
         )
     return {"token": credentials.credentials, "user": "authenticated_user"}
 
-# --- Schemas ---
+# — Schemas —
 
 class SendOTPRequest(BaseModel):
     phone_number: str
@@ -31,7 +31,7 @@ class VerifyOTPRequest(BaseModel):
     session_id: str
     otp: str
 
-# --- Endpoints ---
+# — Endpoints —
 
 @router.post("/send-otp")
 async def send_otp(payload: SendOTPRequest):
@@ -41,7 +41,7 @@ async def send_otp(payload: SendOTPRequest):
             detail="TWO_FACTOR_API_KEY is not configured in Render Environment Variables"
         )
 
-    clean_phone = payload.phone_number.replace(" ", "").replace("-", "")
+    clean_phone = payload.phone_number.replace(" ", "").replace("-", "").replace("+", "")
     url = f"https://2factor.in/API/V1/{TWO_FACTOR_API_KEY}/SMS/{clean_phone}/AUTOGEN"
 
     async with httpx.AsyncClient() as client:

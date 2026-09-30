@@ -166,7 +166,7 @@ async def send_mobile_otp_direct(payload: MobileOTPRequest):
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="TWO_FACTOR_API_KEY is not configured on server"
         )
-    clean_phone = payload.phone_number.replace(" ", "").replace("-", "")
+    clean_phone = payload.phone_number.replace(" ", "").replace("-", "").replace("+", "")
     url = f"https://2factor.in/API/V1/{TWO_FACTOR_API_KEY}/SMS/{clean_phone}/AUTOGEN"
     try:
         req = urllib.request.Request(url, method="GET")
