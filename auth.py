@@ -392,13 +392,13 @@ async def get_me(
         "full_name": full_name,
         "first_name": first_name,
         "surname": surname,
-        "email": user.email or "",
-        "mobile": user.mobile or "",
+        "email": email,
+        "mobile": mobile,
         "state": user.state or "",
         "city": user.city or "",
         "profile_photo_url": getattr(user, "profile_photo_url", ""),
         "is_verified": is_verified,
-        "email_verified": bool(user.email_verified),
+       "email_verified": email_verified,
         "mobile_verified": bool(user.mobile_verified),
     }
 
