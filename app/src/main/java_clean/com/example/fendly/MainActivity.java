@@ -118,6 +118,7 @@ import com.google.firebase.firestore.SetOptions;
 import com.google.firebase.firestore.Source;
 import com.google.android.gms.tasks.Task;
 import com.google.android.gms.tasks.Tasks;
+import com.google.android.gms.tasks.OnSuccessListener;
 import androidx.biometric.BiometricManager;
 import androidx.biometric.BiometricPrompt;
 import androidx.fragment.app.FragmentActivity;
@@ -5038,63 +5039,90 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         profileHydrationInFlight = true;
         SharedPreferences account = getSharedPreferences("fendly_account", MODE_PRIVATE);
 
-        FirebaseFirestore.getInstance().collection("users").document(user.getUid())
+        String primaryKey = getProfileDocumentKey();
+        String fallbackKey = user.getUid();
+
+        OnSuccessListener<DocumentSnapshot> docHandler = document -> {
+            if (document != null && document.exists()) {
+                SharedPreferences.Editor editor = account.edit();
+                String username = document.getString("username");
+                if (username != null && !username.trim().isEmpty()) {
+                    editor.putString("username", formatUsernameDisplay(username));
+                }
+                putIfPresent(editor, "full_name", document.getString("full_name"));
+                String cloudFirstName = document.getString("first_name");
+                if (cloudFirstName == null || cloudFirstName.trim().isEmpty()) cloudFirstName = document.getString("profile_first_name");
+                String cloudSurname = document.getString("surname");
+                if (cloudSurname == null || cloudSurname.trim().isEmpty()) cloudSurname = document.getString("profile_surname");
+                if (cloudFirstName != null) editor.putString("profile_first_name", cloudFirstName.trim());
+                if (cloudSurname != null) editor.putString("profile_surname", cloudSurname.trim());
+                putIfPresent(editor, "email", document.getString("email"));
+                putIfPresent(editor, "mobile", document.getString("mobile"));
+                putIfPresent(editor, "state", document.getString("state"));
+                putIfPresent(editor, "city", document.getString("city"));
+                String cloudImage = document.getString("imageUrl");
+                if (cloudImage == null || cloudImage.trim().isEmpty()) cloudImage = document.getString("profile_image_url");
+                putIfPresent(editor, "profile_image_url", cloudImage);
+
+                boolean cloudEmailVerified = parseBooleanValue(document.get("emailVerified"))
+                        || parseBooleanValue(document.get("isEmailVerified"))
+                        || parseBooleanValue(document.get("email_verified"));
+                String cloudEmail = document.getString("email");
+                String localEmail = account.getString("email", "").trim();
+                boolean localEmailVerified = account.getBoolean("email_verified", false);
+                FirebaseUser firebaseUser = auth.getCurrentUser();
+                boolean firebaseEmailVerified = firebaseUser != null && firebaseUser.isEmailVerified();
+
+                boolean emailVerifiedFinal = localEmailVerified || cloudEmailVerified || firebaseEmailVerified;
+                if (!emailVerifiedFinal && !localEmail.isEmpty() && cloudEmail != null && !cloudEmail.isEmpty() && localEmail.equalsIgnoreCase(cloudEmail)) {
+                    emailVerifiedFinal = localEmailVerified;
+                }
+                editor.putBoolean("email_verified", emailVerifiedFinal);
+
+                boolean cloudMobileVerified = parseBooleanValue(document.get("mobileVerified"))
+                        || parseBooleanValue(document.get("isMobileVerified"))
+                        || parseBooleanValue(document.get("mobile_verified"));
+                String cloudMobile = document.getString("mobile");
+                String localMobile = account.getString("mobile", "").trim();
+                boolean localMobileVerified = account.getBoolean("mobile_verified", false);
+
+                boolean mobileVerifiedFinal = localMobileVerified || cloudMobileVerified;
+                if (!mobileVerifiedFinal && !localMobile.isEmpty() && cloudMobile != null && !cloudMobile.isEmpty() && localMobile.equals(cloudMobile)) {
+                    mobileVerifiedFinal = localMobileVerified;
+                }
+                editor.putBoolean("mobile_verified", mobileVerifiedFinal);
+                editor.apply();
+            }
+            profileHydrated = true;
+            cloudProfileLoaded = true;
+            profileHydrationInFlight = false;
+            flushPendingProfileHydrationCallbacks();
+            if (onComplete != null) onComplete.run();
+        };
+
+        FirebaseFirestore.getInstance().collection("users").document(primaryKey)
                 .get(Source.SERVER)
                 .addOnSuccessListener(document -> {
                     if (document != null && document.exists()) {
-                        SharedPreferences.Editor editor = account.edit();
-                        String username = document.getString("username");
-                        if (username != null && !username.trim().isEmpty()) {
-                            editor.putString("username", formatUsernameDisplay(username));
-                        }
-                        putIfPresent(editor, "full_name", document.getString("full_name"));
-                        String cloudFirstName = document.getString("first_name");
-                        String cloudSurname = document.getString("surname");
-                        if (cloudFirstName != null) editor.putString("profile_first_name", cloudFirstName.trim());
-                        if (cloudSurname != null) editor.putString("profile_surname", cloudSurname.trim());
-                        putIfPresent(editor, "email", document.getString("email"));
-                        putIfPresent(editor, "mobile", document.getString("mobile"));
-                        putIfPresent(editor, "state", document.getString("state"));
-                        putIfPresent(editor, "city", document.getString("city"));
-                        putIfPresent(editor, "profile_image_url", document.getString("imageUrl"));
-
-                        boolean cloudEmailVerified = parseBooleanValue(document.get("emailVerified"))
-                                || parseBooleanValue(document.get("isEmailVerified"))
-                                || parseBooleanValue(document.get("email_verified"));
-                        String cloudEmail = document.getString("email");
-                        String localEmail = account.getString("email", "").trim();
-                        boolean localEmailVerified = account.getBoolean("email_verified", false);
-                        FirebaseUser firebaseUser = auth.getCurrentUser();
-                        boolean firebaseEmailVerified = firebaseUser != null && firebaseUser.isEmailVerified();
-
-                        boolean emailVerifiedFinal = localEmailVerified || cloudEmailVerified || firebaseEmailVerified;
-                        if (!emailVerifiedFinal && !localEmail.isEmpty() && cloudEmail != null && !cloudEmail.isEmpty() && localEmail.equalsIgnoreCase(cloudEmail)) {
-                            emailVerifiedFinal = localEmailVerified;
-                        }
-                        editor.putBoolean("email_verified", emailVerifiedFinal);
-
-                        boolean cloudMobileVerified = parseBooleanValue(document.get("mobileVerified"))
-                                || parseBooleanValue(document.get("isMobileVerified"))
-                                || parseBooleanValue(document.get("mobile_verified"));
-                        String cloudMobile = document.getString("mobile");
-                        String localMobile = account.getString("mobile", "").trim();
-                        boolean localMobileVerified = account.getBoolean("mobile_verified", false);
-
-                        boolean mobileVerifiedFinal = localMobileVerified || cloudMobileVerified;
-                        if (!mobileVerifiedFinal && !localMobile.isEmpty() && cloudMobile != null && !cloudMobile.isEmpty() && localMobile.equals(cloudMobile)) {
-                            mobileVerifiedFinal = localMobileVerified;
-                        }
-                        editor.putBoolean("mobile_verified", mobileVerifiedFinal);
-                        editor.apply();
+                        docHandler.onSuccess(document);
+                    } else if (!fallbackKey.equals(primaryKey)) {
+                        FirebaseFirestore.getInstance().collection("users").document(fallbackKey)
+                                .get(Source.SERVER)
+                                .addOnSuccessListener(docHandler)
+                                .addOnFailureListener(e -> fetchProfileFromBackendApi(user, account, onComplete));
+                    } else {
+                        fetchProfileFromBackendApi(user, account, onComplete);
                     }
-                    profileHydrated = true;
-                    cloudProfileLoaded = true;
-                    profileHydrationInFlight = false;
-                    flushPendingProfileHydrationCallbacks();
-                    if (onComplete != null) onComplete.run();
                 })
                 .addOnFailureListener(e -> {
-                    fetchProfileFromBackendApi(user, account, onComplete);
+                    if (!fallbackKey.equals(primaryKey)) {
+                        FirebaseFirestore.getInstance().collection("users").document(fallbackKey)
+                                .get(Source.SERVER)
+                                .addOnSuccessListener(docHandler)
+                                .addOnFailureListener(err -> fetchProfileFromBackendApi(user, account, onComplete));
+                    } else {
+                        fetchProfileFromBackendApi(user, account, onComplete);
+                    }
                 });
     }
 
