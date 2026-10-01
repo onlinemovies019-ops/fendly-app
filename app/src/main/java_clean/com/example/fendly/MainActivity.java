@@ -2517,10 +2517,10 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         screenRenderer = () -> showReport(type);
         currentReportType = type;
         LinearLayout root = screenBase("");
-        root.addView(text("Report an item", 15, primaryTextColor(), Typeface.NORMAL), contentParams(-1, dp(22), dp(14)));
+        root.addView(text("Click Lost/Found button to report", 15, primaryTextColor(), Typeface.NORMAL), contentParams(-1, dp(22), dp(14)));
         LinearLayout typeToggle = new LinearLayout(this);
         typeToggle.setOrientation(LinearLayout.HORIZONTAL);
-        TextView lostToggle = reportTypeToggle("Lost", "LOST".equals(type), LOST_GREEN, LOST_GREEN_ON);
+        TextView lostToggle = reportTypeToggle("Lost/Theft", "LOST".equals(type), LOST_GREEN, LOST_GREEN_ON);
         TextView foundToggle = reportTypeToggle("Found", "FOUND".equals(type), FOUND_GOLD, FOUND_GOLD_ON);
         lostToggle.setOnClickListener(view -> showReport("LOST"));
         foundToggle.setOnClickListener(view -> showReport("FOUND"));
@@ -8301,9 +8301,9 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             if ("Back home".equalsIgnoreCase(value)) return "હોમ પર પાછા જાઓ";
             if ("My reports".equalsIgnoreCase(value)) return "મારા રિપોર્ટ";
             if ("My profile".equalsIgnoreCase(value)) return "મારી પ્રોફાઇલ";
-            if ("LOST".equalsIgnoreCase(value)) return "ખોવાયેલ";
-            if ("FOUND".equalsIgnoreCase(value)) return "મળેલ";
-            if ("Report an item".equalsIgnoreCase(value)) return "વસ્તુની રિપોર્ટ કરો";
+            if ("LOST".equalsIgnoreCase(value) || "Lost".equalsIgnoreCase(value)) return "ખોવાયેલ";
+            if ("FOUND".equalsIgnoreCase(value) || "Found".equalsIgnoreCase(value)) return "મળેલ";
+            if ("Report an item".equalsIgnoreCase(value) || "Click Lost/Found button to report".equalsIgnoreCase(value)) return "વસ્તુની રિપોર્ટ કરો";
             if ("Item name".equalsIgnoreCase(value)) return "વસ્તુનું નામ";
             if ("IMEI Number".equalsIgnoreCase(value)) return "IMEI નંબર";
             if ("Description and identifying details".equalsIgnoreCase(value)) return "વર્ણન અને ઓળખ વિગતો";
