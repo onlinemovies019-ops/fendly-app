@@ -55,6 +55,7 @@ class ItemSubmission(BaseModel):
     description: str = Field(min_length=1, max_length=5000)
     imageUrl: str | None = Field(default=None, max_length=1000)
     type: Literal["lost", "found"]
+    imei: str | None = Field(default=None, max_length=32)
     lat: float = Field(default=0.0, ge=-90, le=90)
     lng: float = Field(default=0.0, ge=-180, le=180)
     report_date: str | None = Field(default=None, max_length=32)
@@ -78,21 +79,18 @@ def _stored_report_field(value: str | None, label: str) -> str | None:
 
 
 async def _save_item(payload: ItemCreate, session: Session, uid: str, model: type[LostItem] | type[FoundItem]):
-    # 1. Validate IMEI first
-    if getattr(payload, "imei", None):
+    if payload.imei:
         if not validate_luhn(str(payload.imei)):
             raise HTTPException(status_code=400, detail="Invalid 15-digit IMEI number")
 
-    # 2. Handle Payment Verification with Test Bypass
     if model is LostItem:
         if payload.payment_id in ["test_bypass", "test_payment_123"] or (payload.payment_id and payload.payment_id.startswith("pay_test_")):
-            pass  # Test bypass
+            pass
         else:
             if not payload.payment_id:
                 raise HTTPException(status.HTTP_402_PAYMENT_REQUIRED, "A valid payment is required")
             verify_captured_payment(payload.payment_id, uid)
 
-    # 3. Async Tasks for Moderation and Embeddings
     mod_task = asyncio.create_task(moderate_content(payload.title, payload.description))
     emb_task = asyncio.create_task(create_embedding(item_text(payload.title, payload.description, payload.category)))
     img_task = asyncio.create_task(create_image_embedding(payload.image_url))
@@ -273,6 +271,7 @@ async def create_item_compat(
             title=request.title,
             description=request.description,
             image_url=request.imageUrl,
+            imei=request.imei,
             lat=request.lat,
             lng=request.lng,
             report_date=request.report_date,
@@ -383,31 +382,43 @@ async def match_items(
 ) -> list[dict[str, object]]:
     session = _require_db_session(session)
 
-    # 1. Direct IMEI Matching Path
-    if getattr(request, "imei", None):
-        clean_imei = "".join(filter(str.isdigit, str(request.imei)))
-        target_type = getattr(request, "targetType", "lost")
+    if request.imei is not None:
+        clean_imei = re.sub(r"\D", "", str(request.imei))
+        target_type = (request.targetType or "").strip().lower()
+        if target_type not in {"lost", "found"}:
+            target_type = "lost"
 
         model = LostItem if target_type == "lost" else FoundItem
-        matched_records = session.query(model).filter(model.imei == clean_imei).all()
+        matched_records = session.scalars(select(model).where(model.imei == clean_imei)).all()
 
-        results = []
+        results: list[dict[str, object]] = []
         for item in matched_records:
             raw_imei = getattr(item, "imei", "") or ""
-            masked_imei = f"{raw_imei[:6]}******{raw_imei[-3:]}" if len(raw_imei) == 15 else raw_imei
-
-            item_dict = item.__dict__.copy()
-            item_dict["imei"] = masked_imei
-
-            results.append({
-                "item": item_dict,
-                "score": 1.0,
-                "matchType": "EXACT_IMEI",
-                "explanation": "Exact 15-digit IMEI serial match"
-            })
+            masked_imei = raw_imei if len(raw_imei) < 9 else f"{raw_imei[:6]}{'*' * max(0, len(raw_imei) - 9)}{raw_imei[-3:]}"
+            results.append(
+                {
+                    "item": {
+                        "id": item.id,
+                        "title": item.title,
+                        "description": item.description,
+                        "category": item.category,
+                        "lat": item.lat,
+                        "lng": item.lng,
+                        "report_date": item.report_date,
+                        "report_location": item.report_location,
+                        "image_url": item.image_url,
+                        "created_by": item.created_by,
+                        "created_at": item.created_at,
+                        "edit_count": item.edit_count,
+                        "imei": masked_imei,
+                    },
+                    "score": 1.0,
+                    "matchType": "EXACT_IMEI",
+                    "imei": masked_imei,
+                }
+            )
         return results
 
-    # 2. Standard Item-ID Matching Fallback
     if bool(request.found_item_id) == bool(request.lost_item_id):
         raise HTTPException(400, "Provide exactly one of found_item_id or lost_item_id")
 

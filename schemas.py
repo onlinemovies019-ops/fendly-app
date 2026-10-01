@@ -11,6 +11,7 @@ class ItemCreate(BaseModel):
     report_date: str | None = Field(default=None, max_length=32)
     report_location: str | None = Field(default=None, max_length=500)
     image_url: str | None = Field(default=None, max_length=1000)
+    imei: str | None = Field(default=None, max_length=32)
     category: str = Field(default="other", min_length=1, max_length=80)
     payment_id: str | None = Field(default=None, max_length=128)
 
@@ -36,14 +37,18 @@ class ItemResponse(ItemCreate):
 
 
 class MatchRequest(BaseModel):
+    imei: str | None = Field(default=None, max_length=32)
+    targetType: str | None = Field(default=None, max_length=10)
     found_item_id: str | None = Field(default=None, min_length=1)
     lost_item_id: str | None = Field(default=None, min_length=1)
     radius_degrees: float = Field(default=0.25, gt=0, le=10)
 
 
 class MatchResponse(BaseModel):
-    item: ItemResponse
+    item: ItemResponse | None = None
     score: float = Field(ge=0, le=1)
+    matchType: str | None = None
+    imei: str | None = None
 
 
 class FcmTokenRequest(BaseModel):
