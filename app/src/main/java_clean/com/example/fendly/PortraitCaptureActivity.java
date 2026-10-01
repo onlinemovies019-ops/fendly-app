@@ -10,6 +10,5 @@ public class PortraitCaptureActivity extends CaptureActivity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_PORTRAIT);
-        setContentView(R.layout.zxing_custom_capture);
     }
 }
