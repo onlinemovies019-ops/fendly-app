@@ -3443,16 +3443,14 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
     private void uploadProfilePhotoBackground(Uri imageUri, Bitmap cameraBitmap) {
         FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
         if (user == null) return;
-        user.getIdToken(false).addOnSuccessListener(token -> network.execute(() -> {
-            String imageUrl = uploadImage(imageUri, cameraBitmap, token != null ? token.getToken() : null);
-            if (imageUrl == null || imageUrl.trim().isEmpty()) {
-                if (cameraBitmap != null) {
-                    imageUrl = bitmapToBase64(cameraBitmap);
-                } else if (imageUri != null) {
-                    imageUrl = uriToBase64(imageUri);
-                }
+        network.execute(() -> {
+            String imageUrl = "";
+            if (cameraBitmap != null) {
+                imageUrl = bitmapToBase64(cameraBitmap);
+            } else if (imageUri != null) {
+                imageUrl = uriToBase64(imageUri);
             }
-            if (imageUrl == null || imageUrl.trim().isEmpty()) return;
+            if (imageUrl.isEmpty()) return;
 
             final String finalImageUrl = imageUrl;
             SharedPreferences account = getSharedPreferences("fendly_account", MODE_PRIVATE);
@@ -3471,7 +3469,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             runOnUiThread(() -> {
                 if (currentPage == PAGE_PROFILE) showProfile();
             });
-        }));
+        });
     }
 
     private void showProfilePhotoOptions() {
