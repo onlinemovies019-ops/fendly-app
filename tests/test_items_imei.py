@@ -50,9 +50,10 @@ async def test_notify_admin_of_match_uses_render_email_env_names(monkeypatch):
     captured = {}
 
     class DummySMTP:
-        def __init__(self, host, port):
+        def __init__(self, host, port, timeout):
             captured["host"] = host
             captured["port"] = port
+            captured["timeout"] = timeout
 
         def __enter__(self):
             return self
@@ -79,6 +80,7 @@ async def test_notify_admin_of_match_uses_render_email_env_names(monkeypatch):
         )
 
     assert captured["host"] == "smtp.example.com"
+    assert captured["timeout"] == 10
     assert captured["login"] == ("mailer@example.com", "secret")
     assert captured["to"] == "admin@example.com"
 

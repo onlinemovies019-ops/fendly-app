@@ -5,7 +5,19 @@ dotenv.config();
 const BASE_URL = process.env.API_URL || "https://fendly-api.onrender.com";
 const AUTH_TOKEN = process.env.TEST_AUTH_TOKEN || "test_token_bypass"; // Or your test token
 
+async function readJsonResponse(res) {
+  const body = await res.text();
+  try {
+    return JSON.parse(body);
+  } catch {
+    const contentType = res.headers.get("content-type") || "unknown content type";
+    const excerpt = body.replace(/\s+/g, " ").slice(0, 200);
+    throw new Error(`Expected JSON, got HTTP ${res.status} (${contentType}): ${excerpt}`);
+  }
+}
+
 async function runTests() {
+  let failedTests = 0;
   console.log(`\n📱 Starting IMEI Matching Terminal Tests on ${BASE_URL}\n`);
 
   // --- [Test 1/4] Invalid IMEI Rejection ---
@@ -28,13 +40,15 @@ async function runTests() {
         payment_id: "test_bypass"
       })
     });
-    const data = await res.json();
+    const data = await readJsonResponse(res);
     if (res.status === 400) {
       console.log(`✅ PASSED: Server correctly rejected invalid IMEI (HTTP 400):`, JSON.stringify(data.detail || data));
     } else {
+      failedTests += 1;
       console.log(`❌ FAILED: Expected HTTP 400, got HTTP ${res.status}:`, data);
     }
   } catch (err) {
+    failedTests += 1;
     console.log(`❌ ERROR in Test 1:`, err.message);
   }
 
@@ -60,14 +74,16 @@ async function runTests() {
         payment_id: "test_bypass"
       })
     });
-    const data = await res.json();
+    const data = await readJsonResponse(res);
     if (res.status === 201) {
       createdId = data.id;
       console.log(`✅ PASSED: Item created successfully (HTTP 201). Item ID: ${createdId}`);
     } else {
+      failedTests += 1;
       console.log(`❌ FAILED: Expected HTTP 201, got HTTP ${res.status}:`, data);
     }
   } catch (err) {
+    failedTests += 1;
     console.log(`❌ ERROR in Test 2:`, err.message);
   }
 
@@ -85,13 +101,15 @@ async function runTests() {
         targetType: "lost"
       })
     });
-    const data = await res.json();
+    const data = await readJsonResponse(res);
     if (res.status === 200 && Array.isArray(data) && data.length > 0) {
       console.log(`✅ PASSED: Found exact IMEI match (HTTP 200). Results count: ${data.length}`);
     } else {
+      failedTests += 1;
       console.log(`❌ FAILED: Expected exact IMEI match (HTTP 200), got HTTP ${res.status}:`, data);
     }
   } catch (err) {
+    failedTests += 1;
     console.log(`❌ ERROR in Test 3:`, err.message);
   }
 
@@ -109,7 +127,7 @@ async function runTests() {
         targetType: "lost"
       })
     });
-    const data = await res.json();
+    const data = await readJsonResponse(res);
     if (res.status === 200 && data.length > 0) {
       const returnedImei = data[0].item.imei;
       if (returnedImei.includes("******")) {
@@ -121,11 +139,17 @@ async function runTests() {
       console.log(`ℹ SKIP: No match results available to check privacy masking.`);
     }
   } catch (err) {
+    failedTests += 1;
     console.log(`❌ ERROR in Test 4:`, err.message);
   }
 
   console.log("\n=============================================================");
-  console.log("🎉 IMEI Test Suite Execution Complete!\n");
+  if (failedTests > 0) {
+    console.log(`IMEI Test Suite failed: ${failedTests} test(s) did not pass.\n`);
+    process.exitCode = 1;
+  } else {
+    console.log("🎉 IMEI Test Suite passed!\n");
+  }
 }
 
 runTests();

@@ -86,10 +86,13 @@ Check your admin dashboard for full details.
             """
             msg.attach(MIMEText(body, "plain"))
 
-            with smtplib.SMTP(smtp_host, smtp_port) as server:
-                server.starttls()
-                server.login(smtp_user, smtp_password)
-                server.send_message(msg)
+            def send_email() -> None:
+                with smtplib.SMTP(smtp_host, smtp_port, timeout=10) as server:
+                    server.starttls()
+                    server.login(smtp_user, smtp_password)
+                    server.send_message(msg)
+
+            await asyncio.wait_for(asyncio.to_thread(send_email), timeout=12)
             print("[EMAIL] Admin match notification email sent.")
     except Exception as e:
         print(f"[ERROR] Notification failed: {e}")
