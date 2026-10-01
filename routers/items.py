@@ -4,7 +4,10 @@ import logging
 import math
 import os
 import re
+import smtplib
 from datetime import datetime, timezone
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
 from pathlib import Path
 from typing import Literal, Optional
 from uuid import uuid4
@@ -48,6 +51,48 @@ ALLOWED_IMAGE_TYPES = {"image/jpeg", "image/png", "image/webp"}
 WORD_PATTERN = re.compile(r"[a-z0-9]+")
 MATCH_ALERT_THRESHOLD = 0.85
 logger = logging.getLogger(__name__)
+
+
+async def notify_admin_of_match(
+    session: Session,
+    query_identifier: str,
+    matched_items: list,
+    match_type: str = "EXACT_IMEI",
+):
+    try:
+        print(f"[ADMIN DASHBOARD ALERT] Match Type: {match_type} | Identifier: {query_identifier} | Matches: {len(matched_items)}")
+
+        admin_email = os.getenv("ADMIN_EMAIL") or os.getenv("SMTP_FROM_EMAIL") or "admin@fendly.com"
+        smtp_host = os.getenv("SMTP_HOST")
+        smtp_port = int(os.getenv("SMTP_PORT", "587") or 587)
+        smtp_user = os.getenv("SMTP_USER") or os.getenv("SMTP_USERNAME")
+        smtp_password = os.getenv("SMTP_PASSWORD")
+
+        if smtp_host and smtp_user and smtp_password:
+            msg = MIMEMultipart()
+            msg["From"] = smtp_user
+            msg["To"] = admin_email
+            msg["Subject"] = f"🚨 Fendly Alert: New {match_type} Match Found!"
+
+            body = f"""
+Hello Admin,
+
+A successful item match was detected on Fendly:
+- Match Type: {match_type}
+- Search Query / ID: {query_identifier}
+- Total Matches: {len(matched_items)}
+
+Check your admin dashboard for full details.
+            """
+            msg.attach(MIMEText(body, "plain"))
+
+            with smtplib.SMTP(smtp_host, smtp_port) as server:
+                server.starttls()
+                server.login(smtp_user, smtp_password)
+                server.send_message(msg)
+            print("[EMAIL] Admin match notification email sent.")
+    except Exception as e:
+        print(f"[ERROR] Notification failed: {e}")
 
 
 class ItemSubmission(BaseModel):
@@ -374,6 +419,36 @@ def delete_item(
     session.commit()
 
 
+def _notify_admin_for_match(
+    session: Session,
+    item: LostItem | FoundItem,
+    matched_item: LostItem | FoundItem,
+    score: float,
+    match_type: str,
+) -> None:
+    try:
+        if isinstance(item, FoundItem) and isinstance(matched_item, LostItem):
+            persist_admin_match_alert(session, item, matched_item, score)
+            return
+        if isinstance(item, LostItem) and isinstance(matched_item, FoundItem):
+            persist_admin_match_alert(session, matched_item, item, score)
+            return
+        logger.info(
+            "Skipping admin alert for %s match with %s because item types are incompatible: %s vs %s",
+            match_type,
+            getattr(matched_item, "id", "unknown"),
+            type(item).__name__,
+            type(matched_item).__name__,
+        )
+    except Exception:
+        logger.exception(
+            "Failed to trigger admin alert for %s match between %s and %s",
+            match_type,
+            getattr(item, "id", "unknown"),
+            getattr(matched_item, "id", "unknown"),
+        )
+
+
 @router.post("/items/match", response_model=list[MatchResponse])
 async def match_items(
     request: MatchRequest,
@@ -399,13 +474,14 @@ async def match_items(
 
                 item_dict = item.__dict__.copy()
                 item_dict["imei"] = masked_imei
-
                 results.append({
                     "item": item_dict,
                     "score": 1.0,
                     "matchType": "EXACT_IMEI",
                     "explanation": "Exact 15-digit IMEI serial match",
                 })
+            if matched_records:
+                await notify_admin_of_match(session, clean_imei, matched_records, "EXACT_IMEI")
             return results
         except Exception as e:
             logger.error(f"IMEI match error: {e}")
@@ -466,14 +542,14 @@ async def match_items(
         ranked_results[0]["item"].id if ranked_results else ""
     )
     send_match_notifications(session, notified_uids, found_item_id, max_score)
-    if ranked_results and float(ranked_results[0]["score"]) >= MATCH_ALERT_THRESHOLD:
-        matched_item = ranked_results[0]["item"]
+    if ranked_results:
+        await notify_admin_of_match(session, query_item_id, [result["item"] for result in ranked_results], "ITEM_MATCH")
+    for result in ranked_results:
+        score = float(result["score"])
+        if score < MATCH_ALERT_THRESHOLD:
+            continue
+        matched_item = result["item"]
         found_item = query_item if matching_found_item else matched_item
         lost_item = matched_item if matching_found_item else query_item
-        persist_admin_match_alert(
-            session,
-            found_item,
-            lost_item,
-            float(ranked_results[0]["score"]),
-        )
+        _notify_admin_for_match(session, found_item, lost_item, score, "SIMILARITY")
     return ranked_results
