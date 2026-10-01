@@ -3174,10 +3174,10 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
 
             JSONArray matches = null;
             String matchError = null;
-            String createdItemId = response.getCreatedItemId();
-            if (imageUrl != null && !createdItemId.isEmpty()) {
+            if (imageUrl != null && !imageUrl.trim().isEmpty()) {
                 try {
-                    AiMatchService.ApiResponse matchResponse = AiMatchService.findMatches(createdItemId, type, idToken);
+                    String targetType = "found".equalsIgnoreCase(type) ? "lost" : "found";
+                    AiMatchService.ApiResponse matchResponse = AiMatchService.findImageMatches(imageUrl, targetType, idToken);
                     if (matchResponse.isSuccessful()) {
                         matches = new JSONArray(matchResponse.getBody());
                     } else {
@@ -7642,21 +7642,12 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         int added = 0;
         for (int index = 0; index < Math.min(results.length(), 5); index++) {
             JSONObject result = results.optJSONObject(index);
-            JSONObject matchedItem = result == null ? null : result.optJSONObject("item");
+            if (result == null) continue;
+
+            JSONObject matchedItem = result.optJSONObject("item");
             if (matchedItem == null) continue;
 
-            JSONObject uploadedItem = new JSONObject();
-            try {
-                uploadedItem.put("title", title);
-                uploadedItem.put("description", description);
-                uploadedItem.put("category", "other");
-            } catch (Exception ignored) {
-            }
-
-            boolean uploadedIsFound = "FOUND".equalsIgnoreCase(itemType);
-            LinearLayout card = uploadedIsFound
-                    ? adminMatchCard(uploadedItem, matchedItem, result.optDouble("score", 0.0))
-                    : adminMatchCard(matchedItem, uploadedItem, result.optDouble("score", 0.0));
+            LinearLayout card = matchResultCard(matchedItem, result.optDouble("score", 0.0));
             LinearLayout.LayoutParams cardParams = new LinearLayout.LayoutParams(-1, -2);
             cardParams.setMargins(0, 0, 0, dp(10));
             rows.addView(card, cardParams);
@@ -7676,6 +7667,66 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                 .setView(scroll)
                 .setPositiveButton("Close", null)
                 .show();
+    }
+
+    private LinearLayout matchResultCard(JSONObject matchItem, double score) {
+        LinearLayout card = new LinearLayout(this);
+        card.setOrientation(LinearLayout.VERTICAL);
+        card.setPadding(dp(12), dp(12), dp(12), dp(12));
+        card.setBackground(roundWithStroke(surfaceColor(), 14, borderColor()));
+
+        TextView scoreLabel = text(String.format(Locale.US, "%d%% Match", Math.max(0, Math.min(100, Math.round((float) score * 100)))), 12, GOLD_ON, Typeface.NORMAL);
+        scoreLabel.setGravity(Gravity.CENTER);
+        scoreLabel.setBackground(round(GOLD, 10));
+        scoreLabel.setPadding(dp(10), dp(6), dp(10), dp(6));
+        card.addView(scoreLabel, new LinearLayout.LayoutParams(-1, -2));
+
+        LinearLayout infoRow = new LinearLayout(this);
+        infoRow.setOrientation(LinearLayout.HORIZONTAL);
+        infoRow.setPadding(0, dp(10), 0, 0);
+
+        ImageView imageView = new ImageView(this);
+        imageView.setAdjustViewBounds(true);
+        imageView.setScaleType(ImageView.ScaleType.CENTER_CROP);
+        int imageSize = dp(84);
+        LinearLayout.LayoutParams imageParams = new LinearLayout.LayoutParams(imageSize, imageSize);
+        imageParams.setMargins(0, 0, dp(10), 0);
+        imageView.setLayoutParams(imageParams);
+        imageView.setBackground(roundWithStroke(backgroundColor(), 10, borderColor()));
+        imageView.setImageDrawable(new ColorDrawable(Color.argb(120, 232, 178, 74)));
+        String photoUrl = matchItem.optString("image_url", matchItem.optString("imageUrl", "")).trim();
+        if (!photoUrl.isEmpty()) {
+            Glide.with(this).load(photoUrl).placeholder(new ColorDrawable(Color.argb(120, 232, 178, 74))).error(new ColorDrawable(Color.argb(120, 200, 200, 200))).into(imageView);
+        }
+        infoRow.addView(imageView);
+
+        LinearLayout textColumn = new LinearLayout(this);
+        textColumn.setOrientation(LinearLayout.VERTICAL);
+        textColumn.setLayoutParams(new LinearLayout.LayoutParams(0, -2, 1f));
+
+        TextView title = text(matchItem.optString("title", "Untitled"), 14, primaryTextColor(), Typeface.NORMAL);
+        title.setMaxLines(2);
+        textColumn.addView(title, new LinearLayout.LayoutParams(-1, -2));
+
+        String description = matchItem.optString("description", "No description");
+        if (!description.isEmpty()) {
+            TextView desc = text(description, 11, secondaryTextColor(), Typeface.NORMAL);
+            desc.setMaxLines(2);
+            textColumn.addView(desc, new LinearLayout.LayoutParams(-1, -2));
+        }
+
+        String location = matchItem.optString("report_location", matchItem.optString("location", ""));
+        if (location == null || location.trim().isEmpty()) {
+            location = String.format(Locale.US, "%.4f, %.4f", matchItem.optDouble("lat", 0.0), matchItem.optDouble("lng", 0.0));
+        }
+        if (!location.trim().isEmpty()) {
+            TextView locationText = text("Location: " + location, 10, secondaryTextColor(), Typeface.NORMAL);
+            textColumn.addView(locationText, new LinearLayout.LayoutParams(-1, -2));
+        }
+
+        infoRow.addView(textColumn);
+        card.addView(infoRow, new LinearLayout.LayoutParams(-1, -2));
+        return card;
     }
 
     private LinearLayout adminComparisonColumn(String label, JSONObject item, int accent) {

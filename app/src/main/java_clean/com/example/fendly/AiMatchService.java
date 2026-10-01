@@ -35,14 +35,28 @@ public final class AiMatchService {
                 .put("title", title)
                 .put("description", description)
                 .put("imageUrl", imageUrl == null ? JSONObject.NULL : imageUrl)
-                .put("type", type.toLowerCase(Locale.US))
+                .put("type", type == null ? "found" : type.toLowerCase(Locale.US))
                 .put("lat", latitude)
                 .put("lng", longitude)
-                .put("report_location", location)
-                .put("report_date", date)
+                .put("report_location", location == null ? JSONObject.NULL : location)
+                .put("report_date", date == null ? JSONObject.NULL : date)
                 .put("category", "other")
                 .put("payment_id", paymentId == null ? JSONObject.NULL : paymentId);
         return post("/api/items", payload, idToken);
+    }
+
+    public static ApiResponse findImageMatches(String imageUrl, String targetType, String idToken) throws Exception {
+        if (imageUrl == null || imageUrl.trim().isEmpty()) {
+            throw new IllegalArgumentException("A valid imageUrl is required for visual matching");
+        }
+        String normalizedType = targetType == null ? "" : targetType.toLowerCase(Locale.US);
+        if (!"lost".equals(normalizedType) && !"found".equals(normalizedType)) {
+            throw new IllegalArgumentException("targetType must be lost or found");
+        }
+        JSONObject payload = new JSONObject()
+                .put("imageUrl", imageUrl)
+                .put("targetType", normalizedType);
+        return post("/api/items/match", payload, idToken);
     }
 
     public static ApiResponse findMatches(String itemId, String itemType, String idToken) throws Exception {
