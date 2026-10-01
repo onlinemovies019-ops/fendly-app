@@ -9140,6 +9140,11 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
 
     private String translateUi(String value) {
         if (value == null) return null;
+        if ("Got it".equalsIgnoreCase(value)) {
+            String[] labels = {"Got it", "ठीक है", "समजले", "બરાબર", "বুঝেছি", "சரி", "సరే", "ಸರಿ", "ശരി"};
+            int language = Math.max(0, Math.min(selectedLanguage, labels.length - 1));
+            return labels[language];
+        }
         if (selectedLanguage == 3) {
             if ("Reset PIN?".equalsIgnoreCase(value)) return "PIN રીસેટ કરવું છે?";
             if ("A temporary 4-digit PIN will be sent after mobile verification.".equalsIgnoreCase(value)) return "મોબાઇલ ચકાસણી પછી અસ્થાયી 4-અંકનો PIN મોકલવામાં આવશે.";
