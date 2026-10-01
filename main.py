@@ -29,14 +29,18 @@ def _validate_production_config() -> None:
         "DATABASE_URL",
         "FIREBASE_SERVICE_ACCOUNT_JSON",
         "APP_SECRET_KEY",
-        "SMTP_HOST",
-        "SMTP_USERNAME",
-        "SMTP_PASSWORD",
-        "SMTP_FROM_EMAIL",
     )
     missing = [name for name in required if not os.getenv(name)]
     if missing:
         raise RuntimeError(f"Missing production configuration: {', '.join(missing)}")
+
+    email_provider = bool(os.getenv("BREVO_API_KEY") and os.getenv("SENDER_EMAIL")) or bool(
+        os.getenv("SMTP_HOST") and os.getenv("SMTP_USERNAME") and os.getenv("SMTP_PASSWORD") and os.getenv("SMTP_FROM_EMAIL")
+    )
+    if not email_provider:
+        raise RuntimeError(
+            "Missing production email configuration: set BREVO_API_KEY + SENDER_EMAIL or SMTP_HOST + SMTP_USERNAME + SMTP_PASSWORD + SMTP_FROM_EMAIL"
+        )
 
 
 @asynccontextmanager

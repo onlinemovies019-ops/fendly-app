@@ -4,10 +4,7 @@ import logging
 import math
 import os
 import re
-import smtplib
 from datetime import datetime, timezone
-from email.mime.multipart import MIMEMultipart
-from email.mime.text import MIMEText
 from pathlib import Path
 from typing import Literal, Optional
 from uuid import uuid4
@@ -27,7 +24,7 @@ from database import SessionLocal, get_db
 from image_matching import cosine_similarity, create_image_embedding
 from moderation import moderate_content
 from models import FoundItem, LostItem
-from notifications import persist_admin_match_alert, send_match_notifications
+from notifications import persist_admin_match_alert, send_admin_match_email, send_match_notifications
 from routers.payments import verify_captured_payment
 from schemas import ItemCreate, ItemResponse, ItemUpdate, MatchRequest, MatchResponse
 
@@ -63,37 +60,65 @@ async def notify_admin_of_match(
         print(f"[ADMIN DASHBOARD ALERT] Match Type: {match_type} | Identifier: {query_identifier} | Matches: {len(matched_items)}")
 
         admin_email = os.getenv("ADMIN_EMAIL") or os.getenv("SMTP_FROM_EMAIL") or "admin@fendly.com"
+        has_brevo = bool(os.getenv("BREVO_API_KEY") and os.getenv("SENDER_EMAIL"))
         smtp_host = os.getenv("SMTP_HOST")
-        smtp_port = int(os.getenv("SMTP_PORT", "587") or 587)
         smtp_user = os.getenv("SMTP_USER") or os.getenv("SMTP_USERNAME")
         smtp_password = os.getenv("SMTP_PASSWORD")
 
-        if smtp_host and smtp_user and smtp_password:
-            msg = MIMEMultipart()
-            msg["From"] = smtp_user
-            msg["To"] = admin_email
-            msg["Subject"] = f"🚨 Fendly Alert: New {match_type} Match Found!"
+        if not (has_brevo or (smtp_host and smtp_user and smtp_password)):
+            print("[EMAIL] Admin match notification skipped: no email provider is configured.")
+            return
 
-            body = f"""
-Hello Admin,
+        async def _send_email_in_background() -> None:
+            try:
+                if has_brevo:
+                    item_title = f"{match_type} match for {query_identifier}"
+                    details = (
+                        f"Match Type: {match_type}\n"
+                        f"Search Query / ID: {query_identifier}\n"
+                        f"Total Matches: {len(matched_items)}"
+                    )
+                    sent = await asyncio.to_thread(
+                        send_admin_match_email,
+                        item_title,
+                        1.0,
+                        details,
+                    )
+                    if sent:
+                        print("[EMAIL] Admin match notification sent via Brevo.")
+                    else:
+                        print("[EMAIL] Admin match notification skipped because Brevo delivery failed.")
+                    return
 
-A successful item match was detected on Fendly:
-- Match Type: {match_type}
-- Search Query / ID: {query_identifier}
-- Total Matches: {len(matched_items)}
+                smtp_port = int(os.getenv("SMTP_PORT", "587") or 587)
+                msg = ""  # placeholder to satisfy the SMTP fallback branch while keeping requests non-blocking
+                if smtp_host and smtp_user and smtp_password:
+                    from email.mime.multipart import MIMEMultipart
+                    from email.mime.text import MIMEText
+                    import smtplib
 
-Check your admin dashboard for full details.
-            """
-            msg.attach(MIMEText(body, "plain"))
+                    email_msg = MIMEMultipart()
+                    email_msg["From"] = smtp_user
+                    email_msg["To"] = admin_email
+                    email_msg["Subject"] = f"🚨 Fendly Alert: New {match_type} Match Found!"
+                    email_msg.attach(MIMEText(
+                        f"Hello Admin,\n\nA successful item match was detected on Fendly:\n"
+                        f"- Match Type: {match_type}\n"
+                        f"- Search Query / ID: {query_identifier}\n"
+                        f"- Total Matches: {len(matched_items)}\n\n"
+                        "Check your admin dashboard for full details.\n",
+                        "plain",
+                    ))
 
-            def send_email() -> None:
-                with smtplib.SMTP(smtp_host, smtp_port, timeout=10) as server:
-                    server.starttls()
-                    server.login(smtp_user, smtp_password)
-                    server.send_message(msg)
+                    with smtplib.SMTP(smtp_host, smtp_port, timeout=5) as server:
+                        server.starttls()
+                        server.login(smtp_user, smtp_password)
+                        server.send_message(email_msg)
+                    print("[EMAIL] Admin match notification email sent via SMTP.")
+            except Exception as e:
+                print(f"[ERROR] Notification failed: {e}")
 
-            await asyncio.wait_for(asyncio.to_thread(send_email), timeout=12)
-            print("[EMAIL] Admin match notification email sent.")
+        asyncio.create_task(_send_email_in_background())
     except Exception as e:
         print(f"[ERROR] Notification failed: {e}")
 

@@ -1,3 +1,4 @@
+import asyncio
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
@@ -42,47 +43,65 @@ async def test_exact_imei_match_uses_sqlalchemy_session_and_masks_imei():
 @pytest.mark.asyncio
 async def test_notify_admin_of_match_uses_render_email_env_names(monkeypatch):
     monkeypatch.setenv("ADMIN_EMAIL", "admin@example.com")
-    monkeypatch.setenv("SMTP_HOST", "smtp.example.com")
-    monkeypatch.setenv("SMTP_USERNAME", "mailer@example.com")
-    monkeypatch.setenv("SMTP_PASSWORD", "secret")
-    monkeypatch.delenv("SMTP_USER", raising=False)
+    monkeypatch.setenv("BREVO_API_KEY", "brevo-key")
+    monkeypatch.setenv("SENDER_EMAIL", "noreply@example.com")
+    monkeypatch.delenv("SMTP_HOST", raising=False)
+    monkeypatch.delenv("SMTP_USERNAME", raising=False)
+    monkeypatch.delenv("SMTP_PASSWORD", raising=False)
 
-    captured = {}
+    sent = {}
 
-    class DummySMTP:
-        def __init__(self, host, port, timeout):
-            captured["host"] = host
-            captured["port"] = port
-            captured["timeout"] = timeout
+    def fake_send_admin_match_email(item_title, match_score, match_details):
+        sent["title"] = item_title
+        sent["score"] = match_score
+        sent["details"] = match_details
+        return True
 
-        def __enter__(self):
-            return self
+    scheduled_task = None
 
-        def __exit__(self, exc_type, exc, tb):
-            return False
+    def fake_create_task(coro):
+        nonlocal scheduled_task
+        scheduled_task = asyncio.get_running_loop().create_task(coro)
+        return scheduled_task
 
-        def starttls(self):
-            captured["starttls"] = True
-
-        def login(self, username, password):
-            captured["login"] = (username, password)
-
-        def send_message(self, message):
-            captured["to"] = message["To"]
-            captured["subject"] = message["Subject"]
-
-    with patch.object(items_module.smtplib, "SMTP", DummySMTP):
+    with patch.object(items_module, "send_admin_match_email", fake_send_admin_match_email), patch.object(items_module.asyncio, "create_task", fake_create_task):
         await items_module.notify_admin_of_match(
             session=Mock(spec=Session),
             query_identifier="490154203237518",
             matched_items=[{"id": "x"}],
             match_type="EXACT_IMEI",
         )
+        await scheduled_task
 
-    assert captured["host"] == "smtp.example.com"
-    assert captured["timeout"] == 10
-    assert captured["login"] == ("mailer@example.com", "secret")
-    assert captured["to"] == "admin@example.com"
+    assert sent["title"].startswith("EXACT_IMEI")
+    assert sent["score"] == 1.0
+    assert "490154203237518" in sent["details"]
+
+
+@pytest.mark.asyncio
+async def test_notify_admin_of_match_starts_background_task_without_blocking(monkeypatch):
+    monkeypatch.setenv("ADMIN_EMAIL", "admin@example.com")
+    monkeypatch.setenv("SMTP_HOST", "smtp.example.com")
+    monkeypatch.setenv("SMTP_USERNAME", "mailer@example.com")
+    monkeypatch.setenv("SMTP_PASSWORD", "secret")
+
+    scheduled = {}
+
+    def fake_create_task(coro):
+        scheduled["coro"] = coro
+        coro.close()
+        return object()
+
+    monkeypatch.setattr(items_module.asyncio, "create_task", fake_create_task)
+
+    await items_module.notify_admin_of_match(
+        session=Mock(spec=Session),
+        query_identifier="490154203237518",
+        matched_items=[{"id": "x"}],
+        match_type="EXACT_IMEI",
+    )
+
+    assert "coro" in scheduled
 
 
 @pytest.mark.asyncio
