@@ -13,11 +13,12 @@ from sqlalchemy.orm import Session
 from auth import router as auth_router, get_current_user
 from database import engine, get_db
 from models import Base, User
-from routers.items import router as items_router
+from routers.items import create_item_compat, match_items, router as items_router
 from routers.notifications import router as notifications_router
 from routers.users import router as users_router
 from routers.admin import router as admin_router
 from routers.payments import router as payments_router
+from schemas import ItemResponse, MatchResponse
 
 
 def _validate_production_config() -> None:
@@ -128,8 +129,9 @@ app = FastAPI(title="Fendly API", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=os.getenv("CORS_ORIGINS", "*").split(","),
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "Accept", "Origin"],
 )
 
 app.mount("/static", StaticFiles(directory="static"), name="static")
@@ -137,6 +139,19 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 # --- ROUTER INCLUSIONS ---
 app.include_router(auth_router)
 app.include_router(items_router)
+app.add_api_route(
+    "/api/items",
+    create_item_compat,
+    methods=["POST"],
+    response_model=ItemResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+app.add_api_route(
+    "/api/items/match",
+    match_items,
+    methods=["POST"],
+    response_model=list[MatchResponse],
+)
 app.include_router(notifications_router)
 app.include_router(users_router)
 app.include_router(admin_router)

@@ -1,14 +1,16 @@
+import "dotenv/config";
+import {pathToFileURL} from "node:url";
+
 const RENDER_BASE_URL = (process.env.RENDER_API_URL || "https://fendly-api.onrender.com").replace(/\/+$/, "");
 const IMAGE_URL = "https://res.cloudinary.com/demo/image/upload/sample.jpg";
 const REQUEST_TIMEOUT_MS = 120000;
-const FIREBASE_ID_TOKEN = process.env.FIREBASE_ID_TOKEN || process.env.RENDER_API_TOKEN;
 
-async function postJson(path, payload) {
+async function postJson(path, payload, idToken) {
   const response = await fetch(`${RENDER_BASE_URL}${path}`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      Authorization: `Bearer ${FIREBASE_ID_TOKEN}`,
+      Authorization: `Bearer ${idToken}`,
     },
     body: JSON.stringify(payload),
     signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
@@ -29,11 +31,8 @@ async function postJson(path, payload) {
   return {ok: true, data};
 }
 
-async function main() {
-  if (!FIREBASE_ID_TOKEN) {
-    throw new Error("Set FIREBASE_ID_TOKEN to a fresh Firebase ID token before testing the protected API");
-  }
-
+export async function runRenderTest(idToken) {
+  if (!idToken) throw new Error("A Firebase ID token is required to test the protected API");
   console.log(`Testing Fendly Render API at ${RENDER_BASE_URL}`);
 
   let itemResult;
@@ -46,7 +45,7 @@ async function main() {
       category: "accessories",
       lat: Number(process.env.TEST_LAT || 0),
       lng: Number(process.env.TEST_LNG || 0),
-    });
+    }, idToken);
   } catch (error) {
     console.error("Item request failed:", error.message);
     process.exitCode = 1;
@@ -63,7 +62,7 @@ async function main() {
         matchResult = await postJson("/api/items/match", {
           found_item_id: foundItemId,
           radius_degrees: Number(process.env.MATCH_RADIUS_DEGREES || 10),
-        });
+        }, idToken);
       } catch (error) {
         console.error("Match request failed:", error.message);
         process.exitCode = 1;
@@ -88,9 +87,13 @@ async function main() {
 
   if (itemResult && !itemResult.ok) process.exitCode = 1;
   if (matchResult && !matchResult.ok) process.exitCode = 1;
+  return {itemResult, matchResult};
 }
 
-main().catch((error) => {
-  console.error("Render API test failed:", error);
-  process.exitCode = 1;
-});
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  const idToken = process.env.FIREBASE_ID_TOKEN || process.env.RENDER_API_TOKEN;
+  runRenderTest(idToken).catch((error) => {
+    console.error("Render API test failed:", error);
+    process.exitCode = 1;
+  });
+}

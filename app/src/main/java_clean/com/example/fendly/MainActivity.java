@@ -3078,20 +3078,29 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                 return;
             }
             network.execute(() -> {
-                int code = postItem(type, title, details, location.getText().toString().trim(), date.getText().toString().trim(), latitude, longitude, image, cameraImage, token.getToken(), paymentId);
+                ItemSubmissionResult submission = postItem(
+                        type, title, details, location.getText().toString().trim(),
+                        date.getText().toString().trim(), latitude, longitude,
+                        image, cameraImage, token.getToken(), paymentId);
                 runOnUiThread(() -> {
                     publish.setEnabled(true);
+                    int code = submission.statusCode;
                     if (code >= 200 && code < 300) {
-                        String message = lastSubmissionError == null || lastSubmissionError.trim().isEmpty()
+                        String message = submission.errorMessage == null || submission.errorMessage.trim().isEmpty()
                                 ? "Report saved securely"
-                                : "Report saved without image: " + lastSubmissionError;
+                                : "Report saved without image: " + submission.errorMessage;
                         Toast.makeText(this, message, Toast.LENGTH_LONG).show();
                         showReports();
+                        if (submission.matches != null) {
+                            showReportMatchDialog(type, title, details, submission.matches);
+                        } else if (submission.matchError != null) {
+                            Toast.makeText(this, "Report saved; match search is unavailable", Toast.LENGTH_LONG).show();
+                        }
                     } else {
                         publish.setText("Retry submission");
-                        String detail = lastSubmissionError == null || lastSubmissionError.trim().isEmpty()
+                        String detail = submission.errorMessage == null || submission.errorMessage.trim().isEmpty()
                                 ? "Could not save report (" + code + ")"
-                                : lastSubmissionError;
+                                : submission.errorMessage;
                         Toast.makeText(this, detail, Toast.LENGTH_LONG).show();
                     }
                 });
@@ -3103,7 +3112,21 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         });
     }
 
-    private int postItem(String type, String title, String description, String location, String date, double latitude, double longitude, Uri image, Bitmap cameraImage, String idToken, String paymentId) {
+    private static final class ItemSubmissionResult {
+        final int statusCode;
+        final String errorMessage;
+        final String matchError;
+        final JSONArray matches;
+
+        ItemSubmissionResult(int statusCode, String errorMessage, String matchError, JSONArray matches) {
+            this.statusCode = statusCode;
+            this.errorMessage = errorMessage;
+            this.matchError = matchError;
+            this.matches = matches;
+        }
+    }
+
+    private ItemSubmissionResult postItem(String type, String title, String description, String location, String date, double latitude, double longitude, Uri image, Bitmap cameraImage, String idToken, String paymentId) {
         lastSubmissionError = null;
         try {
             String imageUrl = null;
@@ -3146,11 +3169,28 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                     location, date, paymentId, idToken);
             if (!response.isSuccessful()) {
                 lastSubmissionError = "Could not save report (" + response.getStatusCode() + "): " + response.getErrorMessage();
+                return new ItemSubmissionResult(response.getStatusCode(), lastSubmissionError, null, null);
             }
-            return response.getStatusCode();
+
+            JSONArray matches = null;
+            String matchError = null;
+            String createdItemId = response.getCreatedItemId();
+            if (imageUrl != null && !createdItemId.isEmpty()) {
+                try {
+                    AiMatchService.ApiResponse matchResponse = AiMatchService.findMatches(createdItemId, type, idToken);
+                    if (matchResponse.isSuccessful()) {
+                        matches = new JSONArray(matchResponse.getBody());
+                    } else {
+                        matchError = matchResponse.getErrorMessage();
+                    }
+                } catch (Exception matchException) {
+                    matchError = matchException.getClass().getSimpleName();
+                }
+            }
+            return new ItemSubmissionResult(response.getStatusCode(), lastSubmissionError, matchError, matches);
         } catch (Exception error) {
             lastSubmissionError = "Could not save report: " + error.getClass().getSimpleName();
-            return -1;
+            return new ItemSubmissionResult(-1, lastSubmissionError, null, null);
         }
     }
 
@@ -7547,7 +7587,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             String response = null;
             try {
                 AiMatchService.ApiResponse matchResponse = AiMatchService.findMatches(
-                        foundItem.optString("id", ""), token.getToken());
+                    foundItem.optString("id", ""), "found", token.getToken());
                 if (matchResponse.isSuccessful()) response = matchResponse.getBody();
             } catch (Exception ignored) {
             }
@@ -7591,6 +7631,51 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         comparison.addView(adminComparisonColumn("LOST", lostItem, LOST_GREEN), lostParams);
         card.addView(comparison, new LinearLayout.LayoutParams(-1, -2));
         return card;
+    }
+
+    private void showReportMatchDialog(String itemType, String title, String description, JSONArray results) {
+        ScrollView scroll = new ScrollView(this);
+        LinearLayout rows = new LinearLayout(this);
+        rows.setOrientation(LinearLayout.VERTICAL);
+        rows.setPadding(dp(18), dp(12), dp(18), dp(12));
+
+        int added = 0;
+        for (int index = 0; index < Math.min(results.length(), 5); index++) {
+            JSONObject result = results.optJSONObject(index);
+            JSONObject matchedItem = result == null ? null : result.optJSONObject("item");
+            if (matchedItem == null) continue;
+
+            JSONObject uploadedItem = new JSONObject();
+            try {
+                uploadedItem.put("title", title);
+                uploadedItem.put("description", description);
+                uploadedItem.put("category", "other");
+            } catch (Exception ignored) {
+            }
+
+            boolean uploadedIsFound = "FOUND".equalsIgnoreCase(itemType);
+            LinearLayout card = uploadedIsFound
+                    ? adminMatchCard(uploadedItem, matchedItem, result.optDouble("score", 0.0))
+                    : adminMatchCard(matchedItem, uploadedItem, result.optDouble("score", 0.0));
+            LinearLayout.LayoutParams cardParams = new LinearLayout.LayoutParams(-1, -2);
+            cardParams.setMargins(0, 0, 0, dp(10));
+            rows.addView(card, cardParams);
+            added++;
+        }
+
+        if (added == 0) {
+            TextView empty = text("No possible matches found yet", 13, secondaryTextColor(), Typeface.NORMAL);
+            empty.setGravity(Gravity.CENTER);
+            empty.setPadding(dp(12), dp(24), dp(12), dp(24));
+            rows.addView(empty, new LinearLayout.LayoutParams(-1, -2));
+        }
+
+        scroll.addView(rows);
+        new AlertDialog.Builder(this)
+                .setTitle("Possible matches")
+                .setView(scroll)
+                .setPositiveButton("Close", null)
+                .show();
     }
 
     private LinearLayout adminComparisonColumn(String label, JSONObject item, int accent) {

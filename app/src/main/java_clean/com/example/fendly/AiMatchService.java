@@ -45,10 +45,16 @@ public final class AiMatchService {
         return post("/api/items", payload, idToken);
     }
 
-    public static ApiResponse findMatches(String foundItemId, String idToken) throws Exception {
+    public static ApiResponse findMatches(String itemId, String itemType, String idToken) throws Exception {
         JSONObject payload = new JSONObject()
-                .put("found_item_id", foundItemId)
                 .put("radius_degrees", 10.0);
+        if ("found".equalsIgnoreCase(itemType)) {
+            payload.put("found_item_id", itemId);
+        } else if ("lost".equalsIgnoreCase(itemType)) {
+            payload.put("lost_item_id", itemId);
+        } else {
+            throw new IllegalArgumentException("Item type must be lost or found");
+        }
         return post("/api/items/match", payload, idToken);
     }
 
@@ -106,6 +112,14 @@ public final class AiMatchService {
 
         public String getBody() {
             return body;
+        }
+
+        public String getCreatedItemId() {
+            try {
+                return new JSONObject(body).optString("id", "");
+            } catch (JSONException ignored) {
+                return "";
+            }
         }
 
         public boolean isSuccessful() {

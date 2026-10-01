@@ -36,7 +36,8 @@ class ItemResponse(ItemCreate):
 
 
 class MatchRequest(BaseModel):
-    found_item_id: str
+    found_item_id: str | None = Field(default=None, min_length=1)
+    lost_item_id: str | None = Field(default=None, min_length=1)
     radius_degrees: float = Field(default=0.25, gt=0, le=10)
 
 

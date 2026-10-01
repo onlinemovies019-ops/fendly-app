@@ -361,34 +361,41 @@ async def match_items(
     _: str = Depends(get_current_user),
 ) -> list[dict[str, object]]:
     session = _require_db_session(session)
-    found_item = session.get(FoundItem, request.found_item_id)
-    if found_item is None:
-        raise HTTPException(404, "Found item not found")
+    if bool(request.found_item_id) == bool(request.lost_item_id):
+        raise HTTPException(400, "Provide exactly one of found_item_id or lost_item_id")
+
+    matching_found_item = request.found_item_id is not None
+    query_model = FoundItem if matching_found_item else LostItem
+    candidate_model = LostItem if matching_found_item else FoundItem
+    query_item_id = request.found_item_id or request.lost_item_id
+    query_item = session.get(query_model, query_item_id)
+    if query_item is None:
+        raise HTTPException(404, "Report not found")
 
     candidates = session.scalars(
-        select(LostItem).where(
-            func.abs(LostItem.lat - found_item.lat) <= request.radius_degrees,
-            func.abs(LostItem.lng - found_item.lng) <= request.radius_degrees,
+        select(candidate_model).where(
+            func.abs(candidate_model.lat - query_item.lat) <= request.radius_degrees,
+            func.abs(candidate_model.lng - query_item.lng) <= request.radius_degrees,
         )
     ).all()
-    found_embedding = found_item.embedding or await create_embedding(
-        item_text(found_item.title, found_item.description, found_item.category)
+    query_embedding = query_item.embedding or await create_embedding(
+        item_text(query_item.title, query_item.description, query_item.category)
     )
-    found_image_embedding = found_item.image_embedding or await create_image_embedding(found_item.image_url)
-    found_words = set(WORD_PATTERN.findall(f"{found_item.title} {found_item.description}".lower()))
+    query_image_embedding = query_item.image_embedding or await create_image_embedding(query_item.image_url)
+    query_words = set(WORD_PATTERN.findall(f"{query_item.title} {query_item.description}".lower()))
     results = []
     for item in candidates:
-        lost_words = set(WORD_PATTERN.findall(f"{item.title} {item.description}".lower()))
-        keyword_score = len(found_words & lost_words) / max(len(found_words | lost_words), 1)
+        item_words = set(WORD_PATTERN.findall(f"{item.title} {item.description}".lower()))
+        keyword_score = len(query_words & item_words) / max(len(query_words | item_words), 1)
         semantic_score = keyword_score
-        if found_embedding is not None and item.embedding is not None:
-            dot_product = sum(left * right for left, right in zip(found_embedding, item.embedding))
-            found_norm = math.sqrt(sum(value * value for value in found_embedding))
+        if query_embedding is not None and item.embedding is not None:
+            dot_product = sum(left * right for left, right in zip(query_embedding, item.embedding))
+            query_norm = math.sqrt(sum(value * value for value in query_embedding))
             item_norm = math.sqrt(sum(value * value for value in item.embedding))
-            if found_norm and item_norm:
-                semantic_score = max(0.0, min(1.0, dot_product / (found_norm * item_norm)))
-        image_score = cosine_similarity(found_image_embedding, item.image_embedding)
-        distance = abs(item.lat - found_item.lat) + abs(item.lng - found_item.lng)
+            if query_norm and item_norm:
+                semantic_score = max(0.0, min(1.0, dot_product / (query_norm * item_norm)))
+        image_score = cosine_similarity(query_image_embedding, item.image_embedding)
+        distance = abs(item.lat - query_item.lat) + abs(item.lng - query_item.lng)
         location_score = max(0.0, 1 - distance / (2 * request.radius_degrees))
         if image_score is None:
             score = semantic_score * 0.7 + location_score * 0.3
@@ -401,20 +408,21 @@ async def match_items(
         for result in ranked_results
         if float(result["score"]) >= 0.5
         for item in [result["item"]]
-        if item.created_by != found_item.created_by
+        if item.created_by != query_item.created_by
     }
     max_score = max((float(result["score"]) for result in ranked_results), default=0.0)
-    send_match_notifications(
-        session,
-        notified_uids,
-        found_item.id,
-        max_score,
+    found_item_id = query_item.id if matching_found_item else (
+        ranked_results[0]["item"].id if ranked_results else ""
     )
+    send_match_notifications(session, notified_uids, found_item_id, max_score)
     if ranked_results and float(ranked_results[0]["score"]) >= MATCH_ALERT_THRESHOLD:
+        matched_item = ranked_results[0]["item"]
+        found_item = query_item if matching_found_item else matched_item
+        lost_item = matched_item if matching_found_item else query_item
         persist_admin_match_alert(
             session,
             found_item,
-            ranked_results[0]["item"],
+            lost_item,
             float(ranked_results[0]["score"]),
         )
     return ranked_results
