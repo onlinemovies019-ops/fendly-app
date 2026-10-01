@@ -3517,6 +3517,14 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
     private void removeProfilePicture() {
         selectedProfileImage = null;
         capturedProfileImage = null;
+        try {
+            File dir = getFilesDir();
+            File[] files = dir.listFiles((dir1, name) -> name != null && name.startsWith("profile_photo"));
+            if (files != null) {
+                for (File f : files) f.delete();
+            }
+        } catch (Exception ignored) {}
+
         SharedPreferences account = getSharedPreferences("fendly_account", MODE_PRIVATE);
         account.edit()
                 .remove("profile_image_uri")
@@ -5119,35 +5127,30 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         }
     }
 
+    private Bitmap loadBitmapFromUri(Uri uri) {
+        if (uri == null) return null;
+        try {
+            return Glide.with(this)
+                    .asBitmap()
+                    .load(uri)
+                    .submit(800, 800)
+                    .get();
+        } catch (Exception e) {
+            try {
+                try (InputStream input = getContentResolver().openInputStream(uri)) {
+                    if (input != null) return BitmapFactory.decodeStream(input);
+                }
+            } catch (Exception ignored) {}
+            return null;
+        }
+    }
+
     private String saveProfileFileToInternalStorage(Uri uri) {
         if (uri == null) return null;
         try {
-            File file = new File(getFilesDir(), "profile_photo.jpg");
-            try (InputStream input = getContentResolver().openInputStream(uri);
-                 OutputStream output = new FileOutputStream(file)) {
-                if (input == null) return null;
-                byte[] buffer = new byte[8192];
-                int read;
-                while ((read = input.read(buffer)) != -1) {
-                    output.write(buffer, 0, read);
-                }
-            }
-            Bitmap bitmap = BitmapFactory.decodeFile(file.getAbsolutePath());
-            if (bitmap != null) {
-                int maxDim = 400;
-                int width = bitmap.getWidth();
-                int height = bitmap.getHeight();
-                if (width > maxDim || height > maxDim) {
-                    float ratio = Math.min((float) maxDim / width, (float) maxDim / height);
-                    int newWidth = Math.round(width * ratio);
-                    int newHeight = Math.round(height * ratio);
-                    bitmap = Bitmap.createScaledBitmap(bitmap, newWidth, newHeight, true);
-                }
-                try (OutputStream output = new FileOutputStream(file)) {
-                    bitmap.compress(Bitmap.CompressFormat.JPEG, 70, output);
-                }
-            }
-            return file.getAbsolutePath();
+            Bitmap bitmap = loadBitmapFromUri(uri);
+            if (bitmap == null) return null;
+            return saveProfileBitmapToInternalStorage(bitmap);
         } catch (Exception e) {
             return null;
         }
