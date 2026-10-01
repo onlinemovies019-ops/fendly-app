@@ -41,6 +41,35 @@ async def test_exact_imei_match_uses_sqlalchemy_session_and_masks_imei():
 
 
 @pytest.mark.asyncio
+async def test_notify_admin_of_match_persists_dashboard_alert(monkeypatch):
+    monkeypatch.setenv("ADMIN_EMAIL", "admin@example.com")
+    monkeypatch.setenv("BREVO_API_KEY", "brevo-key")
+    monkeypatch.setenv("SENDER_EMAIL", "noreply@example.com")
+    monkeypatch.delenv("SMTP_HOST", raising=False)
+    monkeypatch.delenv("SMTP_USERNAME", raising=False)
+    monkeypatch.delenv("SMTP_PASSWORD", raising=False)
+
+    calls = {}
+
+    def fake_persist(session, found_item, lost_item, confidence):
+        calls["payload"] = (found_item.id, lost_item.id, confidence)
+        return True
+
+    def fake_send_admin_match_email(item_title, match_score, match_details):
+        return True
+
+    with patch.object(items_module, "persist_admin_match_alert", fake_persist), patch.object(items_module, "send_admin_match_email", fake_send_admin_match_email), patch.object(items_module.asyncio, "create_task", lambda coro: coro.close() or object()):
+        await items_module.notify_admin_of_match(
+            session=Mock(spec=Session),
+            query_identifier="490154203237518",
+            matched_items=[LostItem(id="lost-item-1", title="Test phone", created_by="u1", description="Lost phone", category="electronics", lat=0, lng=0)],
+            match_type="EXACT_IMEI",
+        )
+
+    assert calls["payload"] == ("lost-item-1", "lost-item-1", 1.0)
+
+
+@pytest.mark.asyncio
 async def test_notify_admin_of_match_uses_render_email_env_names(monkeypatch):
     monkeypatch.setenv("ADMIN_EMAIL", "admin@example.com")
     monkeypatch.setenv("BREVO_API_KEY", "brevo-key")

@@ -65,6 +65,13 @@ async def notify_admin_of_match(
         smtp_user = os.getenv("SMTP_USER") or os.getenv("SMTP_USERNAME")
         smtp_password = os.getenv("SMTP_PASSWORD")
 
+        if matched_items:
+            try:
+                primary_item = matched_items[0]
+                persist_admin_match_alert(session, primary_item, primary_item, 1.0)
+            except Exception as e:
+                print(f"[WARN] Failed to persist admin dashboard alert: {e}")
+
         if not (has_brevo or (smtp_host and smtp_user and smtp_password)):
             print("[EMAIL] Admin match notification skipped: no email provider is configured.")
             return
