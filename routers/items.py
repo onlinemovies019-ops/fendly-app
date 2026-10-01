@@ -65,10 +65,15 @@ async def notify_admin_of_match(
         smtp_user = os.getenv("SMTP_USER") or os.getenv("SMTP_USERNAME")
         smtp_password = os.getenv("SMTP_PASSWORD")
 
+        alert_created = False
         if matched_items:
             try:
                 primary_item = matched_items[0]
-                persist_admin_match_alert(session, primary_item, primary_item, 1.0)
+                if hasattr(primary_item, "id"):
+                    alert_created = persist_admin_match_alert(session, primary_item, primary_item, 1.0)
+                    if not alert_created:
+                        print("[EMAIL] Duplicate admin alert suppressed; dashboard alert already exists.")
+                        return
             except Exception as e:
                 print(f"[WARN] Failed to persist admin dashboard alert: {e}")
 
