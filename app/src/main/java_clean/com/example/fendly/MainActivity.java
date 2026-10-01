@@ -204,6 +204,10 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         return raw != null && raw.replaceAll("\\D", "").length() == 10;
     }
 
+    private boolean isValidImeiValue(String raw) {
+        return AiMatchService.isValidImei(raw);
+    }
+
     private String formatPhoneNumberForDisplay(String phoneNumber) {
         String normalizedPhoneNumber = normalizeLocalizedDigits(phoneNumber);
         if (normalizedPhoneNumber == null || normalizedPhoneNumber.trim().isEmpty()) return "";
@@ -3046,7 +3050,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         }
         if (containsMobileKeyword(title) || containsMobileKeyword(details)) {
             String imeiValue = imei == null ? "" : imei.getText().toString().trim();
-            if (!imeiValue.matches("\\d{15}")) {
+            if (!isValidImeiValue(imeiValue)) {
                 if (imei != null) imei.setError("Enter a valid 15-digit IMEI number");
                 return;
             }
@@ -3078,10 +3082,11 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                 return;
             }
             network.execute(() -> {
+                String imeiValue = imei == null ? null : imei.getText().toString().trim();
                 ItemSubmissionResult submission = postItem(
                         type, title, details, location.getText().toString().trim(),
                         date.getText().toString().trim(), latitude, longitude,
-                        image, cameraImage, token.getToken(), paymentId);
+                        image, cameraImage, imeiValue, token.getToken(), paymentId);
                 runOnUiThread(() -> {
                     publish.setEnabled(true);
                     int code = submission.statusCode;
@@ -3126,7 +3131,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         }
     }
 
-    private ItemSubmissionResult postItem(String type, String title, String description, String location, String date, double latitude, double longitude, Uri image, Bitmap cameraImage, String idToken, String paymentId) {
+    private ItemSubmissionResult postItem(String type, String title, String description, String location, String date, double latitude, double longitude, Uri image, Bitmap cameraImage, String imeiValue, String idToken, String paymentId) {
         lastSubmissionError = null;
         try {
             String imageUrl = null;
@@ -3166,7 +3171,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
 
             AiMatchService.ApiResponse response = AiMatchService.createItem(
                     title, description, imageUrl, type, latitude, longitude,
-                    location, date, paymentId, idToken);
+                    location, date, paymentId, imeiValue, idToken);
             if (!response.isSuccessful()) {
                 lastSubmissionError = "Could not save report (" + response.getStatusCode() + "): " + response.getErrorMessage();
                 return new ItemSubmissionResult(response.getStatusCode(), lastSubmissionError, null, null);
@@ -3177,7 +3182,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             if (imageUrl != null && !imageUrl.trim().isEmpty()) {
                 try {
                     String targetType = "found".equalsIgnoreCase(type) ? "lost" : "found";
-                    AiMatchService.ApiResponse matchResponse = AiMatchService.findImageMatches(imageUrl, targetType, idToken);
+                    AiMatchService.ApiResponse matchResponse = AiMatchService.findImageMatches(imageUrl, imeiValue, targetType, idToken);
                     if (matchResponse.isSuccessful()) {
                         matches = new JSONArray(matchResponse.getBody());
                     } else {
@@ -7645,9 +7650,18 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             if (result == null) continue;
 
             JSONObject matchedItem = result.optJSONObject("item");
+            if (matchedItem == null) {
+                matchedItem = result;
+            }
             if (matchedItem == null) continue;
 
-            LinearLayout card = matchResultCard(matchedItem, result.optDouble("score", 0.0));
+            String matchType = result.optString("matchType", matchedItem.optString("matchType", ""));
+            double scoreForCard = result.optDouble("score", matchedItem.optDouble("score", 0.0));
+            if ("EXACT_IMEI".equalsIgnoreCase(matchType)) {
+                scoreForCard = 1.0;
+            }
+
+            LinearLayout card = matchResultCard(matchedItem, scoreForCard, matchType);
             LinearLayout.LayoutParams cardParams = new LinearLayout.LayoutParams(-1, -2);
             cardParams.setMargins(0, 0, 0, dp(10));
             rows.addView(card, cardParams);
@@ -7670,14 +7684,29 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
     }
 
     private LinearLayout matchResultCard(JSONObject matchItem, double score) {
+        String type = matchItem.optString("matchType", "");
+        return matchResultCard(matchItem, score, type);
+    }
+
+    private LinearLayout matchResultCard(JSONObject matchItem, double score, String matchType) {
         LinearLayout card = new LinearLayout(this);
         card.setOrientation(LinearLayout.VERTICAL);
         card.setPadding(dp(12), dp(12), dp(12), dp(12));
         card.setBackground(roundWithStroke(surfaceColor(), 14, borderColor()));
 
-        TextView scoreLabel = text(String.format(Locale.US, "%d%% Match", Math.max(0, Math.min(100, Math.round((float) score * 100)))), 12, GOLD_ON, Typeface.NORMAL);
+        String badgeText;
+        int badgeColor = GOLD;
+        if ("EXACT_IMEI".equalsIgnoreCase(matchType)) {
+            badgeText = "100% Exact IMEI Match";
+            badgeColor = LOST_GREEN;
+        } else {
+            int percent = Math.max(0, Math.min(100, Math.round((float) score * 100f)));
+            badgeText = percent + "% Visual Match";
+        }
+
+        TextView scoreLabel = text(badgeText, 12, badgeColor == LOST_GREEN ? LOST_GREEN_ON : GOLD_ON, Typeface.NORMAL);
         scoreLabel.setGravity(Gravity.CENTER);
-        scoreLabel.setBackground(round(GOLD, 10));
+        scoreLabel.setBackground(round(badgeColor, 10));
         scoreLabel.setPadding(dp(10), dp(6), dp(10), dp(6));
         card.addView(scoreLabel, new LinearLayout.LayoutParams(-1, -2));
 
@@ -7718,6 +7747,11 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         String location = matchItem.optString("report_location", matchItem.optString("location", ""));
         if (location == null || location.trim().isEmpty()) {
             location = String.format(Locale.US, "%.4f, %.4f", matchItem.optDouble("lat", 0.0), matchItem.optDouble("lng", 0.0));
+        }
+        String maskedImei = matchItem.optString("imei", "");
+        if (!maskedImei.trim().isEmpty()) {
+            TextView imeiText = text("IMEI: " + maskedImei, 10, secondaryTextColor(), Typeface.NORMAL);
+            textColumn.addView(imeiText, new LinearLayout.LayoutParams(-1, -2));
         }
         if (!location.trim().isEmpty()) {
             TextView locationText = text("Location: " + location, 10, secondaryTextColor(), Typeface.NORMAL);

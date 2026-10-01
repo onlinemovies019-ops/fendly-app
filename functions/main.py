@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 
 def validate_luhn(imei: str) -> bool:
     """Validate a 15-digit IMEI using the Luhn checksum algorithm."""
-    clean = re.sub(r"[^0-9]", "", str(imei or ""))
+    clean = re.sub(r"[\s-]", "", str(imei or ""))
     if len(clean) != 15 or not clean.isdigit():
         return False
 
@@ -28,7 +28,7 @@ def validate_luhn(imei: str) -> bool:
 def clean_imei(raw: Optional[str]) -> Optional[str]:
     if raw is None:
         return None
-    cleaned = re.sub(r"[^0-9]", "", str(raw).strip())
+    cleaned = re.sub(r"[\s-]", "", str(raw).strip())
     return cleaned if cleaned else None
 
 
@@ -36,9 +36,9 @@ def mask_imei(imei: Optional[str]) -> Optional[str]:
     value = clean_imei(imei)
     if not value:
         return None
-    if len(value) <= 6:
+    if len(value) <= 9:
         return value
-    return f"{value[:3]}{'*' * (len(value) - 6)}{value[-3:]}"
+    return f"{value[:6]}{'*' * (len(value) - 9)}{value[-3:]}"
 
 
 class ItemCreateRequest(BaseModel):
