@@ -21,6 +21,8 @@ async function runTests() {
         title: "Test Phone Invalid IMEI",
         description: "Testing Luhn validation",
         category: "electronics",
+        lat: 19.0760,
+        lng: 72.8777,
         imei: "123456789012345", // Invalid Luhn
         payment_id: "test_bypass"
       })
@@ -50,6 +52,8 @@ async function runTests() {
         title: "Test Lost Phone Valid IMEI",
         description: "Testing exact IMEI search",
         category: "electronics",
+        lat: 19.0760,
+        lng: 72.8777,
         imei: validImei,
         payment_id: "test_bypass"
       })

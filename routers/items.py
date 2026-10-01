@@ -384,30 +384,32 @@ async def match_items(
 
     # 1. Direct IMEI Matching Path (Fixed with select())
     if getattr(request, "imei", None):
-        clean_imei = "".join(filter(str.isdigit, str(request.imei)))
-        target_type = getattr(request, "targetType", "lost")
+        try:
+            clean_imei = "".join(filter(str.isdigit, str(request.imei)))
+            target_type = getattr(request, "targetType", "lost")
+            model = LostItem if target_type == "lost" else FoundItem
 
-        model = LostItem if target_type == "lost" else FoundItem
+            statement = select(model).where(model.imei == clean_imei)
+            matched_records = session.exec(statement).all()
 
-        # Use SQLModel statement execution instead of session.query
-        statement = select(model).where(model.imei == clean_imei)
-        matched_records = session.exec(statement).all()
+            results = []
+            for item in matched_records:
+                raw_imei = getattr(item, "imei", "") or ""
+                masked_imei = f"{raw_imei[:6]}******{raw_imei[-3:]}" if len(raw_imei) == 15 else raw_imei
 
-        results = []
-        for item in matched_records:
-            raw_imei = getattr(item, "imei", "") or ""
-            masked_imei = f"{raw_imei[:6]}******{raw_imei[-3:]}" if len(raw_imei) == 15 else raw_imei
+                item_dict = item.__dict__.copy()
+                item_dict["imei"] = masked_imei
 
-            item_dict = item.__dict__.copy()
-            item_dict["imei"] = masked_imei
-
-            results.append({
-                "item": item_dict,
-                "score": 1.0,
-                "matchType": "EXACT_IMEI",
-                "explanation": "Exact 15-digit IMEI serial match"
-            })
-        return results
+                results.append({
+                    "item": item_dict,
+                    "score": 1.0,
+                    "matchType": "EXACT_IMEI",
+                    "explanation": "Exact 15-digit IMEI serial match",
+                })
+            return results
+        except Exception as e:
+            logger.error(f"IMEI match error: {e}")
+            raise HTTPException(status_code=400, detail=str(e))
 
     # 2. Standard Item-ID Matching Fallback
     if bool(request.found_item_id) == bool(request.lost_item_id):
