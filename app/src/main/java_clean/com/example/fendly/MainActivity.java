@@ -480,6 +480,21 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         }
     }
 
+    private Locale getTtsLocaleForSelectedLanguage() {
+        int lang = Math.max(0, Math.min(selectedLanguage, 8));
+        switch (lang) {
+            case 1: return new Locale("hi", "IN"); // Hindi
+            case 2: return new Locale("mr", "IN"); // Marathi
+            case 3: return new Locale("gu", "IN"); // Gujarati
+            case 4: return new Locale("bn", "IN"); // Bengali
+            case 5: return new Locale("ta", "IN"); // Tamil
+            case 6: return new Locale("te", "IN"); // Telugu
+            case 7: return new Locale("kn", "IN"); // Kannada
+            case 8: return new Locale("ml", "IN"); // Malayalam
+            default: return Locale.ENGLISH;        // English
+        }
+    }
+
     private void speakOrStop(String textToSpeak, ImageView playPauseIcon) {
         initTts();
         if (ttsEngine == null) return;
@@ -487,6 +502,11 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             ttsEngine.stop();
             playPauseIcon.setImageResource(android.R.drawable.ic_media_play);
         } else {
+            Locale targetLocale = getTtsLocaleForSelectedLanguage();
+            int result = ttsEngine.setLanguage(targetLocale);
+            if (result == TextToSpeech.LANG_MISSING_DATA || result == TextToSpeech.LANG_NOT_SUPPORTED) {
+                ttsEngine.setLanguage(Locale.ENGLISH);
+            }
             ttsEngine.speak(textToSpeak, TextToSpeech.QUEUE_FLUSH, null, "GuideVoice");
             playPauseIcon.setImageResource(android.R.drawable.ic_media_pause);
             if (Build.VERSION.SDK_INT >= 21) {
@@ -501,6 +521,70 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                 });
             }
         }
+    }
+
+    private String translateHowToReportTitle() {
+        String[] titles = {
+                "How to Report Lost & Found",
+                "खोया और पाया रिपोर्ट कैसे करें",
+                "हरवलेले आणि सापडलेले अहवाल कसा नोंदवावा",
+                "ખોવાયેલ અને મળેલ રિપોર્ટ કેવી રીતે કરવો",
+                "হারানো এবং পাওয়া রিপোর্ট কীভাবে করবেন",
+                "தொலைந்தது மற்றும் கிடைத்ததை எவ்வாறு புகாரளிப்பது",
+                "పోగొట్టుకున్న మరియు దొరికిన వివరాలు ఎలా రిపోర్ట్ చేయాలి",
+                "ಕಳೆದುಹೋದ ಮತ್ತು ಸಿಕ್ಕ ವಸ್ತುಗಳನ್ನು ವರದಿ ಮಾಡುವುದು ಹೇಗೆ",
+                "നഷ്ടപ്പെട്ടതും കണ്ടെത്തിയതും എങ്ങനെ റിപ്പോർട്ട് ചെയ്യാം"
+        };
+        int lang = Math.max(0, Math.min(selectedLanguage, titles.length - 1));
+        return titles[lang];
+    }
+
+    private String translateHowToReportText() {
+        String[] texts = {
+                "1. Reporting Lost Items:\n• Tap the green LOST button on the home screen.\n• Enter item details, category, description, and photo.\n\n2. Reporting Found Items:\n• Tap the gold FOUND button on the home screen when you find an item.\n• Fill in the details of the found item.\n\n3. Tracking Your Reports:\n• Visit My Reports anytime to track your submitted lost or found items and view updates.",
+                "1. खोई हुई वस्तुएं रिपोर्ट करें:\n• होम स्क्रीन पर हरे LOST बटन पर टैप करें।\n• वस्तु का विवरण, श्रेणी, जानकारी और फोटो दर्ज करें।\n\n2. मिली हुई वस्तुएं रिपोर्ट करें:\n• वस्तु मिलने पर होम स्क्रीन पर सुनहरे FOUND बटन पर टैप करें।\n• मिली हुई वस्तु का विवरण भरें।\n\n3. अपनी रिपोर्ट ट्रैक करें:\n• अपनी जमा की गई रिपोर्ट और अपडेट देखने के लिए कभी भी My Reports पर जाएं।",
+                "1. हरवलेल्या वस्तूंची नोंद:\n• होम स्क्रीनवरील हिरव्या LOST बटणावर टॅप करा.\n• वस्तूचे तपशील, वर्ग, वर्णन आणि फोटो प्रविष्ट करा.\n\n2. सापडलेल्या वस्तूंची नोंद:\n• वस्तू सापडल्यावर होम स्क्रीनवरील सोनेरी FOUND बटणावर टॅप करा.\n• सापडलेल्या वस्तूचा तपशील भरा.\n\n3. अहवाल ट्रॅक करा:\n• तुमचे सादर केलेले अहवाल आणि अपडेट्स पाहण्यासाठी कधीही My Reports ला भेट द्या.",
+                "1. ખોવાયેલ વસ્તુઓની જાણ કરો:\n• હોમ સ્ક્રીન પર લીલા LOST બટન પર ટેપ કરો.\n• વસ્તુની વિગતો, શ્રેણી, વર્ણન અને ફોટો દાખલ કરો.\n\n2. મળેલ વસ્તુઓની જાણ કરો:\n• વસ્તુ મળે ત્યારે હોમ સ્ક્રીન પર સોનેરી FOUND બટન પર ટેપ કરો.\n• મળેલ વસ્તુની વિગતો ભરો.\n\n3. તમારા રિપોર્ટ ટ્રેક કરો:\n• તમારા સબમિટ કરેલા રિપોર્ટ અને અપડેટ્સ જોવા માટે ગમે ત્યારે My Reports ની મુલાકાત લો.",
+                "1. হারানো আইটেম রিপোর্ট করা:\n• হোম স্ক্রিনে সবুজ LOST বোতামে ট্যাপ করুন।\n• আইটেমের বিবরণ, বিভাগ, বর্ণনা এবং ছবি লিখুন।\n\n2. পাওয়া আইটেম রিপোর্ট করা:\n• কোনো আইটেম পেলে হোম স্ক্রিনে সোনালী FOUND বোতামে ট্যাপ করুন।\n• পাওয়া আইটেমের বিবরণ পূরণ করুন।\n\n3. আপনার রিপোর্ট ট্র্যাক করা:\n• আপনার জমা দেওয়া রিপোর্ট এবং আপডেট দেখতে যেকোনো সময় My Reports দেখুন।",
+                "1. தொலைந்த பொருட்களை அறிக்கையிடல்:\n• முகப்புத் திரையில் உள்ள பச்சை நிற LOST பொத்தானைத் தட்டவும்.\n• பொருளின் விவரங்கள், வகை, விளக்கம் மற்றும் புகைப்படத்தை உள்ளிடவும்.\n\n2. கிடைத்த பொருட்களை அறிக்கையிடல்:\n• ஒரு பொருள் கிடைக்கும்போது முகப்புத் திரையில் உள்ள தங்க நிற FOUND பொத்தானைத் தட்டவும்.\n• கிடைத்த பொருளின் விவரங்களை நிரப்பவும்.\n\n3. உங்கள் அறிக்கைகளைக் கண்காணித்தல்:\n• சமர்ப்பிக்கப்பட்ட அறிக்கைகள் மற்றும் புதுப்பிப்புகளைப் பார்க்க எப்போதும் My Reports பகுதிக்குச் செல்லவும்.",
+                "1. పోగొట్టుకున్న వస్తువులను రిపోర్ట్ చేయడం:\n• హోమ్ స్క్రీన్‌పై ఉన్న ఆకుపచ్చ LOST బటన్‌ను నొక్కండి.\n• వస్తువు వివరాలు, వర్గం, వివరణ మరియు ఫోటోను నమోదు చేయండి.\n\n2. దొరికిన వస్తువులను రిపోర్ట్ చేయడం:\n• మీకు వస్తువు దొరికినప్పుడు హోమ్ స్క్రీన్‌పై ఉన్న బంగారు FOUND బటన్‌ను నొక్కండి.\n• దొరికిన వస్తువు వివరాలను నింపండి.\n\n3. మీ రిపోర్టులను ట్రాక్ చేయడం:\n• సమర్పించిన రిపోర్టులు మరియు అప్‌డేట్‌లను చూడటానికి ఎప్పుడైనా My Reportsని సందర్శించండి.",
+                "1. ಕಳೆದುಹೋದ ವಸ್ತುಗಳನ್ನು ವರದಿ ಮಾಡುವುದು:\n• ಹೋಮ್ స్క್ರೀನ್‌ನಲ್ಲಿರುವ ಹಸಿರು LOST ಬಟನ್ ಟ್ಯಾಪ್ ಮಾಡಿ.\n• ವಸ್ತುವಿನ ವಿವರಗಳು, ವರ್ಗ, ವಿವರಣೆ ಮತ್ತು ಫೋಟೋ ನಮೂದಿಸಿ.\n\n2. ಸಿಕ್ಕ ವಸ್ತುಗಳನ್ನು ವರದಿ ಮಾಡುವುದು:\n• ವಸ್ತು ಸಿಕ್ಕಾಗ ಹೋಮ್ స్క್ರೀನ್‌ನಲ್ಲಿರುವ ಚಿನ್ನದ ಬಣ್ಣದ FOUND ಬಟನ್ ಟ್ಯಾಪ್ ಮಾಡಿ.\n• ಸಿಕ್ಕ ವಸ್ತುವಿನ ವಿವರಗಳನ್ನು ಭರ್ತಿ ಮಾಡಿ.\n\n3. ನಿಮ್ಮ ವರದಿಗಳನ್ನು ಟ್ರ್ಯಾಕ್ ಮಾಡುವುದು:\n• ಸಲ್ಲಿಸಿದ ವರದಿಗಳು ಮತ್ತು ಅಪ್‌ಡೇಟ್‌ಗಳನ್ನು ವೀಕ್ಷಿಸಲು ಯಾವಾಗ ಬೇಕಾದರೂ My Reports ಗೆ ಭೇಟಿ ನೀಡಿ.",
+                "1. നഷ്ടപ്പെട്ടവ റിപ്പോർട്ട് ചെയ്യൽ:\n• ഹോം സ്‌ക്രീനിലെ പച്ച LOST ബട്ടണിൽ ടാപ്പ് ചെയ്യുക.\n• ഇനത്തിന്റെ വിശദാംശങ്ങൾ, വിഭാഗം, വിവരണം, ഫോട്ടോ എന്നിവ നൽകുക.\n\n2. കണ്ടെത്തിയവ റിപ്പോർട്ട് ചെയ്യൽ:\n• ഒരു ഇനം കണ്ടെത്തുമ്പോൾ ഹോം സ്‌ക്രീനിലെ സുവർണ്ണ FOUND ബട്ടണിൽ ടാപ്പ് ചെയ്യുക.\n• കണ്ടെത്തിയ ഇനത്തിന്റെ വിവരങ്ങൾ നൽകുക.\n\n3. റിപ്പോർട്ടുകൾ ട്രാക്ക് ചെയ്യൽ:\n• സമർപ്പിച്ച റിപ്പോർട്ടുകളും അപ്‌ഡേറ്റുകളും കാണാൻ എപ്പോൾ വേണമെങ്കിലും My Reports സന്ദർശിക്കുക."
+        };
+        int lang = Math.max(0, Math.min(selectedLanguage, texts.length - 1));
+        return texts[lang];
+    }
+
+    private String translateMyReportsTitle() {
+        String[] titles = {
+                "How to Use My Reports",
+                "My Reports का उपयोग कैसे करें",
+                "माझे अहवाल कसे वापरावे",
+                "My Reports નો ઉપયોગ કેવી રીતે કરવો",
+                "My Reports কীভাবে ব্যবহার করবেন",
+                "My Reports ஐ எவ்வாறு பயன்படுத்துவது",
+                "My Reports ఎలా ఉపయోగించాలి",
+                "My Reports ಅನ್ನು ಹೇಗೆ ಬಳಸುವುದು",
+                "My Reports എങ്ങനെ ഉപയോഗിക്കാം"
+        };
+        int lang = Math.max(0, Math.min(selectedLanguage, titles.length - 1));
+        return titles[lang];
+    }
+
+    private String translateMyReportsText() {
+        String[] texts = {
+                "1. View Submitted Reports:\n• Review all your active lost and found item submissions in one centralized list.\n\n2. Track Status & AI Matches:\n• Monitor report statuses and check for any potential AI item matches.\n\n3. Edit or Delete Reports:\n• Update report information once if needed, or delete items once recovered or resolved.",
+                "1. जमा की गई रिपोर्ट देखें:\n• अपनी सभी सक्रिय खोई और मिली हुई रिपोर्ट एक ही सूची में देखें।\n\n2. स्थिति और AI मिलान ट्रैक करें:\n• रिपोर्ट की स्थिति पर नज़र रखें और किसी भी संभावित AI मिलान की जांच करें।\n\n3. रिपोर्ट संपादित या हटाएं:\n• आवश्यकता पड़ने पर जानकारी अपडेट करें, या वस्तु मिलने पर रिपोर्ट हटाएं।",
+                "1. सादर केलेले अहवाल पाहा:\n• तुमचे सर्व सक्रिय हरवलेले आणि सापडलेले अहवाल एकाच यादीत पाहा.\n\n2. स्थिती आणि AI जुळणी ट्रॅक करा:\n• अहवाल स्थितीवर लक्ष ठेवा आणि संभाव्य AI जुळण्या तपासा.\n\n3. अहवाल संपादित करा किंवा हटवा:\n• गरज असल्यास माहिती अपडेट करा, किंवा वस्तू परत मिळाल्यावर अहवाल हटवा.",
+                "1. સબમિટ કરેલા રિપોર્ટ જુઓ:\n• તમારા બધા સક્રિય ખોવાયેલ અને મળેલ રિપોર્ટ એક જ યાદીમાં જુઓ.\n\n2. સ્ટેટસ અને AI મેચ ટ્રેક કરો:\n• રિપોર્ટ સ્ટેટસ પર નજર રાખો અને સંભવિત AI મેચ તપાસો.\n\n3. રિપોર્ટ એડિટ અથવા ડિલીટ કરો:\n• જરૂર જણાય તો માહિતી અપડેટ કરો, અથવા વસ્તુ મળી જાય ત્યારે ડિલીટ કરો.",
+                "1. জমা দেওয়া রিপোর্ট দেখুন:\n• একটি তালিকায় আপনার সমস্ত সক্রিয় হারানো এবং পাওয়া রিপোর্ট দেখুন।\n\n2. স্থিতি এবং AI ম্যাচ ট্র্যাক করুন:\n• রিপোর্টের স্থিতি ট্র্যাক করুন এবং যেকোনো সম্ভাব্য AI ম্যাচ দেখুন।\n\n3. রিপোর্ট সম্পাদনা বা মুছুন:\n• প্রয়োজন হলে তথ্য আপডেট করুন, বা উদ্ধার হলে মুছুন।",
+                "1. சமர்ப்பிக்கப்பட்ட அறிக்கைகளைப் பார்க்கவும்:\n• உங்கள் செயலில் உள்ள அனைத்து அறிக்கைகளையும் ஒரே பட்டியலில் பார்க்கவும்.\n\n2. நிலை மற்றும் AI பொருத்தங்களைக் கண்காணிக்கவும்:\n• அறிக்கைகளின் நிலையைக் கண்காணித்து சாத்தியமான AI பொருத்தங்களைச் சரிபார்க்கவும்.\n\n3. அறிக்கைகளைத் திருத்தவும் அல்லது நீக்கவும்:\n• தேவைப்பட்டால் தகவலைப் புதுப்பிக்கவும், அல்லது பொருள்கள் கிடைத்ததும் நீக்கவும்.",
+                "1. సమర్పించిన రిపోర్టులను చూడండి:\n• మీ క్రియాశీల రిపోర్టులన్నింటినీ ఒకే జాబితాలో చూడండి.\n\n2. స్థితి మరియు AI మ్యాచ్‌లను ట్రాక్ చేయండి:\n• రిపోర్టుల స్థితిని పర్యవేక్షించండి మరియు ఏవైనా AI మ్యాచ్‌లను తనిఖీ చేయండి.\n\n3. రిపోర్టులను సవరించండి లేదా తొలగించండి:\n• అవసరమైతే సమాచారాన్ని అప్‌డేట్ చేయండి లేదా వస్తువు దొరికిన తర్వాత తొలగించండి.",
+                "1. ಸಲ್ಲಿಸಿದ ವರದಿಗಳನ್ನು ವೀಕ್ಷಿಸಿ:\n• ನಿಮ್ಮ ಎಲ್ಲಾ ಸಕ್ರಿಯ ವರದಿಗಳನ್ನು ಒಂದೇ ಪಟ್ಟಿಯಲ್ಲಿ ಪರಿಶೀಲಿಸಿ.\n\n2. ಸ್ಥಿತಿ ಮತ್ತು AI ಪಂದ್ಯಗಳನ್ನು ಟ್ರ್ಯಾಕ್ ಮಾಡಿ:\n• ವರದಿಗಳ ಸ್ಥಿತಿಯನ್ನು ಮೇಲ್ವಿಚಾರಣೆ ಮಾಡಿ ಮತ್ತು ಸಂಭಾವ್ಯ AI ಪಂದ್ಯಗಳನ್ನು ಪರಿಶೀಲಿಸಿ.\n\n3. ವರದಿಗಳನ್ನು ಸಂಪಾದಿಸಿ ಅಥವಾ ಅಳಿಸಿ:\n• ಅಗತ್ಯವಿದ್ದರೆ ಮಾಹಿತಿಯನ್ನು ನವೀಕರಿಸಿ, ಅಥವಾ ವಸ್ತು ಸಿಕ್ಕ ನಂತರ ಅಳಿಸಿ.",
+                "1. സമർപ്പിച്ച റിപ്പോർട്ടുകൾ കാണുക:\n• നിങ്ങളുടെ എല്ലാ റിപ്പോർട്ടുകളും ഒറ്റ ലിസ്റ്റിൽ കാണുക.\n\n2. സ്റ്റാറ്റസും AI മാച്ചുകളും ട്രാക്ക് ചെയ്യുക:\n• റിപ്പോർട്ട് സ്റ്റാറ്റസ് നിരീക്ഷിക്കുകയും സാധ്യമായ AI മാച്ചുകൾ പരിശോധിക്കുകയും ചെയ്യുക.\n\n3. റിപ്പോർട്ടുകൾ എഡിറ്റ് ചെയ്യുക അല്ലെങ്കിൽ ഇല്ലാതാക്കുക:\n• ആവശ്യമെങ്കിൽ വിവരങ്ങൾ അപ്ഡേറ്റ് ചെയ്യുക, അല്ലെങ്കിൽ ഇനം തിരികെ ലഭിച്ചാൽ ഇല്ലാതാക്കുക."
+        };
+        int lang = Math.max(0, Math.min(selectedLanguage, texts.length - 1));
+        return texts[lang];
     }
 
     @Override
@@ -7953,17 +8037,13 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         form.setPadding(dp(24), dp(24), dp(24), dp(20));
         form.setBackground(roundWithStroke(surfaceColor(), 26, borderColor()));
 
-        TextView title = text("How to Use My Reports", 18, primaryTextColor(), Typeface.BOLD);
+        String titleStr = translateMyReportsTitle();
+        String guideText = translateMyReportsText();
+
+        TextView title = text(titleStr, 18, primaryTextColor(), Typeface.BOLD);
         title.setGravity(Gravity.CENTER);
         title.setPadding(0, 0, 0, dp(16));
         form.addView(title, new LinearLayout.LayoutParams(-1, -2));
-
-        String guideText = "1. View Submitted Reports:\n" +
-                "• Review all your active lost and found item submissions in one centralized list.\n\n" +
-                "2. Track Status & AI Matches:\n" +
-                "• Monitor report statuses and check for any potential AI item matches.\n\n" +
-                "3. Edit or Delete Reports:\n" +
-                "• Update report information once if needed, or delete items once recovered or resolved.";
 
         TextView body = text(guideText, 13, secondaryTextColor(), Typeface.NORMAL);
         body.setPadding(0, 0, 0, dp(20));
@@ -7973,7 +8053,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         actionsRow.setOrientation(LinearLayout.HORIZONTAL);
         actionsRow.setGravity(Gravity.CENTER_VERTICAL);
 
-        TextView close = text("Got it", 14, GOLD_ON, Typeface.NORMAL);
+        TextView close = text(translate("Got it"), 14, GOLD_ON, Typeface.NORMAL);
         close.setGravity(Gravity.CENTER);
         close.setBackground(goldButton());
         close.setOnClickListener(view -> {
@@ -7988,7 +8068,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         voiceButton.setBackground(roundWithStroke(surfaceColor(), 10, fieldBorderColor()));
         voiceButton.setPadding(dp(10), dp(10), dp(10), dp(10));
         voiceButton.setContentDescription("Listen to guide");
-        voiceButton.setOnClickListener(v -> speakOrStop("How to Use My Reports. " + guideText, voiceButton));
+        voiceButton.setOnClickListener(v -> speakOrStop(titleStr + ". " + guideText, voiceButton));
         LinearLayout.LayoutParams voiceParams = new LinearLayout.LayoutParams(dp(44), dp(44));
         voiceParams.setMargins(dp(8), 0, 0, 0);
         actionsRow.addView(voiceButton, voiceParams);
@@ -8017,19 +8097,13 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         form.setPadding(dp(24), dp(24), dp(24), dp(20));
         form.setBackground(roundWithStroke(surfaceColor(), 26, borderColor()));
 
-        TextView title = text("How to Report Lost & Found", 18, primaryTextColor(), Typeface.BOLD);
+        String titleStr = translateHowToReportTitle();
+        String guideText = translateHowToReportText();
+
+        TextView title = text(titleStr, 18, primaryTextColor(), Typeface.BOLD);
         title.setGravity(Gravity.CENTER);
         title.setPadding(0, 0, 0, dp(16));
         form.addView(title, new LinearLayout.LayoutParams(-1, -2));
-
-        String guideText = "1. Reporting Lost Items:\n" +
-                "• Tap the green LOST button on the home screen.\n" +
-                "• Enter item details, category, description, and photo.\n\n" +
-                "2. Reporting Found Items:\n" +
-                "• Tap the gold FOUND button on the home screen when you find an item.\n" +
-                "• Fill in the details of the found item.\n\n" +
-                "3. Tracking Your Reports:\n" +
-                "• Visit My Reports anytime to track your submitted lost or found items and view updates.";
 
         TextView body = text(guideText, 13, secondaryTextColor(), Typeface.NORMAL);
         body.setPadding(0, 0, 0, dp(20));
@@ -8039,7 +8113,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         actionsRow.setOrientation(LinearLayout.HORIZONTAL);
         actionsRow.setGravity(Gravity.CENTER_VERTICAL);
 
-        TextView close = text("Got it", 14, GOLD_ON, Typeface.NORMAL);
+        TextView close = text(translate("Got it"), 14, GOLD_ON, Typeface.NORMAL);
         close.setGravity(Gravity.CENTER);
         close.setBackground(goldButton());
         close.setOnClickListener(view -> {
@@ -8054,7 +8128,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         voiceButton.setBackground(roundWithStroke(surfaceColor(), 10, fieldBorderColor()));
         voiceButton.setPadding(dp(10), dp(10), dp(10), dp(10));
         voiceButton.setContentDescription("Listen to guide");
-        voiceButton.setOnClickListener(v -> speakOrStop("How to Report Lost and Found. " + guideText, voiceButton));
+        voiceButton.setOnClickListener(v -> speakOrStop(titleStr + ". " + guideText, voiceButton));
         LinearLayout.LayoutParams voiceParams = new LinearLayout.LayoutParams(dp(44), dp(44));
         voiceParams.setMargins(dp(8), 0, 0, 0);
         actionsRow.addView(voiceButton, voiceParams);
