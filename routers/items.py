@@ -390,7 +390,7 @@ async def match_items(
             model = LostItem if target_type == "lost" else FoundItem
 
             statement = select(model).where(model.imei == clean_imei)
-            matched_records = session.exec(statement).all()
+            matched_records = session.scalars(statement).all()
 
             results = []
             for item in matched_records:

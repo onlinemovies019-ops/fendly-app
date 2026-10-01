@@ -20,6 +20,7 @@ async function runTests() {
       body: JSON.stringify({
         title: "Test Phone Invalid IMEI",
         description: "Testing Luhn validation",
+        type: "lost",
         category: "electronics",
         lat: 19.0760,
         lng: 72.8777,
@@ -51,6 +52,7 @@ async function runTests() {
       body: JSON.stringify({
         title: "Test Lost Phone Valid IMEI",
         description: "Testing exact IMEI search",
+        type: "lost",
         category: "electronics",
         lat: 19.0760,
         lng: 72.8777,
