@@ -3631,9 +3631,8 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             ActivityCompat.requestPermissions(this, new String[]{permission}, REQUEST_PROFILE_IMAGE);
             return;
         }
-        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+        Intent intent = new Intent(Intent.ACTION_GET_CONTENT);
         intent.setType("image/*");
-        intent.addCategory(Intent.CATEGORY_OPENABLE);
         startActivityForResult(intent, REQUEST_PROFILE_IMAGE);
     }
 
@@ -4876,7 +4875,11 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                         if (cloudImage == null || cloudImage.trim().isEmpty()) {
                             cloudImage = document.getString("profile_image_url");
                         }
-                        putIfPresent(editor, "profile_image_url", cloudImage);
+                        if (cloudImage != null && !cloudImage.trim().isEmpty()) {
+                            editor.putString("profile_image_url", cloudImage.trim());
+                        } else {
+                            editor.remove("profile_image_url");
+                        }
 
                         boolean cloudEmailVerified = parseBooleanValue(document.get("emailVerified"))
                                 || parseBooleanValue(document.get("isEmailVerified"))
@@ -5693,6 +5696,8 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         }
         if (cloudImage != null && !cloudImage.trim().isEmpty()) {
             editor.putString("profile_image_url", cloudImage.trim());
+        } else {
+            editor.remove("profile_image_url");
         }
         editor.apply();
     }
