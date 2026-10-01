@@ -7169,31 +7169,73 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             if (currentReportType != null) showReport(currentReportType);
         }
         if (requestCode == REQUEST_PROFILE_IMAGE && resultCode == RESULT_OK && data != null && data.getData() != null) {
-            selectedProfileImage = data.getData();
-            capturedProfileImage = null;
+            Uri imageUri = data.getData();
             try {
-                getContentResolver().takePersistableUriPermission(selectedProfileImage, Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                getContentResolver().takePersistableUriPermission(imageUri, Intent.FLAG_GRANT_READ_URI_PERMISSION);
             } catch (Exception ignored) {}
-            getSharedPreferences("fendly_account", MODE_PRIVATE).edit()
-                    .putString("profile_image_uri", selectedProfileImage.toString())
-                    .apply();
-            if (currentPage == PAGE_PROFILE) showProfile();
-            uploadProfilePhotoBackground(selectedProfileImage, null);
+            try {
+                Bitmap bitmap;
+                try (InputStream input = getContentResolver().openInputStream(imageUri)) {
+                    bitmap = BitmapFactory.decodeStream(input);
+                }
+                if (bitmap != null) {
+                    capturedProfileImage = null;
+                    selectedProfileImage = null;
+                    String b64 = bitmapToBase64(bitmap);
+                    if (!b64.isEmpty()) {
+                        SharedPreferences account = getSharedPreferences("fendly_account", MODE_PRIVATE);
+                        account.edit()
+                                .putString("profile_image_uri", imageUri.toString())
+                                .putString("profile_image_url", b64)
+                                .apply();
+
+                        FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
+                        if (user != null) {
+                            String username = account.getString("username", "");
+                            String fullName = account.getString("full_name", "");
+                            String email = account.getString("email", "");
+                            String mobile = account.getString("mobile", "");
+                            String state = account.getString("state", "");
+                            String city = account.getString("city", "");
+                            saveCloudProfileDocument(user, username, fullName, email, mobile, state, city, b64, null);
+                            syncProfileToBackendApi(username, fullName, email, mobile, state, city);
+                        }
+                        if (currentPage == PAGE_PROFILE) showProfile();
+                        Toast.makeText(this, translate("Profile picture updated"), Toast.LENGTH_SHORT).show();
+                    }
+                }
+            } catch (Exception e) {
+                Toast.makeText(this, "Could not load selected image", Toast.LENGTH_SHORT).show();
+            }
         }
         if (requestCode == REQUEST_PROFILE_CAMERA && resultCode == RESULT_OK && data != null && data.getExtras() != null) {
-            capturedProfileImage = (Bitmap) data.getExtras().get("data");
-            selectedProfileImage = null;
-            if (capturedProfileImage != null) {
-                String savedPath = saveProfileBitmap(capturedProfileImage);
-                if (savedPath != null) {
-                    selectedProfileImage = Uri.fromFile(new File(savedPath));
-                    getSharedPreferences("fendly_account", MODE_PRIVATE).edit()
-                            .putString("profile_image_uri", savedPath)
+            Bitmap bitmap = (Bitmap) data.getExtras().get("data");
+            if (bitmap != null) {
+                capturedProfileImage = null;
+                selectedProfileImage = null;
+                String b64 = bitmapToBase64(bitmap);
+                if (!b64.isEmpty()) {
+                    SharedPreferences account = getSharedPreferences("fendly_account", MODE_PRIVATE);
+                    account.edit()
+                            .remove("profile_image_uri")
+                            .putString("profile_image_url", b64)
                             .apply();
+
+                    FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
+                    if (user != null) {
+                        String username = account.getString("username", "");
+                        String fullName = account.getString("full_name", "");
+                        String email = account.getString("email", "");
+                        String mobile = account.getString("mobile", "");
+                        String state = account.getString("state", "");
+                        String city = account.getString("city", "");
+                        saveCloudProfileDocument(user, username, fullName, email, mobile, state, city, b64, null);
+                        syncProfileToBackendApi(username, fullName, email, mobile, state, city);
+                    }
+                    if (currentPage == PAGE_PROFILE) showProfile();
+                    Toast.makeText(this, translate("Profile picture updated"), Toast.LENGTH_SHORT).show();
                 }
             }
-            if (currentPage == PAGE_PROFILE) showProfile();
-            uploadProfilePhotoBackground(null, capturedProfileImage);
         }
 
         if (requestCode == IntentIntegrator.REQUEST_CODE && resultCode == RESULT_OK) {
