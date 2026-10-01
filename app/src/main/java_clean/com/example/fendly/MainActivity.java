@@ -5638,6 +5638,62 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         setContentView(loading);
     }
 
+    private void processDocumentToAccount(DocumentSnapshot document, SharedPreferences account) {
+        if (document == null || !document.exists()) return;
+        SharedPreferences.Editor editor = account.edit();
+        boolean isVerified = parseBooleanValue(document.get("emailVerified"))
+                || parseBooleanValue(document.get("isEmailVerified"))
+                || parseBooleanValue(document.get("email_verified"));
+        boolean mobileVerified = parseBooleanValue(document.get("mobileVerified"))
+                || parseBooleanValue(document.get("isMobileVerified"))
+                || parseBooleanValue(document.get("mobile_verified"));
+        String cloudEmail = document.getString("email");
+        String cloudMobile = document.getString("mobile");
+        String fullName = document.getString("full_name");
+        String cloudFirstName = document.getString("first_name");
+        if (cloudFirstName == null || cloudFirstName.trim().isEmpty()) {
+            cloudFirstName = document.getString("profile_first_name");
+        }
+        String cloudSurname = document.getString("surname");
+        if (cloudSurname == null || cloudSurname.trim().isEmpty()) {
+            cloudSurname = document.getString("profile_surname");
+        }
+        String cloudState = document.getString("state");
+        String cloudCity = document.getString("city");
+        String cloudImage = document.getString("imageUrl");
+        if (cloudImage == null || cloudImage.trim().isEmpty()) {
+            cloudImage = document.getString("profile_image_url");
+        }
+
+        if (isVerified) editor.putBoolean("email_verified", true);
+        if (mobileVerified) editor.putBoolean("mobile_verified", true);
+        if (cloudEmail != null && !cloudEmail.trim().isEmpty() && !cloudEmail.endsWith("@login.fendly.app")) {
+            editor.putString("email", cloudEmail.trim());
+        }
+        if (cloudMobile != null && !cloudMobile.trim().isEmpty()) {
+            editor.putString("mobile", cloudMobile.trim());
+        }
+        if (fullName != null && !fullName.trim().isEmpty()) {
+            editor.putString("full_name", fullName.trim());
+        }
+        if (cloudFirstName != null && !cloudFirstName.trim().isEmpty()) {
+            editor.putString("profile_first_name", cloudFirstName.trim());
+        }
+        if (cloudSurname != null && !cloudSurname.trim().isEmpty()) {
+            editor.putString("profile_surname", cloudSurname.trim());
+        }
+        if (cloudState != null && !cloudState.trim().isEmpty()) {
+            editor.putString("state", cloudState.trim());
+        }
+        if (cloudCity != null && !cloudCity.trim().isEmpty()) {
+            editor.putString("city", cloudCity.trim());
+        }
+        if (cloudImage != null && !cloudImage.trim().isEmpty()) {
+            editor.putString("profile_image_url", cloudImage.trim());
+        }
+        editor.apply();
+    }
+
     private void showProfile() {
         selectedLanguage = getSharedPreferences("fendly_language", MODE_PRIVATE)
                 .getInt("selected_language_index", 0);
@@ -5653,113 +5709,90 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
 
         showProfileLoading();
         FirebaseFirestore db = FirebaseFirestore.getInstance();
-        db.collection("users").document(getProfileDocumentKey())
+        String primaryKey = getProfileDocumentKey();
+        String fallbackKey = currentUser.getUid();
+
+        Runnable proceedWithProfile = () -> {
+            String currentEmailKey = account.getString("email", "").trim().toLowerCase(Locale.US);
+            if (!currentEmailKey.isEmpty() && !currentEmailKey.endsWith("@login.fendly.app")) {
+                db.collection("verified_emails").document(currentEmailKey)
+                        .get(Source.SERVER)
+                        .addOnSuccessListener(emailDoc -> {
+                            if (emailDoc != null && emailDoc.exists() && parseBooleanValue(emailDoc.get("verified"))) {
+                                account.edit().putBoolean("email_verified", true).apply();
+                            }
+                        });
+            }
+
+            currentUser.getIdToken(false).addOnSuccessListener(token -> network.execute(() -> {
+                HttpURLConnection connection = null;
+                try {
+                    connection = (HttpURLConnection) new URL(API_BASE + "/api/users/profile").openConnection();
+                    connection.setRequestMethod("GET");
+                    connection.setConnectTimeout(15000);
+                    connection.setReadTimeout(30000);
+                    connection.setRequestProperty("Authorization", "Bearer " + token.getToken());
+                    if (connection.getResponseCode() >= 200 && connection.getResponseCode() < 300) {
+                        String payload = readStream(connection.getInputStream());
+                        if (payload != null && !payload.trim().isEmpty()) {
+                            JSONObject profile = new JSONObject(payload);
+                            boolean remoteEmailVerified = profile.optBoolean("email_verified", false);
+                            boolean remoteMobileVerified = profile.optBoolean("mobile_verified", false);
+                            String remoteEmail = profile.optString("email", "").trim();
+                            String remoteMobile = profile.optString("mobile", "").trim();
+                            String remoteFullName = profile.optString("full_name", "").trim();
+                            String remotePhotoUrl = profile.optString("profile_photo_url", "").trim();
+                            if (remotePhotoUrl.isEmpty()) {
+                                remotePhotoUrl = profile.optString("image_url", "").trim();
+                            }
+                            SharedPreferences.Editor backendEditor = account.edit();
+                            if (remoteEmailVerified) backendEditor.putBoolean("email_verified", true);
+                            if (remoteMobileVerified) backendEditor.putBoolean("mobile_verified", true);
+                            if (!remoteEmail.isEmpty() && !remoteEmail.endsWith("@login.fendly.app")) backendEditor.putString("email", remoteEmail);
+                            if (!remoteMobile.isEmpty()) backendEditor.putString("mobile", remoteMobile);
+                            if (!remoteFullName.isEmpty()) backendEditor.putString("full_name", remoteFullName);
+                            if (!remotePhotoUrl.isEmpty()) backendEditor.putString("profile_image_url", remotePhotoUrl);
+                            backendEditor.apply();
+                        }
+                    }
+                } catch (Exception ignored) {
+                } finally {
+                    if (connection != null) connection.disconnect();
+                    runOnUiThread(this::renderProfileContent);
+                }
+            })).addOnFailureListener(err -> {
+                runOnUiThread(this::renderProfileContent);
+            });
+        };
+
+        db.collection("users").document(primaryKey)
                 .get(Source.SERVER)
                 .addOnSuccessListener(document -> {
-                    SharedPreferences.Editor editor = account.edit();
-                    if (document != null && document.exists()) {
-                        boolean isVerified = parseBooleanValue(document.get("emailVerified"))
-                                || parseBooleanValue(document.get("isEmailVerified"))
-                                || parseBooleanValue(document.get("email_verified"));
-                        boolean mobileVerified = parseBooleanValue(document.get("mobileVerified"))
-                                || parseBooleanValue(document.get("isMobileVerified"))
-                                || parseBooleanValue(document.get("mobile_verified"));
-                        String cloudEmail = document.getString("email");
-                        String cloudMobile = document.getString("mobile");
-                        String fullName = document.getString("full_name");
-                        String cloudFirstName = document.getString("first_name");
-                        if (cloudFirstName == null) cloudFirstName = document.getString("profile_first_name");
-                        String cloudSurname = document.getString("surname");
-                        if (cloudSurname == null) cloudSurname = document.getString("profile_surname");
-                        String cloudState = document.getString("state");
-                        String cloudCity = document.getString("city");
-                        String cloudImage = document.getString("imageUrl");
-                        if (cloudImage == null || cloudImage.trim().isEmpty()) {
-                            cloudImage = document.getString("profile_image_url");
-                        }
-
-                        if (isVerified) editor.putBoolean("email_verified", true);
-                        if (mobileVerified) editor.putBoolean("mobile_verified", true);
-                        if (cloudEmail != null && !cloudEmail.trim().isEmpty() && !cloudEmail.endsWith("@login.fendly.app")) {
-                            editor.putString("email", cloudEmail.trim());
-                        }
-                        if (cloudMobile != null && !cloudMobile.trim().isEmpty()) {
-                            editor.putString("mobile", cloudMobile.trim());
-                        }
-                        if (fullName != null && !fullName.trim().isEmpty()) {
-                            editor.putString("full_name", fullName.trim());
-                        }
-                        if (cloudFirstName != null && !cloudFirstName.trim().isEmpty()) {
-                            editor.putString("profile_first_name", cloudFirstName.trim());
-                        }
-                        if (cloudSurname != null && !cloudSurname.trim().isEmpty()) {
-                            editor.putString("profile_surname", cloudSurname.trim());
-                        }
-                        if (cloudState != null && !cloudState.trim().isEmpty()) {
-                            editor.putString("state", cloudState.trim());
-                        }
-                        if (cloudCity != null && !cloudCity.trim().isEmpty()) {
-                            editor.putString("city", cloudCity.trim());
-                        }
-                        if (cloudImage != null && !cloudImage.trim().isEmpty()) {
-                            editor.putString("profile_image_url", cloudImage.trim());
-                        }
-                    }
-                    editor.apply();
-
-                    String currentEmailKey = account.getString("email", "").trim().toLowerCase(Locale.US);
-                    if (!currentEmailKey.isEmpty() && !currentEmailKey.endsWith("@login.fendly.app")) {
-                        db.collection("verified_emails").document(currentEmailKey)
+                    if ((document == null || !document.exists()) && !fallbackKey.equals(primaryKey)) {
+                        db.collection("users").document(fallbackKey)
                                 .get(Source.SERVER)
-                                .addOnSuccessListener(emailDoc -> {
-                                    if (emailDoc != null && emailDoc.exists() && parseBooleanValue(emailDoc.get("verified"))) {
-                                        account.edit().putBoolean("email_verified", true).apply();
-                                    }
-                                });
+                                .addOnSuccessListener(fallbackDoc -> {
+                                    processDocumentToAccount(fallbackDoc, account);
+                                    proceedWithProfile.run();
+                                })
+                                .addOnFailureListener(e -> proceedWithProfile.run());
+                        return;
                     }
-
-                    currentUser.getIdToken(false).addOnSuccessListener(token -> network.execute(() -> {
-                        HttpURLConnection connection = null;
-                        try {
-                            connection = (HttpURLConnection) new URL(API_BASE + "/api/users/profile").openConnection();
-                            connection.setRequestMethod("GET");
-                            connection.setConnectTimeout(15000);
-                            connection.setReadTimeout(30000);
-                            connection.setRequestProperty("Authorization", "Bearer " + token.getToken());
-                            if (connection.getResponseCode() >= 200 && connection.getResponseCode() < 300) {
-                                String payload = readStream(connection.getInputStream());
-                                if (payload != null && !payload.trim().isEmpty()) {
-                                    JSONObject profile = new JSONObject(payload);
-                                    boolean remoteEmailVerified = profile.optBoolean("email_verified", false);
-                                    boolean remoteMobileVerified = profile.optBoolean("mobile_verified", false);
-                                    String remoteEmail = profile.optString("email", "").trim();
-                                    String remoteMobile = profile.optString("mobile", "").trim();
-                                    String remoteFullName = profile.optString("full_name", "").trim();
-                                    String remotePhotoUrl = profile.optString("profile_photo_url", "").trim();
-                                    if (remotePhotoUrl.isEmpty()) {
-                                        remotePhotoUrl = profile.optString("image_url", "").trim();
-                                    }
-                                    SharedPreferences.Editor backendEditor = account.edit();
-                                    if (remoteEmailVerified) backendEditor.putBoolean("email_verified", true);
-                                    if (remoteMobileVerified) backendEditor.putBoolean("mobile_verified", true);
-                                    if (!remoteEmail.isEmpty() && !remoteEmail.endsWith("@login.fendly.app")) backendEditor.putString("email", remoteEmail);
-                                    if (!remoteMobile.isEmpty()) backendEditor.putString("mobile", remoteMobile);
-                                    if (!remoteFullName.isEmpty()) backendEditor.putString("full_name", remoteFullName);
-                                    if (!remotePhotoUrl.isEmpty()) backendEditor.putString("profile_image_url", remotePhotoUrl);
-                                    backendEditor.apply();
-                                }
-                            }
-                        } catch (Exception ignored) {
-                        } finally {
-                            if (connection != null) connection.disconnect();
-                            runOnUiThread(this::renderProfileContent);
-                        }
-                    })).addOnFailureListener(err -> {
-                        runOnUiThread(this::renderProfileContent);
-                    });
+                    processDocumentToAccount(document, account);
+                    proceedWithProfile.run();
                 })
                 .addOnFailureListener(e -> {
-                    runOnUiThread(this::renderProfileContent);
+                    if (!fallbackKey.equals(primaryKey)) {
+                        db.collection("users").document(fallbackKey)
+                                .get(Source.SERVER)
+                                .addOnSuccessListener(fallbackDoc -> {
+                                    processDocumentToAccount(fallbackDoc, account);
+                                    proceedWithProfile.run();
+                                })
+                                .addOnFailureListener(err -> proceedWithProfile.run());
+                    } else {
+                        proceedWithProfile.run();
+                    }
                 });
     }
 
