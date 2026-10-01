@@ -5119,6 +5119,63 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         }
     }
 
+    private String saveProfileFileToInternalStorage(Uri uri) {
+        if (uri == null) return null;
+        try {
+            File file = new File(getFilesDir(), "profile_photo.jpg");
+            try (InputStream input = getContentResolver().openInputStream(uri);
+                 OutputStream output = new FileOutputStream(file)) {
+                if (input == null) return null;
+                byte[] buffer = new byte[8192];
+                int read;
+                while ((read = input.read(buffer)) != -1) {
+                    output.write(buffer, 0, read);
+                }
+            }
+            Bitmap bitmap = BitmapFactory.decodeFile(file.getAbsolutePath());
+            if (bitmap != null) {
+                int maxDim = 400;
+                int width = bitmap.getWidth();
+                int height = bitmap.getHeight();
+                if (width > maxDim || height > maxDim) {
+                    float ratio = Math.min((float) maxDim / width, (float) maxDim / height);
+                    int newWidth = Math.round(width * ratio);
+                    int newHeight = Math.round(height * ratio);
+                    bitmap = Bitmap.createScaledBitmap(bitmap, newWidth, newHeight, true);
+                }
+                try (OutputStream output = new FileOutputStream(file)) {
+                    bitmap.compress(Bitmap.CompressFormat.JPEG, 70, output);
+                }
+            }
+            return file.getAbsolutePath();
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    private String saveProfileBitmapToInternalStorage(Bitmap sourceBitmap) {
+        if (sourceBitmap == null) return null;
+        try {
+            File file = new File(getFilesDir(), "profile_photo.jpg");
+            int width = sourceBitmap.getWidth();
+            int height = sourceBitmap.getHeight();
+            int maxDim = 400;
+            Bitmap bitmap = sourceBitmap;
+            if (width > maxDim || height > maxDim) {
+                float ratio = Math.min((float) maxDim / width, (float) maxDim / height);
+                width = Math.round(width * ratio);
+                height = Math.round(height * ratio);
+                bitmap = Bitmap.createScaledBitmap(sourceBitmap, width, height, true);
+            }
+            try (OutputStream output = new FileOutputStream(file)) {
+                bitmap.compress(Bitmap.CompressFormat.JPEG, 70, output);
+            }
+            return file.getAbsolutePath();
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
     private void saveCloudProfileDocument(FirebaseUser user, String username, String fullName, String email,
                                           String mobile, String state, String city, String imageUrl,
                                           TextView saveButton) {
@@ -7178,11 +7235,9 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             try {
                 getContentResolver().takePersistableUriPermission(imageUri, Intent.FLAG_GRANT_READ_URI_PERMISSION);
             } catch (Exception ignored) {}
-            try {
-                Bitmap bitmap;
-                try (InputStream input = getContentResolver().openInputStream(imageUri)) {
-                    bitmap = BitmapFactory.decodeStream(input);
-                }
+            String savedPath = saveProfileFileToInternalStorage(imageUri);
+            if (savedPath != null) {
+                Bitmap bitmap = BitmapFactory.decodeFile(savedPath);
                 if (bitmap != null) {
                     capturedProfileImage = null;
                     selectedProfileImage = null;
@@ -7190,7 +7245,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                     if (!b64.isEmpty()) {
                         SharedPreferences account = getSharedPreferences("fendly_account", MODE_PRIVATE);
                         account.edit()
-                                .putString("profile_image_uri", imageUri.toString())
+                                .putString("profile_image_uri", savedPath)
                                 .putString("profile_image_url", b64)
                                 .apply();
 
@@ -7209,36 +7264,39 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                         Toast.makeText(this, translate("Profile picture updated"), Toast.LENGTH_SHORT).show();
                     }
                 }
-            } catch (Exception e) {
+            } else {
                 Toast.makeText(this, "Could not load selected image", Toast.LENGTH_SHORT).show();
             }
         }
         if (requestCode == REQUEST_PROFILE_CAMERA && resultCode == RESULT_OK && data != null && data.getExtras() != null) {
             Bitmap bitmap = (Bitmap) data.getExtras().get("data");
             if (bitmap != null) {
-                capturedProfileImage = null;
-                selectedProfileImage = null;
-                String b64 = bitmapToBase64(bitmap);
-                if (!b64.isEmpty()) {
-                    SharedPreferences account = getSharedPreferences("fendly_account", MODE_PRIVATE);
-                    account.edit()
-                            .remove("profile_image_uri")
-                            .putString("profile_image_url", b64)
-                            .apply();
+                String savedPath = saveProfileBitmapToInternalStorage(bitmap);
+                if (savedPath != null) {
+                    capturedProfileImage = null;
+                    selectedProfileImage = null;
+                    String b64 = bitmapToBase64(bitmap);
+                    if (!b64.isEmpty()) {
+                        SharedPreferences account = getSharedPreferences("fendly_account", MODE_PRIVATE);
+                        account.edit()
+                                .putString("profile_image_uri", savedPath)
+                                .putString("profile_image_url", b64)
+                                .apply();
 
-                    FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
-                    if (user != null) {
-                        String username = account.getString("username", "");
-                        String fullName = account.getString("full_name", "");
-                        String email = account.getString("email", "");
-                        String mobile = account.getString("mobile", "");
-                        String state = account.getString("state", "");
-                        String city = account.getString("city", "");
-                        saveCloudProfileDocument(user, username, fullName, email, mobile, state, city, b64, null);
-                        syncProfileToBackendApi(username, fullName, email, mobile, state, city);
+                        FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
+                        if (user != null) {
+                            String username = account.getString("username", "");
+                            String fullName = account.getString("full_name", "");
+                            String email = account.getString("email", "");
+                            String mobile = account.getString("mobile", "");
+                            String state = account.getString("state", "");
+                            String city = account.getString("city", "");
+                            saveCloudProfileDocument(user, username, fullName, email, mobile, state, city, b64, null);
+                            syncProfileToBackendApi(username, fullName, email, mobile, state, city);
+                        }
+                        if (currentPage == PAGE_PROFILE) showProfile();
+                        Toast.makeText(this, translate("Profile picture updated"), Toast.LENGTH_SHORT).show();
                     }
-                    if (currentPage == PAGE_PROFILE) showProfile();
-                    Toast.makeText(this, translate("Profile picture updated"), Toast.LENGTH_SHORT).show();
                 }
             }
         }
