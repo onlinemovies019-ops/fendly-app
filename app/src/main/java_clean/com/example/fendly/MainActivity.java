@@ -211,6 +211,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
     }
     private Uri selectedProfileImage;
     private Bitmap capturedProfileImage;
+    private boolean profileImageExplicitlyRemoved = false;
     private static final int REQUEST_PROFILE_IMAGE = 706;
     private static final int REQUEST_PROFILE_CAMERA = 707;
     private static final int REQUEST_IMEI_SCAN = 708;
@@ -249,6 +250,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
     private static final int PAGE_SUBSCRIPTION = 6;
     private static final int PAGE_ADMIN = 7;
     private Handler adminPressHandler = new Handler();
+    private boolean adminAlertsAutoShownThisVisit;
     private boolean accountCreated;
     private boolean profileSetupVisible;
     private boolean profileHydrationInFlight = false;
@@ -291,21 +293,14 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
     }
 
     private String getProfileDocumentKey() {
+        FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
+        if (user != null) {
+            return user.getUid();
+        }
         SharedPreferences account = getSharedPreferences("fendly_account", MODE_PRIVATE);
         String username = normalizeDocumentKey(account.getString("username", ""));
         if (!username.isEmpty() && username.length() >= 3) {
             return username;
-        }
-        FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
-        if (user != null) {
-            if (user.getEmail() != null) {
-                String email = user.getEmail().trim().toLowerCase(Locale.US);
-                String base = normalizeDocumentKey(email.replace("@login.fendly.app", ""));
-                if (!base.isEmpty() && base.length() >= 3) {
-                    return base;
-                }
-            }
-            return user.getUid();
         }
         return "anonymous";
     }
@@ -1040,6 +1035,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         profileHydrated = false;
         selectedProfileImage = null;
         capturedProfileImage = null;
+        profileImageExplicitlyRemoved = false;
         visibleFirstName = null;
         visibleSurname = null;
         visibleEmail = null;
@@ -1152,30 +1148,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         avatar.setImageResource(R.drawable.ic_field_person);
         if (Build.VERSION.SDK_INT >= 21) avatar.setClipToOutline(true);
 
-        boolean hasCustomPhoto = false;
-        String savedProfileUri = account.getString("profile_image_uri", null);
-        if (savedProfileUri != null && !savedProfileUri.trim().isEmpty()
-                && setImageFromUri(avatar, Uri.parse(savedProfileUri))) {
-            hasCustomPhoto = true;
-        }
-        if (selectedProfileImage != null) {
-            if (setImageFromUri(avatar, selectedProfileImage)) hasCustomPhoto = true;
-        }
-        if (capturedProfileImage != null) {
-            hasCustomPhoto = true;
-            avatar.setImageBitmap(capturedProfileImage);
-        }
-
-        if (hasCustomPhoto) {
-            avatar.clearColorFilter();
-            avatar.setScaleType(ImageView.ScaleType.CENTER_CROP);
-            avatar.setPadding(0, 0, 0, 0);
-        } else {
-            avatar.setColorFilter(accentColor());
-            avatar.setScaleType(ImageView.ScaleType.FIT_CENTER);
-            int pad = dp(24);
-            avatar.setPadding(pad, pad, pad, pad);
-        }
+        bindProfilePhoto(avatar, account);
 
         avatarWrap.addView(avatar, new FrameLayout.LayoutParams(dp(118), dp(118), Gravity.CENTER));
         LinearLayout.LayoutParams avatarLayout = new LinearLayout.LayoutParams(dp(118), dp(118));
@@ -3443,14 +3416,13 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
     private void uploadProfilePhotoBackground(Uri imageUri, Bitmap cameraBitmap) {
         FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
         if (user == null) return;
-        network.execute(() -> {
-            String imageUrl = "";
-            if (cameraBitmap != null) {
-                imageUrl = bitmapToBase64(cameraBitmap);
-            } else if (imageUri != null) {
-                imageUrl = uriToBase64(imageUri);
+
+        user.getIdToken(false).addOnSuccessListener(token -> network.execute(() -> {
+            String imageUrl = uploadImage(imageUri, cameraBitmap, token.getToken());
+            if (imageUrl == null || imageUrl.isEmpty()) {
+                runOnUiThread(() -> Toast.makeText(this, "Profile picture upload failed", Toast.LENGTH_LONG).show());
+                return;
             }
-            if (imageUrl.isEmpty()) return;
 
             final String finalImageUrl = imageUrl;
             SharedPreferences account = getSharedPreferences("fendly_account", MODE_PRIVATE);
@@ -3467,11 +3439,13 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             String city = account.getString("city", "");
 
             saveCloudProfileDocument(user, username, fullName, email, mobile, state, city, finalImageUrl, null);
-            syncProfileToBackendApi(username, fullName, email, mobile, state, city);
+            syncProfileToBackendApi(username, fullName, email, mobile, state, city, finalImageUrl);
 
             runOnUiThread(() -> {
                 if (currentPage == PAGE_PROFILE) showProfile();
             });
+        })).addOnFailureListener(error -> {
+            Toast.makeText(this, "Profile picture upload failed", Toast.LENGTH_LONG).show();
         });
     }
 
@@ -3514,9 +3488,14 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         sizeThemedDialog(dialog);
     }
 
-    private void removeProfilePicture() {
+    private void clearProfileImageSelectionState(boolean explicitlyRemoved) {
         selectedProfileImage = null;
         capturedProfileImage = null;
+        profileImageExplicitlyRemoved = explicitlyRemoved;
+    }
+
+    private void removeProfilePicture() {
+        clearProfileImageSelectionState(true);
         try {
             File dir = getFilesDir();
             File[] files = dir.listFiles((dir1, name) -> name != null && name.startsWith("profile_photo"));
@@ -3543,9 +3522,10 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             if (!user.getUid().equals(docKey)) {
                 db.collection("users").document(user.getUid()).set(update, SetOptions.merge());
             }
-            syncProfileToBackendApi(account.getString("username", ""), account.getString("full_name", ""), account.getString("email", ""), account.getString("mobile", ""), account.getString("state", ""), account.getString("city", ""));
+            syncProfileToBackendApi(account.getString("username", ""), account.getString("full_name", ""), account.getString("email", ""), account.getString("mobile", ""), account.getString("state", ""), account.getString("city", ""), "");
         }
         if (currentPage == PAGE_PROFILE) showProfile();
+        else if (currentPage == PAGE_PROFILE_SETUP) showProfileSetup();
         Toast.makeText(this, translate("Profile picture removed"), Toast.LENGTH_SHORT).show();
     }
 
@@ -3595,6 +3575,18 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         imageView.setLayoutParams(new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         imageView.setScaleType(ImageView.ScaleType.FIT_CENTER);
 
+        if (profileImageExplicitlyRemoved) {
+            imageView.setImageResource(R.drawable.ic_field_person);
+            imageView.setColorFilter(Color.WHITE);
+            imageView.setPadding(dp(80), dp(80), dp(80), dp(80));
+            imageView.setOnClickListener(v -> imageDialog.dismiss());
+            layout.setOnClickListener(v -> imageDialog.dismiss());
+            layout.addView(imageView);
+            imageDialog.setContentView(layout);
+            imageDialog.show();
+            return;
+        }
+
         SharedPreferences account = getSharedPreferences("fendly_account", MODE_PRIVATE);
         String savedProfileUri = account.getString("profile_image_uri", null);
         String cloudImageUrl = account.getString("profile_image_url", "").trim();
@@ -3623,6 +3615,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
     }
 
     private boolean hasProfilePicture() {
+        if (profileImageExplicitlyRemoved) return false;
         SharedPreferences account = getSharedPreferences("fendly_account", MODE_PRIVATE);
         String savedProfileUri = account.getString("profile_image_uri", null);
         String cloudImageUrl = account.getString("profile_image_url", "").trim();
@@ -3630,6 +3623,51 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                (capturedProfileImage != null) ||
                (savedProfileUri != null && !savedProfileUri.trim().isEmpty()) ||
                (!cloudImageUrl.isEmpty());
+    }
+
+    private boolean bindProfilePhoto(ImageView avatar, SharedPreferences account) {
+        if (avatar == null) return false;
+        if (profileImageExplicitlyRemoved) {
+            avatar.setImageResource(R.drawable.ic_field_person);
+            avatar.setColorFilter(accentColor());
+            avatar.setScaleType(ImageView.ScaleType.FIT_CENTER);
+            int pad = dp(24);
+            avatar.setPadding(pad, pad, pad, pad);
+            return false;
+        }
+        boolean hasCustomPhoto = false;
+        String savedProfileUri = account.getString("profile_image_uri", null);
+        String cloudImageUrl = account.getString("profile_image_url", "").trim();
+
+        if (selectedProfileImage != null) {
+            if (setImageFromUri(avatar, selectedProfileImage)) {
+                hasCustomPhoto = true;
+            }
+        } else if (capturedProfileImage != null) {
+            avatar.setImageBitmap(capturedProfileImage);
+            hasCustomPhoto = true;
+        } else if (savedProfileUri != null && !savedProfileUri.trim().isEmpty()) {
+            Uri uri = savedProfileUri.startsWith("/") ? Uri.fromFile(new File(savedProfileUri)) : Uri.parse(savedProfileUri);
+            if (setImageFromUri(avatar, uri)) {
+                hasCustomPhoto = true;
+            }
+        } else if (!cloudImageUrl.isEmpty()) {
+            loadCloudProfileImage(avatar);
+            hasCustomPhoto = true;
+        }
+
+        if (hasCustomPhoto) {
+            avatar.clearColorFilter();
+            avatar.setScaleType(ImageView.ScaleType.CENTER_CROP);
+            avatar.setPadding(0, 0, 0, 0);
+        } else {
+            avatar.setImageResource(R.drawable.ic_field_person);
+            avatar.setColorFilter(accentColor());
+            avatar.setScaleType(ImageView.ScaleType.FIT_CENTER);
+            int pad = dp(24);
+            avatar.setPadding(pad, pad, pad, pad);
+        }
+        return hasCustomPhoto;
     }
 
     private void openProfilePhotoPicker() {
@@ -4196,7 +4234,8 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         }
 
         syncProfileToBackendApi(account.getString("username", ""), account.getString("full_name", ""),
-                cleanEmail, account.getString("mobile", ""), account.getString("state", ""), account.getString("city", ""));
+                cleanEmail, account.getString("mobile", ""), account.getString("state", ""), account.getString("city", ""),
+                account.getString("profile_image_url", ""));
     }
 
     private void saveVerifiedMobileToCloud(String mobileValue) {
@@ -4218,7 +4257,8 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                 .set(update, SetOptions.merge())
                 .addOnFailureListener(error -> Log.e("FIREBASE_ERROR", "Mobile verification cloud save failed: ", error));
         syncProfileToBackendApi(account.getString("username", ""), account.getString("full_name", ""),
-                account.getString("email", ""), mobileValue, account.getString("state", ""), account.getString("city", ""));
+                account.getString("email", ""), mobileValue, account.getString("state", ""), account.getString("city", ""),
+                account.getString("profile_image_url", ""));
     }
     private Bitmap bitmapFromUri(Uri uri) {
         if (uri == null) return null;
@@ -4883,7 +4923,9 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                         if (cloudImage == null || cloudImage.trim().isEmpty()) {
                             cloudImage = document.getString("profile_image_url");
                         }
-                        if (cloudImage != null && !cloudImage.trim().isEmpty()) {
+                        if (profileImageExplicitlyRemoved) {
+                            editor.remove("profile_image_url");
+                        } else if (cloudImage != null && !cloudImage.trim().isEmpty()) {
                             editor.putString("profile_image_url", cloudImage.trim());
                         } else {
                             editor.remove("profile_image_url");
@@ -5021,6 +5063,9 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         if (!currentImageUrl.isEmpty()) {
             update.put("imageUrl", currentImageUrl);
             update.put("profile_image_url", currentImageUrl);
+            update.put("profile_photo_url", currentImageUrl);
+        } else {
+            update.put("profile_photo_url", "");
         }
         if (update.isEmpty()) return;
         FirebaseFirestore db = FirebaseFirestore.getInstance();
@@ -5072,16 +5117,26 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             if (saveButton != null) Toast.makeText(this, "Sign in before saving your profile", Toast.LENGTH_LONG).show();
             return;
         }
+
         String rawExisting = getSharedPreferences("fendly_account", MODE_PRIVATE)
                 .getString("profile_image_url", "").trim();
-        String imageUrl = (rawExisting.startsWith("http://") || rawExisting.startsWith("https://") || rawExisting.startsWith("data:image/")) ? rawExisting : "";
+        String imageUrl = (rawExisting.startsWith("http://") || rawExisting.startsWith("https://")) ? rawExisting : "";
 
-        if (capturedProfileImage != null) {
-            String b64 = bitmapToBase64(capturedProfileImage);
-            if (!b64.isEmpty()) imageUrl = b64;
-        } else if (selectedProfileImage != null) {
-            String b64 = uriToBase64(selectedProfileImage);
-            if (!b64.isEmpty()) imageUrl = b64;
+        if (capturedProfileImage != null || selectedProfileImage != null) {
+            user.getIdToken(false).addOnSuccessListener(token -> network.execute(() -> {
+                String uploadedUrl = uploadImage(selectedProfileImage, capturedProfileImage, token.getToken());
+                if (uploadedUrl == null || uploadedUrl.isEmpty()) {
+                    runOnUiThread(() -> {
+                        if (saveButton != null) profileSaveFailed(saveButton, "Profile photo upload failed");
+                        else Toast.makeText(this, "Profile photo upload failed", Toast.LENGTH_LONG).show();
+                    });
+                    return;
+                }
+                runOnUiThread(() -> saveCloudProfileDocument(user, username, fullName, email, mobile, state, city, uploadedUrl, saveButton));
+            })).addOnFailureListener(error -> {
+                if (saveButton != null) profileSaveFailed(saveButton, "Authentication failed while uploading your photo");
+            });
+            return;
         }
 
         saveCloudProfileDocument(user, username, fullName, email, mobile, state, city, imageUrl, saveButton);
@@ -5187,6 +5242,10 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             return;
         }
 
+        if (imageUrl != null && imageUrl.startsWith("data:image/")) {
+            imageUrl = "";
+        }
+
         SharedPreferences account = getSharedPreferences("fendly_account", MODE_PRIVATE);
         String fn = account.getString("profile_first_name", "");
         String sn = account.getString("profile_surname", "");
@@ -5218,8 +5277,9 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         profile.put("mobile_verified", mobileVerified);
         profile.put("imageUrl", imageUrl == null ? "" : imageUrl);
         profile.put("profile_image_url", imageUrl == null ? "" : imageUrl);
+        profile.put("profile_photo_url", imageUrl == null ? "" : imageUrl);
 
-        syncProfileToBackendApi(username, fullName, email, mobile, state, city);
+        syncProfileToBackendApi(username, fullName, email, mobile, state, city, imageUrl == null ? "" : imageUrl);
 
         FirebaseFirestore db = FirebaseFirestore.getInstance();
         String docKey = getProfileDocumentKey();
@@ -5241,17 +5301,19 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                 .putString("city", city)
                 .apply();
 
+        profileImageExplicitlyRemoved = false;
         cloudProfileLoaded = true;
         if (saveButton != null) profileSaveSucceeded(saveButton);
     }
 
-    private void syncProfileToBackendApi(String username, String fullName, String email, String mobile, String state, String city) {
+    private void syncProfileToBackendApi(String username, String fullName, String email, String mobile,
+                                       String state, String city, String profilePhotoUrl) {
         FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
         if (user == null) return;
         SharedPreferences account = getSharedPreferences("fendly_account", MODE_PRIVATE);
         boolean emailVerified = account.getBoolean("email_verified", false);
         boolean mobileVerified = account.getBoolean("mobile_verified", false);
-        String profilePhotoUrl = account.getString("profile_image_url", "").trim();
+        String photoUrl = profilePhotoUrl == null ? "" : profilePhotoUrl.trim();
         user.getIdToken(false).addOnSuccessListener(token -> network.execute(() -> {
             HttpURLConnection putConnection = null;
             try {
@@ -5262,7 +5324,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                 putConnection.setDoOutput(true);
                 putConnection.setRequestProperty("Authorization", "Bearer " + token.getToken());
                 putConnection.setRequestProperty("Content-Type", "application/json; charset=UTF-8");
-                String photoJson = profilePhotoUrl.isEmpty() ? "null" : "\"" + escapeJson(profilePhotoUrl) + "\"";
+                String photoJson = photoUrl.isEmpty() ? "null" : "\"" + escapeJson(photoUrl) + "\"";
                 String body = "{\"username\":\"" + escapeJson(username) + "\",\"full_name\":\"" + escapeJson(fullName) + "\",\"email\":\"" + escapeJson(email) + "\",\"mobile\":\"" + escapeJson(mobile) + "\",\"state\":\"" + escapeJson(state) + "\",\"city\":\"" + escapeJson(city) + "\",\"profile_photo_url\":" + photoJson + ",\"email_verified\":" + emailVerified + ",\"mobile_verified\":" + mobileVerified + "}";
                 try (OutputStream output = putConnection.getOutputStream()) {
                     output.write(body.getBytes(StandardCharsets.UTF_8));
@@ -5347,7 +5409,10 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                         surname = document.getString("surname");
                         state = document.getString("state");
                         city = document.getString("city");
-                        imageUrl = document.getString("imageUrl");
+                        imageUrl = document.getString("profile_photo_url");
+                        if (imageUrl == null || imageUrl.trim().isEmpty()) {
+                            imageUrl = document.getString("imageUrl");
+                        }
                         if (imageUrl == null || imageUrl.trim().isEmpty()) {
                             imageUrl = document.getString("profile_image_url");
                         }
@@ -5378,6 +5443,8 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                     }
                     if (imageUrl != null && !imageUrl.trim().isEmpty()) {
                         editor.putString("profile_image_url", imageUrl.trim());
+                    } else {
+                        editor.remove("profile_image_url");
                     }
                     editor.putBoolean("created", true);
                     editor.putString("username", formatUsernameDisplay(username));
@@ -5413,12 +5480,21 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                                     String remoteEmail = profile.optString("email", "").trim();
                                     String remoteMobile = profile.optString("mobile", "").trim();
                                     String remoteFullName = profile.optString("full_name", "").trim();
+                                    String remotePhotoUrl = profile.optString("profile_photo_url", profile.optString("imageUrl", "")).trim();
+                                    if (remotePhotoUrl.isEmpty()) {
+                                        remotePhotoUrl = profile.optString("image_url", "").trim();
+                                    }
                                     SharedPreferences.Editor backendEditor = getSharedPreferences("fendly_account", MODE_PRIVATE).edit();
                                     if (remoteEmailVerified) backendEditor.putBoolean("email_verified", true);
                                     if (remoteMobileVerified) backendEditor.putBoolean("mobile_verified", true);
                                     if (!remoteEmail.isEmpty() && !remoteEmail.endsWith("@login.fendly.app")) backendEditor.putString("email", remoteEmail);
                                     if (!remoteMobile.isEmpty()) backendEditor.putString("mobile", remoteMobile);
                                     if (!remoteFullName.isEmpty()) backendEditor.putString("full_name", remoteFullName);
+                                    if (remotePhotoUrl.isEmpty()) {
+                                        backendEditor.remove("profile_image_url");
+                                    } else {
+                                        backendEditor.putString("profile_image_url", remotePhotoUrl);
+                                    }
                                     backendEditor.apply();
                                 }
                             }
@@ -5481,9 +5557,14 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                 putIfPresent(editor, "mobile", document.getString("mobile"));
                 putIfPresent(editor, "state", document.getString("state"));
                 putIfPresent(editor, "city", document.getString("city"));
-                String cloudImage = document.getString("imageUrl");
+                String cloudImage = document.getString("profile_photo_url");
+                if (cloudImage == null || cloudImage.trim().isEmpty()) cloudImage = document.getString("imageUrl");
                 if (cloudImage == null || cloudImage.trim().isEmpty()) cloudImage = document.getString("profile_image_url");
-                putIfPresent(editor, "profile_image_url", cloudImage);
+                if (cloudImage == null || cloudImage.trim().isEmpty()) {
+                    editor.remove("profile_image_url");
+                } else {
+                    editor.putString("profile_image_url", cloudImage.trim());
+                }
 
                 boolean cloudEmailVerified = parseBooleanValue(document.get("emailVerified"))
                         || parseBooleanValue(document.get("isEmailVerified"))
@@ -5566,7 +5647,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                         String mobile = profile.optString("mobile", account.getString("mobile", "")).trim();
                         String state = profile.optString("state", account.getString("state", "")).trim();
                         String city = profile.optString("city", account.getString("city", "")).trim();
-                        String photoUrl = profile.optString("profile_photo_url", account.getString("profile_image_url", "")).trim();
+                        String photoUrl = profile.optString("profile_photo_url", profile.optString("imageUrl", account.getString("profile_image_url", ""))).trim();
                         if (photoUrl.isEmpty()) {
                             photoUrl = profile.optString("image_url", "").trim();
                         }
@@ -5580,7 +5661,11 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                         if (!mobile.isEmpty()) editor.putString("mobile", mobile);
                         if (!state.isEmpty()) editor.putString("state", state);
                         if (!city.isEmpty()) editor.putString("city", city);
-                        if (!photoUrl.isEmpty()) editor.putString("profile_image_url", photoUrl);
+                        if (photoUrl.isEmpty()) {
+                            editor.remove("profile_image_url");
+                        } else {
+                            editor.putString("profile_image_url", photoUrl);
+                        }
                         if (emailVerified) editor.putBoolean("email_verified", true);
                         if (mobileVerified) editor.putBoolean("mobile_verified", true);
                         editor.apply();
@@ -5726,7 +5811,10 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         }
         String cloudState = document.getString("state");
         String cloudCity = document.getString("city");
-        String cloudImage = document.getString("imageUrl");
+        String cloudImage = document.getString("profile_photo_url");
+        if (cloudImage == null || cloudImage.trim().isEmpty()) {
+            cloudImage = document.getString("imageUrl");
+        }
         if (cloudImage == null || cloudImage.trim().isEmpty()) {
             cloudImage = document.getString("profile_image_url");
         }
@@ -5809,7 +5897,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                             String remoteEmail = profile.optString("email", "").trim();
                             String remoteMobile = profile.optString("mobile", "").trim();
                             String remoteFullName = profile.optString("full_name", "").trim();
-                            String remotePhotoUrl = profile.optString("profile_photo_url", "").trim();
+                            String remotePhotoUrl = profile.optString("profile_photo_url", profile.optString("imageUrl", "")).trim();
                             if (remotePhotoUrl.isEmpty()) {
                                 remotePhotoUrl = profile.optString("image_url", "").trim();
                             }
@@ -5819,7 +5907,11 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                             if (!remoteEmail.isEmpty() && !remoteEmail.endsWith("@login.fendly.app")) backendEditor.putString("email", remoteEmail);
                             if (!remoteMobile.isEmpty()) backendEditor.putString("mobile", remoteMobile);
                             if (!remoteFullName.isEmpty()) backendEditor.putString("full_name", remoteFullName);
-                            if (!remotePhotoUrl.isEmpty()) backendEditor.putString("profile_image_url", remotePhotoUrl);
+                            if (remotePhotoUrl.isEmpty()) {
+                                backendEditor.remove("profile_image_url");
+                            } else {
+                                backendEditor.putString("profile_image_url", remotePhotoUrl);
+                            }
                             backendEditor.apply();
                         }
                     }
@@ -5900,37 +5992,13 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         }
 
         visibleAvatar = avatar;
-        boolean hasCustomPhoto = false;
-        String cloudImageUrl = account.getString("profile_image_url", "").trim();
-        String savedProfileUri = account.getString("profile_image_uri", null);
-
-        if (selectedProfileImage != null) {
-            if (setImageFromUri(avatar, selectedProfileImage)) hasCustomPhoto = true;
-        } else if (capturedProfileImage != null) {
-            hasCustomPhoto = true;
-            avatar.setImageBitmap(capturedProfileImage);
-        } else if (!cloudImageUrl.isEmpty()) {
-            loadCloudProfileImage(avatar);
-            hasCustomPhoto = true;
-        } else if (savedProfileUri != null && !savedProfileUri.trim().isEmpty()
-                && setImageFromUri(avatar, Uri.parse(savedProfileUri))) {
-            hasCustomPhoto = true;
-        }
-
-        if (hasCustomPhoto) {
-            avatar.clearColorFilter();
-            avatar.setScaleType(ImageView.ScaleType.CENTER_CROP);
-            avatar.setPadding(0, 0, 0, 0);
-        } else {
-            avatar.setColorFilter(accentColor());
-            avatar.setScaleType(ImageView.ScaleType.FIT_CENTER);
-            int pad = dp(24);
-            avatar.setPadding(pad, pad, pad, pad);
-        }
+        bindProfilePhoto(avatar, account);
 
         FrameLayout.LayoutParams avatarParams = new FrameLayout.LayoutParams(dp(118), dp(118), Gravity.CENTER);
         avatarWrap.addView(avatar, avatarParams);
-        loadCloudProfileImage(avatar);
+        if (!profileImageExplicitlyRemoved && !hasProfilePicture()) {
+            loadCloudProfileImage(avatar);
+        }
         LinearLayout.LayoutParams avatarLayout = new LinearLayout.LayoutParams(dp(118), dp(118));
         avatarLayout.gravity = Gravity.CENTER_HORIZONTAL;
         root.addView(avatarWrap, avatarLayout);
@@ -7240,32 +7308,35 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             } catch (Exception ignored) {}
             String savedPath = saveProfileFileToInternalStorage(imageUri);
             if (savedPath != null) {
-                Bitmap bitmap = BitmapFactory.decodeFile(savedPath);
-                if (bitmap != null) {
-                    capturedProfileImage = null;
-                    selectedProfileImage = null;
-                    String b64 = bitmapToBase64(bitmap);
-                    if (!b64.isEmpty()) {
-                        SharedPreferences account = getSharedPreferences("fendly_account", MODE_PRIVATE);
-                        account.edit()
-                                .putString("profile_image_uri", savedPath)
-                                .putString("profile_image_url", b64)
-                                .apply();
-
-                        FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
-                        if (user != null) {
-                            String username = account.getString("username", "");
-                            String fullName = account.getString("full_name", "");
-                            String email = account.getString("email", "");
-                            String mobile = account.getString("mobile", "");
-                            String state = account.getString("state", "");
-                            String city = account.getString("city", "");
-                            saveCloudProfileDocument(user, username, fullName, email, mobile, state, city, b64, null);
-                            syncProfileToBackendApi(username, fullName, email, mobile, state, city);
+                SharedPreferences account = getSharedPreferences("fendly_account", MODE_PRIVATE);
+                account.edit().putString("profile_image_uri", savedPath).apply();
+                FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
+                if (user != null) {
+                    user.getIdToken(false).addOnSuccessListener(token -> network.execute(() -> {
+                        String uploadedUrl = uploadImage(imageUri, null, token.getToken());
+                        if (uploadedUrl == null || uploadedUrl.isEmpty()) {
+                            runOnUiThread(() -> Toast.makeText(this, "Profile picture upload failed", Toast.LENGTH_LONG).show());
+                            return;
                         }
-                        if (currentPage == PAGE_PROFILE) showProfile();
-                        Toast.makeText(this, translate("Profile picture updated"), Toast.LENGTH_SHORT).show();
-                    }
+                        SharedPreferences.Editor editor = getSharedPreferences("fendly_account", MODE_PRIVATE).edit();
+                        editor.putString("profile_image_url", uploadedUrl);
+                        editor.apply();
+
+                        String username = account.getString("username", "");
+                        String fullName = account.getString("full_name", "");
+                        String email = account.getString("email", "");
+                        String mobile = account.getString("mobile", "");
+                        String state = account.getString("state", "");
+                        String city = account.getString("city", "");
+                        saveCloudProfileDocument(user, username, fullName, email, mobile, state, city, uploadedUrl, null);
+                        syncProfileToBackendApi(username, fullName, email, mobile, state, city, uploadedUrl);
+                        runOnUiThread(() -> {
+                            if (currentPage == PAGE_PROFILE) showProfile();
+                            Toast.makeText(this, translate("Profile picture updated"), Toast.LENGTH_SHORT).show();
+                        });
+                    })).addOnFailureListener(error -> {
+                        Toast.makeText(this, "Profile picture upload failed", Toast.LENGTH_LONG).show();
+                    });
                 }
             } else {
                 Toast.makeText(this, "Could not load selected image", Toast.LENGTH_SHORT).show();
@@ -7278,27 +7349,37 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                 if (savedPath != null) {
                     capturedProfileImage = null;
                     selectedProfileImage = null;
-                    String b64 = bitmapToBase64(bitmap);
-                    if (!b64.isEmpty()) {
-                        SharedPreferences account = getSharedPreferences("fendly_account", MODE_PRIVATE);
-                        account.edit()
-                                .putString("profile_image_uri", savedPath)
-                                .putString("profile_image_url", b64)
-                                .apply();
+                    profileImageExplicitlyRemoved = false;
+                    SharedPreferences account = getSharedPreferences("fendly_account", MODE_PRIVATE);
+                    account.edit().putString("profile_image_uri", savedPath).apply();
 
-                        FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
-                        if (user != null) {
+                    FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
+                    if (user != null) {
+                        user.getIdToken(false).addOnSuccessListener(token -> network.execute(() -> {
+                            String uploadedUrl = uploadImage(null, bitmap, token.getToken());
+                            if (uploadedUrl == null || uploadedUrl.isEmpty()) {
+                                runOnUiThread(() -> Toast.makeText(this, "Profile picture upload failed", Toast.LENGTH_LONG).show());
+                                return;
+                            }
+                            SharedPreferences.Editor editor = getSharedPreferences("fendly_account", MODE_PRIVATE).edit();
+                            editor.putString("profile_image_url", uploadedUrl);
+                            editor.apply();
+
                             String username = account.getString("username", "");
                             String fullName = account.getString("full_name", "");
                             String email = account.getString("email", "");
                             String mobile = account.getString("mobile", "");
                             String state = account.getString("state", "");
                             String city = account.getString("city", "");
-                            saveCloudProfileDocument(user, username, fullName, email, mobile, state, city, b64, null);
-                            syncProfileToBackendApi(username, fullName, email, mobile, state, city);
-                        }
-                        if (currentPage == PAGE_PROFILE) showProfile();
-                        Toast.makeText(this, translate("Profile picture updated"), Toast.LENGTH_SHORT).show();
+                            saveCloudProfileDocument(user, username, fullName, email, mobile, state, city, uploadedUrl, null);
+                            syncProfileToBackendApi(username, fullName, email, mobile, state, city, uploadedUrl);
+                            runOnUiThread(() -> {
+                                if (currentPage == PAGE_PROFILE) showProfile();
+                                Toast.makeText(this, translate("Profile picture updated"), Toast.LENGTH_SHORT).show();
+                            });
+                        })).addOnFailureListener(error -> {
+                            Toast.makeText(this, "Profile picture upload failed", Toast.LENGTH_LONG).show();
+                        });
                     }
                 }
             }
@@ -7346,8 +7427,17 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         currentPage = PAGE_ADMIN;
         screenRenderer = this::showAdminDashboard;
         LinearLayout root = screenBase("");
-        root.addView(text("Admin workspace", 20, primaryTextColor(), Typeface.NORMAL), contentParams(-1, dp(28), dp(4)));
-        root.addView(text("Review reports and verify possible matches", 11, secondaryTextColor(), Typeface.NORMAL), contentParams(-1, dp(22), dp(14)));
+        root.setGravity(Gravity.CENTER_HORIZONTAL);
+
+        TextView adminTitle = text("Admin workspace", 20, primaryTextColor(), Typeface.NORMAL);
+        adminTitle.setGravity(Gravity.CENTER_HORIZONTAL);
+        adminTitle.setTextAlignment(View.TEXT_ALIGNMENT_CENTER);
+        root.addView(adminTitle, contentParams(-1, dp(28), dp(4)));
+
+        TextView adminSubtitle = text("Review reports and verify possible matches", 11, secondaryTextColor(), Typeface.NORMAL);
+        adminSubtitle.setGravity(Gravity.CENTER_HORIZONTAL);
+        adminSubtitle.setTextAlignment(View.TEXT_ALIGNMENT_CENTER);
+        root.addView(adminSubtitle, contentParams(-1, dp(22), dp(14)));
 
         LinearLayout overview = new LinearLayout(this);
         overview.setOrientation(LinearLayout.HORIZONTAL);
@@ -7385,6 +7475,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                 String response = fetchAdminItems(token.getToken());
                 runOnUiThread(() -> renderAdminReports(response, reports, matchesHeading, matches, lostCount, foundCount));
             }));
+            loadAdminAlerts(true);
         }
     }
 
@@ -7657,6 +7748,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             AdminViewModel adminViewModel = new AdminViewModel();
             if (adminViewModel.verifyAdminCredentials(adminUsername, adminPin)) {
                 dialog.dismiss();
+                adminAlertsAutoShownThisVisit = false;
                 showAdminDashboard();
             } else {
                 Toast.makeText(this, "Invalid Admin Name or PIN", Toast.LENGTH_LONG).show();
@@ -7677,6 +7769,81 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
 
     private String fetchAdminMatches(String foundItemId, String idToken) {
         return getAuthorized("/api/admin/matches/" + foundItemId, idToken);
+    }
+
+    private void loadAdminAlerts(boolean unreadOnly) {
+        if (unreadOnly && adminAlertsAutoShownThisVisit) return;
+        if (unreadOnly) adminAlertsAutoShownThisVisit = true;
+        FirebaseUser adminUser = FirebaseAuth.getInstance().getCurrentUser();
+        if (adminUser == null) return;
+        adminUser.getIdToken(false).addOnSuccessListener(token -> network.execute(() -> {
+            String response = getAuthorized("/api/admin/alerts", token.getToken());
+            runOnUiThread(() -> {
+                try {
+                    JSONArray alerts = new JSONArray(response == null ? "[]" : response);
+                    JSONArray visibleAlerts = new JSONArray();
+                    for (int index = 0; index < alerts.length(); index++) {
+                        JSONObject alert = alerts.getJSONObject(index);
+                        if (!unreadOnly || !alert.optBoolean("is_read", false)) visibleAlerts.put(alert);
+                    }
+                    if (visibleAlerts.length() == 0) {
+                        if (!unreadOnly) Toast.makeText(this, "No match notifications", Toast.LENGTH_SHORT).show();
+                        return;
+                    }
+                    showAdminAlertsDialog(visibleAlerts, token.getToken());
+                } catch (Exception error) {
+                    Toast.makeText(this, "Match notifications are unavailable", Toast.LENGTH_SHORT).show();
+                }
+            });
+        }));
+    }
+
+    private void showAdminAlertsDialog(JSONArray alerts, String idToken) throws Exception {
+        LinearLayout content = new LinearLayout(this);
+        content.setOrientation(LinearLayout.VERTICAL);
+        content.setPadding(dp(20), dp(16), dp(20), dp(12));
+        ScrollView scroll = new ScrollView(this);
+        LinearLayout rows = new LinearLayout(this);
+        rows.setOrientation(LinearLayout.VERTICAL);
+        for (int index = 0; index < alerts.length(); index++) {
+            JSONObject alert = alerts.getJSONObject(index);
+            String details = alert.optString("found_title", "Found item") + " may match "
+                    + alert.optString("lost_title", "a lost report") + "\n"
+                    + Math.round(alert.optDouble("confidence", 0.0) * 100) + "% confidence";
+            TextView row = text(details, 14, primaryTextColor(), Typeface.NORMAL);
+            row.setPadding(dp(12), dp(10), dp(12), dp(10));
+            row.setBackground(roundWithStroke(surfaceColor(), 10, borderColor()));
+            LinearLayout.LayoutParams rowParams = new LinearLayout.LayoutParams(-1, -2);
+            rowParams.setMargins(0, 0, 0, dp(8));
+            rows.addView(row, rowParams);
+            String alertId = alert.optString("id", "");
+            if (!alert.optBoolean("is_read", false) && !alertId.isEmpty()) {
+                network.execute(() -> postAuthorized("/api/admin/alerts/" + alertId + "/read", idToken));
+            }
+        }
+        scroll.addView(rows);
+        content.addView(scroll, new LinearLayout.LayoutParams(-1, Math.min(dp(360), dp(88) * alerts.length())));
+        new AlertDialog.Builder(this)
+                .setTitle("AI match notifications")
+                .setView(content)
+                .setPositiveButton("Close", null)
+                .show();
+    }
+
+    private boolean postAuthorized(String path, String idToken) {
+        HttpURLConnection connection = null;
+        try {
+            connection = (HttpURLConnection) new URL(API_BASE + path).openConnection();
+            connection.setRequestMethod("POST");
+            connection.setConnectTimeout(15000);
+            connection.setReadTimeout(30000);
+            connection.setRequestProperty("Authorization", "Bearer " + idToken);
+            return connection.getResponseCode() >= 200 && connection.getResponseCode() < 300;
+        } catch (Exception error) {
+            return false;
+        } finally {
+            if (connection != null) connection.disconnect();
+        }
     }
 
     private String getAuthorized(String path, String idToken) {
@@ -8024,15 +8191,70 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         controls.setGravity(Gravity.CENTER_VERTICAL);
         controls.setPadding(0, 0, 0, 0);
 
-        TextView font = text("A", 17, secondaryTextColor(), Typeface.NORMAL);
-        font.setGravity(Gravity.CENTER);
-        font.setTextAlignment(View.TEXT_ALIGNMENT_CENTER);
-        font.setIncludeFontPadding(false);
-        font.setBackground(roundWithStroke(surfaceColor(), 14, borderColor()));
-        font.setPadding(dp(6), 0, dp(6), 0);
-        font.setContentDescription("Adjust text size");
-        font.setOnClickListener(view -> showFontScaleDialog());
-        controls.addView(font, new LinearLayout.LayoutParams(dp(42), dp(42)));
+        if (currentPage == PAGE_ADMIN) {
+            final boolean[] isExpanded = {false};
+            TextView gearButton = text("", 18, secondaryTextColor(), Typeface.NORMAL);
+            gearButton.setGravity(Gravity.CENTER);
+            gearButton.setBackground(roundWithStroke(surfaceColor(), 14, borderColor()));
+            gearButton.setPadding(dp(8), dp(8), dp(8), dp(8));
+            gearButton.setCompoundDrawablesWithIntrinsicBounds(R.drawable.ic_gear, 0, 0, 0);
+            gearButton.setContentDescription("Admin display settings");
+            if (Build.VERSION.SDK_INT >= 21) {
+                gearButton.setCompoundDrawableTintList(ColorStateList.valueOf(accentColor()));
+            }
+
+            LinearLayout adminSettings = new LinearLayout(this);
+            adminSettings.setGravity(Gravity.CENTER_VERTICAL);
+            adminSettings.setVisibility(View.GONE);
+
+            FrameLayout themeButton = new FrameLayout(this);
+            themeButton.setBackground(roundWithStroke(surfaceColor(), 14, borderColor()));
+            ImageView themeImage = new ImageView(this);
+            themeImage.setImageResource(darkMode ? R.drawable.ic_light_mode : R.drawable.ic_dark_mode);
+            themeImage.setColorFilter(darkMode ? accentColor() : LIGHT_TEXT);
+            themeImage.setScaleType(ImageView.ScaleType.CENTER_INSIDE);
+            themeButton.addView(themeImage, new FrameLayout.LayoutParams(dp(20), dp(20), Gravity.CENTER));
+            themeButton.setContentDescription(darkMode ? "Switch to light mode" : "Switch to dark mode");
+            themeButton.setOnClickListener(view -> {
+                darkMode = !darkMode;
+                getSharedPreferences("fendly_settings", MODE_PRIVATE).edit().putBoolean("dark_mode", darkMode).apply();
+                applySystemBarColors();
+                if (screenRenderer != null) screenRenderer.run();
+            });
+            LinearLayout.LayoutParams adminThemeParams = new LinearLayout.LayoutParams(dp(42), dp(42));
+            adminThemeParams.setMargins(dp(6), 0, 0, 0);
+            adminSettings.addView(themeButton, adminThemeParams);
+
+            TextView fontButton = text("A", 17, secondaryTextColor(), Typeface.NORMAL);
+            fontButton.setGravity(Gravity.CENTER);
+            fontButton.setTextAlignment(View.TEXT_ALIGNMENT_CENTER);
+            fontButton.setIncludeFontPadding(false);
+            fontButton.setBackground(roundWithStroke(surfaceColor(), 14, borderColor()));
+            fontButton.setContentDescription("Adjust text size");
+            fontButton.setOnClickListener(view -> showFontScaleDialog());
+            LinearLayout.LayoutParams adminFontParams = new LinearLayout.LayoutParams(dp(42), dp(42));
+            adminFontParams.setMargins(dp(6), 0, 0, 0);
+            adminSettings.addView(fontButton, adminFontParams);
+
+            gearButton.setOnClickListener(view -> {
+                isExpanded[0] = !isExpanded[0];
+                gearButton.setCompoundDrawablesWithIntrinsicBounds(
+                        isExpanded[0] ? R.drawable.material_ic_keyboard_arrow_left_black_24dp : R.drawable.ic_gear, 0, 0, 0);
+                adminSettings.setVisibility(isExpanded[0] ? View.VISIBLE : View.GONE);
+            });
+            controls.addView(gearButton, new LinearLayout.LayoutParams(dp(42), dp(42)));
+            controls.addView(adminSettings, new LinearLayout.LayoutParams(-2, -2));
+        } else {
+            TextView font = text("A", 17, secondaryTextColor(), Typeface.NORMAL);
+            font.setGravity(Gravity.CENTER);
+            font.setTextAlignment(View.TEXT_ALIGNMENT_CENTER);
+            font.setIncludeFontPadding(false);
+            font.setBackground(roundWithStroke(surfaceColor(), 14, borderColor()));
+            font.setPadding(dp(6), 0, dp(6), 0);
+            font.setContentDescription("Adjust text size");
+            font.setOnClickListener(view -> showFontScaleDialog());
+            controls.addView(font, new LinearLayout.LayoutParams(dp(42), dp(42)));
+        }
 
         Space leftSpacer = new Space(this);
         controls.addView(leftSpacer, new LinearLayout.LayoutParams(0, 1, 1));
@@ -8144,6 +8366,15 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             rightContainer.addView(linkButton, new LinearLayout.LayoutParams(dp(42), dp(42)));
 
             controls.addView(rightContainer, new LinearLayout.LayoutParams(-2, -2));
+        } else if (currentPage == PAGE_ADMIN) {
+            TextView notificationButton = text("🔔", 16, secondaryTextColor(), Typeface.NORMAL);
+            notificationButton.setGravity(Gravity.CENTER);
+            notificationButton.setBackground(roundWithStroke(surfaceColor(), 14, borderColor()));
+            notificationButton.setPadding(dp(8), dp(8), dp(8), dp(8));
+            notificationButton.setElevation(dp(2));
+            notificationButton.setContentDescription("AI match notifications");
+            notificationButton.setOnClickListener(view -> loadAdminAlerts(false));
+            controls.addView(notificationButton, new LinearLayout.LayoutParams(dp(42), dp(42)));
         } else if (currentPage == PAGE_REPORTS) {
             // Info "i" button for Reports page with instructions on how to use My Reports
             TextView infoButton = text("i", 16, secondaryTextColor(), Typeface.NORMAL);

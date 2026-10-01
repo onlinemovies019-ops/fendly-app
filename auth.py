@@ -3,10 +3,17 @@ import json
 import random
 import urllib.request
 import base64
+from typing import Any
 from fastapi import APIRouter, HTTPException, status, Depends
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 import httpx
 from pydantic import BaseModel, EmailStr
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from database import get_db
+from models import User
+from schemas import ProfileUpdate
 
 router = APIRouter(prefix="/api/auth", tags=["Authentication"])
 
@@ -47,6 +54,93 @@ async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(s
     except Exception:
         pass
     return str(token)
+
+
+def normalize_profile_photo(value: Any) -> str:
+    if value is None:
+        return ""
+    text = str(value).strip()
+    return text
+
+
+@router.get("/profile")
+def get_profile_compat(
+    session: Session = Depends(get_db),
+    uid: str = Depends(get_current_user),
+) -> dict[str, Any]:
+    try:
+        user = session.scalar(select(User).where(User.firebase_uid == uid))
+        if user is None:
+            user = User(firebase_uid=uid, email_verified=False, mobile_verified=False)
+            session.add(user)
+            try:
+                session.commit()
+                session.refresh(user)
+            except Exception:
+                session.rollback()
+        return {
+            "username": getattr(user, "username", None) or "",
+            "full_name": getattr(user, "full_name", None) or "",
+            "email": getattr(user, "email", None) or "",
+            "mobile": getattr(user, "mobile", None) or "",
+            "state": getattr(user, "state", None) or "",
+            "city": getattr(user, "city", None) or "",
+            "profile_photo_url": normalize_profile_photo(getattr(user, "profile_photo_url", None)),
+            "email_verified": bool(getattr(user, "email_verified", False)),
+            "mobile_verified": bool(getattr(user, "mobile_verified", False)),
+            "is_verified": bool(getattr(user, "email_verified", False)),
+        }
+    except Exception:
+        return {
+            "username": "",
+            "full_name": "",
+            "email": "",
+            "mobile": "",
+            "state": "",
+            "city": "",
+            "profile_photo_url": "",
+            "email_verified": False,
+            "mobile_verified": False,
+            "is_verified": False,
+        }
+
+
+@router.put("/profile")
+def update_profile_compat(
+    payload: ProfileUpdate,
+    session: Session = Depends(get_db),
+    uid: str = Depends(get_current_user),
+) -> dict[str, str]:
+    try:
+        user = session.scalar(select(User).where(User.firebase_uid == uid))
+        if user is None:
+            user = User(firebase_uid=uid)
+            session.add(user)
+
+        if payload.username and payload.username.strip():
+            user.username = payload.username.strip()
+        if payload.full_name is not None:
+            user.full_name = payload.full_name.strip()
+        if payload.email is not None:
+            user.email = payload.email.strip().lower()
+        if payload.mobile is not None:
+            user.mobile = payload.mobile.strip()
+        if payload.state is not None:
+            user.state = payload.state.strip()
+        if payload.city is not None:
+            user.city = payload.city.strip()
+        if payload.profile_photo_url is not None:
+            user.profile_photo_url = payload.profile_photo_url.strip()
+        if payload.email_verified is not None:
+            user.email_verified = payload.email_verified
+        if payload.mobile_verified is not None:
+            user.mobile_verified = payload.mobile_verified
+
+        session.commit()
+        return {"status": "saved"}
+    except Exception as exc:
+        session.rollback()
+        raise HTTPException(status_code=500, detail=f"Failed to update profile: {exc}") from exc
 
 # — Schemas —
 

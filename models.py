@@ -46,6 +46,22 @@ class DeviceToken(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
 
+class AdminMatchAlert(Base):
+    __tablename__ = "admin_match_alerts"
+    __table_args__ = (UniqueConstraint("found_item_id", "lost_item_id", name="uq_admin_match_alert_pair"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    found_item_id: Mapped[str] = mapped_column(String(36), index=True)
+    lost_item_id: Mapped[str] = mapped_column(String(36), index=True)
+    found_title: Mapped[str] = mapped_column(String(160))
+    lost_title: Mapped[str] = mapped_column(String(160))
+    confidence: Mapped[float] = mapped_column(Float)
+    reason: Mapped[str] = mapped_column(Text)
+    is_read: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    email_sent: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
 class LostItem(Base):
     __tablename__ = "lost_items"
 

@@ -16,6 +16,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.fendly.R
 
+@Suppress("unused")
 @Composable
 @JvmName("FendlyLogo")
 fun FendlyLogo(

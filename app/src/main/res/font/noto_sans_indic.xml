@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<font-family xmlns:android="http://schemas.android.com/apk/res/android">
+    <font android:font="@font/noto_sans_devanagari" android:fontStyle="normal" android:fontWeight="400" />
+    <font android:font="@font/noto_sans_bengali" android:fontStyle="normal" android:fontWeight="400" />
+    <font android:font="@font/noto_sans_tamil" android:fontStyle="normal" android:fontWeight="400" />
+    <font android:font="@font/noto_sans_telugu" android:fontStyle="normal" android:fontWeight="400" />
+    <font android:font="@font/noto_sans_kannada" android:fontStyle="normal" android:fontWeight="400" />
+    <font android:font="@font/noto_sans_malayalam" android:fontStyle="normal" android:fontWeight="400" />
+</font-family>

@@ -45,3 +45,4 @@ gradle.properties
 *.jks
 *.keystore
 .aider*
+node_modules

@@ -2,21 +2,47 @@ import math
 import os
 import re
 
+import httpx
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
-from sqlalchemy import or_, select
+from sqlalchemy import desc, or_, select
 from sqlalchemy.orm import Session
 
 from ai_matching import create_embedding, item_text
 from auth import get_current_user
 from database import get_db
 from image_matching import cosine_similarity, create_image_embedding
-from models import FoundItem, LostItem, User
-from notifications import send_match_notifications, send_admin_match_email
+from models import AdminMatchAlert, FoundItem, LostItem, User
+from notifications import persist_admin_match_alert, send_match_notifications
 
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 WORD_PATTERN = re.compile(r"[a-z0-9]+")
+
+
+def _supabase_admin_alert_request(method: str, path: str, **kwargs):
+    supabase_url = os.getenv("SUPABASE_URL", "").rstrip("/")
+    service_role_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "")
+    if not supabase_url or not service_role_key:
+        return None
+    headers = {
+        "apikey": service_role_key,
+        "Authorization": f"Bearer {service_role_key}",
+        "Content-Type": "application/json",
+    }
+    headers.update(kwargs.pop("headers", {}))
+    try:
+        response = httpx.request(
+            method,
+            f"{supabase_url}/rest/v1/{path}",
+            headers=headers,
+            timeout=10,
+            **kwargs,
+        )
+        response.raise_for_status()
+        return response
+    except httpx.HTTPError as error:
+        raise HTTPException(503, "Admin notifications are temporarily unavailable") from error
 
 
 class NotifyRequest(BaseModel):
@@ -57,6 +83,64 @@ def list_all_items(
         }
         for item_type, item in items
     ]
+
+
+@router.get("/alerts")
+def list_match_alerts(
+    session: Session = Depends(get_db),
+    _: str = Depends(require_admin),
+) -> list[dict[str, object]]:
+    response = _supabase_admin_alert_request(
+        "GET",
+        "admin_match_alerts",
+        params={"select": "*", "order": "created_at.desc", "limit": "50"},
+    )
+    if response is not None:
+        return response.json()
+
+    alerts = session.scalars(
+        select(AdminMatchAlert).order_by(desc(AdminMatchAlert.created_at)).limit(50)
+    ).all()
+    return [
+        {
+            "id": alert.id,
+            "found_item_id": alert.found_item_id,
+            "lost_item_id": alert.lost_item_id,
+            "found_title": alert.found_title,
+            "lost_title": alert.lost_title,
+            "confidence": alert.confidence,
+            "reason": alert.reason,
+            "is_read": alert.is_read,
+            "email_sent": alert.email_sent,
+            "created_at": alert.created_at.isoformat() if alert.created_at else None,
+        }
+        for alert in alerts
+    ]
+
+
+@router.post("/alerts/{alert_id}/read", status_code=204)
+def mark_match_alert_read(
+    alert_id: str,
+    session: Session = Depends(get_db),
+    _: str = Depends(require_admin),
+) -> None:
+    response = _supabase_admin_alert_request(
+        "PATCH",
+        "admin_match_alerts",
+        params={"id": f"eq.{alert_id}"},
+        json={"is_read": True},
+        headers={"Prefer": "return=representation"},
+    )
+    if response is not None:
+        if not response.json():
+            raise HTTPException(404, "Alert not found")
+        return
+
+    alert = session.get(AdminMatchAlert, alert_id)
+    if alert is None:
+        raise HTTPException(404, "Alert not found")
+    alert.is_read = True
+    session.commit()
 
 
 @router.get("/search")
@@ -133,10 +217,7 @@ async def find_matches(
     for result in ranked:
         score = float(result["score"])
         if score >= 0.85:
-            item = result["item"]
-            details = f"Match search: Found item '{found_item.title}' matched with lost item '{item.title}' with confidence {score:.1%}"
-            send_admin_match_email(found_item.title, score, details)
-            break
+            persist_admin_match_alert(session, found_item, result["item"], score)
     return ranked
 
 

@@ -1,0 +1,45 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "Android: Build debug APK",
+            "type": "shell",
+            "command": "./gradlew :app:assembleDebug",
+            "options": {
+                "env": {
+                    "JAVA_HOME": "/opt/homebrew/opt/openjdk@17/libexec/openjdk.jdk/Contents/Home"
+                }
+            },
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            },
+            "problemMatcher": []
+        },
+        {
+            "label": "Android: Install debug APK",
+            "type": "shell",
+            "command": "./gradlew :app:installDebug",
+            "options": {
+                "env": {
+                    "JAVA_HOME": "/opt/homebrew/opt/openjdk@17/libexec/openjdk.jdk/Contents/Home"
+                }
+            },
+            "problemMatcher": [],
+            "dependsOn": "Android: Build debug APK"
+        },
+        {
+            "label": "Android: Run on connected device",
+            "type": "shell",
+            "command": "adb shell am start -n com.example.fendly/.SplashActivity",
+            "problemMatcher": [],
+            "dependsOn": "Android: Install debug APK"
+        },
+        {
+            "label": "Android: Check connected devices",
+            "type": "shell",
+            "command": "adb devices",
+            "problemMatcher": []
+        }
+    ]
+}

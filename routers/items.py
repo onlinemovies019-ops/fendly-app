@@ -1,11 +1,12 @@
 import asyncio
 import io
+import logging
 import math
 import os
 import re
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional
+from typing import Literal, Optional
 from uuid import uuid4
 
 import firebase_admin
@@ -23,7 +24,7 @@ from database import SessionLocal, get_db
 from image_matching import cosine_similarity, create_image_embedding
 from moderation import moderate_content
 from models import FoundItem, LostItem
-from notifications import send_match_notifications, send_admin_match_email
+from notifications import persist_admin_match_alert, send_match_notifications
 from routers.payments import verify_captured_payment
 from schemas import ItemCreate, ItemResponse, ItemUpdate, MatchRequest, MatchResponse
 
@@ -32,6 +33,21 @@ router = APIRouter(prefix="/api", tags=["items"])
 MAX_IMAGE_BYTES = 10 * 1024 * 1024
 ALLOWED_IMAGE_TYPES = {"image/jpeg", "image/png", "image/webp"}
 WORD_PATTERN = re.compile(r"[a-z0-9]+")
+MATCH_ALERT_THRESHOLD = 0.85
+logger = logging.getLogger(__name__)
+
+
+class ItemSubmission(BaseModel):
+    title: str = Field(min_length=1, max_length=160)
+    description: str = Field(min_length=1, max_length=5000)
+    imageUrl: str | None = Field(default=None, max_length=1000)
+    type: Literal["lost", "found"]
+    lat: float = Field(default=0.0, ge=-90, le=90)
+    lng: float = Field(default=0.0, ge=-180, le=180)
+    report_date: str | None = Field(default=None, max_length=32)
+    report_location: str | None = Field(default=None, max_length=500)
+    category: str = Field(default="other", min_length=1, max_length=80)
+    payment_id: str | None = Field(default=None, max_length=128)
 
 
 def _require_db_session(session: Session | None) -> Session:
@@ -73,6 +89,64 @@ async def _save_item(payload: ItemCreate, session: Session, uid: str, model: typ
         session.rollback()
         raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, f"Failed to save report: {str(exc)}") from exc
     return record
+
+
+async def _process_created_report(record: LostItem | FoundItem, session: Session) -> None:
+    """Compare a new report with opposite-type reports and alert on strong matches."""
+    try:
+        opposite_model = LostItem if isinstance(record, FoundItem) else FoundItem
+        record_embedding = record.embedding or await create_embedding(
+            item_text(record.title, record.description, record.category)
+        )
+        record_image_embedding = record.image_embedding or await create_image_embedding(record.image_url)
+        if record.embedding is None:
+            record.embedding = record_embedding
+        if record.image_embedding is None:
+            record.image_embedding = record_image_embedding
+
+        candidates = session.scalars(select(opposite_model)).all()
+        ranked: list[tuple[float, LostItem | FoundItem]] = []
+        for candidate in candidates:
+            candidate_embedding = candidate.embedding or await create_embedding(
+                item_text(candidate.title, candidate.description, candidate.category)
+            )
+            candidate_image_embedding = candidate.image_embedding or await create_image_embedding(candidate.image_url)
+            if candidate.embedding is None:
+                candidate.embedding = candidate_embedding
+            if candidate.image_embedding is None:
+                candidate.image_embedding = candidate_image_embedding
+
+            record_words = set(WORD_PATTERN.findall(f"{record.title} {record.description}".lower()))
+            candidate_words = set(WORD_PATTERN.findall(f"{candidate.title} {candidate.description}".lower()))
+            keyword_score = len(record_words & candidate_words) / max(len(record_words | candidate_words), 1)
+            semantic_score = keyword_score
+            if record_embedding is not None and candidate_embedding is not None:
+                dot = sum(left * right for left, right in zip(record_embedding, candidate_embedding))
+                record_norm = math.sqrt(sum(value * value for value in record_embedding))
+                candidate_norm = math.sqrt(sum(value * value for value in candidate_embedding))
+                if record_norm and candidate_norm:
+                    semantic_score = max(0.0, min(1.0, dot / (record_norm * candidate_norm)))
+            image_score = cosine_similarity(record_image_embedding, candidate_image_embedding)
+            distance = abs(record.lat - candidate.lat) + abs(record.lng - candidate.lng)
+            location_score = max(0.0, 1 - distance / 0.5)
+            if image_score is None:
+                score = semantic_score * 0.7 + location_score * 0.3
+            else:
+                score = semantic_score * 0.3 + image_score * 0.45 + keyword_score * 0.1 + location_score * 0.15
+            ranked.append((round(score, 4), candidate))
+
+        if record.embedding is not None or record.image_embedding is not None:
+            session.commit()
+
+        ranked.sort(key=lambda match: match[0], reverse=True)
+        if ranked and ranked[0][0] >= MATCH_ALERT_THRESHOLD:
+            score, candidate = ranked[0]
+            found_item = record if isinstance(record, FoundItem) else candidate
+            lost_item = candidate if isinstance(record, FoundItem) else record
+            persist_admin_match_alert(session, found_item, lost_item, score)
+    except Exception:
+        session.rollback()
+        logger.exception("Automatic matching failed for report %s", getattr(record, "id", "unknown"))
 
 
 async def _store_image(data: bytes, filename: str, content_type: str) -> str:
@@ -139,7 +213,9 @@ async def create_lost_item(
 ) -> LostItem:
     try:
         session = _require_db_session(session)
-        return await _save_item(payload, session, uid, LostItem)
+        record = await _save_item(payload, session, uid, LostItem)
+        await _process_created_report(record, session)
+        return record
     except HTTPException:
         raise
     except Exception as exc:
@@ -154,11 +230,43 @@ async def create_found_item(
 ) -> FoundItem:
     try:
         session = _require_db_session(session)
-        return await _save_item(payload, session, uid, FoundItem)
+        record = await _save_item(payload, session, uid, FoundItem)
+        await _process_created_report(record, session)
+        return record
     except HTTPException:
         raise
     except Exception as exc:
         raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, "Unable to create found report") from exc
+
+
+@router.post("/items", response_model=ItemResponse, status_code=status.HTTP_201_CREATED)
+async def create_item_compat(
+    request: ItemSubmission,
+    session: Session | None = Depends(get_db),
+    uid: str = Depends(get_current_user),
+) -> LostItem | FoundItem:
+    """Create a lost/found report through the generic client API path."""
+    try:
+        session = _require_db_session(session)
+        payload = ItemCreate(
+            title=request.title,
+            description=request.description,
+            image_url=request.imageUrl,
+            lat=request.lat,
+            lng=request.lng,
+            report_date=request.report_date,
+            report_location=request.report_location,
+            category=request.category,
+            payment_id=request.payment_id,
+        )
+        model = LostItem if request.type == "lost" else FoundItem
+        record = await _save_item(payload, session, uid, model)
+        await _process_created_report(record, session)
+        return record
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, "Unable to create report") from exc
 
 
 @router.get("/items/mine")
@@ -302,11 +410,11 @@ async def match_items(
         found_item.id,
         max_score,
     )
-    for result in ranked_results:
-        score = float(result["score"])
-        if score >= 0.85:
-            item = result["item"]
-            details = f"Found item '{found_item.title}' matched with lost item '{item.title}' with confidence {score:.1%}"
-            send_admin_match_email(found_item.title, score, details)
-            break
+    if ranked_results and float(ranked_results[0]["score"]) >= MATCH_ALERT_THRESHOLD:
+        persist_admin_match_alert(
+            session,
+            found_item,
+            ranked_results[0]["item"],
+            float(ranked_results[0]["score"]),
+        )
     return ranked_results

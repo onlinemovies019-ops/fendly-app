@@ -1,13 +1,15 @@
 import logging
 import os
 import requests
+from html import escape
 
 import firebase_admin
 from firebase_admin import messaging
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from models import DeviceToken
+from models import AdminMatchAlert, DeviceToken, FoundItem, LostItem
 
 
 logger = logging.getLogger(__name__)
@@ -63,14 +65,16 @@ def send_admin_match_email(item_title: str, match_score: float, match_details: s
     }
 
     percentage = match_score * 100 if match_score <= 1.0 else match_score
-    subject = f"🚨 Match Alert: {item_title}"
+    safe_title = escape(item_title)
+    safe_details = escape(match_details)
+    subject = f"Fendly match alert: {item_title}"
     html_content = f"""
     <html>
       <body>
-        <h2>🚨 Fendly Match Alert</h2>
-        <p><strong>Item Title:</strong> {item_title}</p>
+        <h2>Fendly Match Alert</h2>
+        <p><strong>Item Title:</strong> {safe_title}</p>
         <p><strong>Match Confidence:</strong> {percentage:.1f}%</p>
-        <p><strong>Match Details:</strong> {match_details}</p>
+        <p><strong>Match Details:</strong> {safe_details}</p>
         <hr>
         <p><small>Fendly Automated Notification System</small></p>
       </body>
@@ -92,3 +96,51 @@ def send_admin_match_email(item_title: str, match_score: float, match_details: s
     except Exception:
         logger.exception("Failed to send admin match email via Brevo")
         return False
+
+
+def persist_admin_match_alert(
+    session: Session,
+    found_item: FoundItem,
+    lost_item: LostItem,
+    confidence: float,
+) -> bool:
+    existing = session.scalar(
+        select(AdminMatchAlert).where(
+            AdminMatchAlert.found_item_id == found_item.id,
+            AdminMatchAlert.lost_item_id == lost_item.id,
+        )
+    )
+    if existing is not None:
+        return False
+
+    details = f"Found '{found_item.title}' may match lost report '{lost_item.title}'."
+    alert = AdminMatchAlert(
+        found_item_id=found_item.id,
+        lost_item_id=lost_item.id,
+        found_title=found_item.title,
+        lost_title=lost_item.title,
+        confidence=confidence,
+        reason=details,
+    )
+    session.add(alert)
+    try:
+        session.commit()
+    except IntegrityError:
+        session.rollback()
+        return False
+    except Exception:
+        session.rollback()
+        logger.exception("Failed to persist admin match alert")
+        return False
+
+    alert.email_sent = send_admin_match_email(
+        found_item.title,
+        confidence,
+        f"{details} Confidence: {confidence:.1%}",
+    )
+    try:
+        session.commit()
+    except Exception:
+        session.rollback()
+        logger.exception("Failed to update admin match alert email status")
+    return True
