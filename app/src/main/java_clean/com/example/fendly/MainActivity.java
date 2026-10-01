@@ -3104,10 +3104,8 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
     }
 
     private int postItem(String type, String title, String description, String location, String date, double latitude, double longitude, Uri image, Bitmap cameraImage, String idToken, String paymentId) {
-        HttpURLConnection connection = null;
         lastSubmissionError = null;
         try {
-            String endpoint = API_BASE + ("FOUND".equals(type) ? "/api/items/found" : "/api/items/lost");
             String imageUrl = null;
             if (image != null || cameraImage != null) {
                 imageUrl = uploadImage(image, cameraImage, idToken);
@@ -3143,30 +3141,16 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                         .set(reportDoc, SetOptions.merge());
             }
 
-            connection = (HttpURLConnection) new URL(endpoint).openConnection();
-            connection.setRequestMethod("POST");
-            connection.setConnectTimeout(60000);
-            connection.setReadTimeout(60000);
-            connection.setDoOutput(true);
-            connection.setRequestProperty("Authorization", "Bearer " + idToken);
-            connection.setRequestProperty("Content-Type", "application/json; charset=UTF-8");
-            String details = description;
-            String imageJson = imageUrl == null ? "null" : "\"" + escapeJson(imageUrl) + "\"";
-            String paymentJson = paymentId == null ? "null" : "\"" + escapeJson(paymentId) + "\"";
-            String body = "{\"title\":\"" + escapeJson(title) + "\",\"description\":\"" + escapeJson(details) + "\",\"report_location\":\"" + escapeJson(location) + "\",\"report_date\":\"" + escapeJson(date) + "\",\"category\":\"other\",\"lat\":" + latitude + ",\"lng\":" + longitude + ",\"image_url\":" + imageJson + ",\"payment_id\":" + paymentJson + "}";
-            try (OutputStream output = connection.getOutputStream()) {
-                output.write(body.getBytes(StandardCharsets.UTF_8));
+            AiMatchService.ApiResponse response = AiMatchService.createItem(
+                    title, description, imageUrl, type, latitude, longitude,
+                    location, date, paymentId, idToken);
+            if (!response.isSuccessful()) {
+                lastSubmissionError = "Could not save report (" + response.getStatusCode() + "): " + response.getErrorMessage();
             }
-            int responseCode = connection.getResponseCode();
-            if (responseCode < 200 || responseCode >= 300) {
-                lastSubmissionError = "Could not save report (" + responseCode + "): " + readErrorResponse(connection, responseCode);
-            }
-            return responseCode;
+            return response.getStatusCode();
         } catch (Exception error) {
             lastSubmissionError = "Could not save report: " + error.getClass().getSimpleName();
             return -1;
-        } finally {
-            if (connection != null) connection.disconnect();
         }
     }
 
@@ -7560,8 +7544,15 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         FirebaseUser adminUser = FirebaseAuth.getInstance().getCurrentUser();
         if (adminUser == null) return;
         adminUser.getIdToken(false).addOnSuccessListener(token -> network.execute(() -> {
-            String response = fetchAdminMatches(foundItem.optString("id", ""), token.getToken());
-            runOnUiThread(() -> renderAdminMatches(foundItem, response, matches));
+            String response = null;
+            try {
+                AiMatchService.ApiResponse matchResponse = AiMatchService.findMatches(
+                        foundItem.optString("id", ""), token.getToken());
+                if (matchResponse.isSuccessful()) response = matchResponse.getBody();
+            } catch (Exception ignored) {
+            }
+            String result = response;
+            runOnUiThread(() -> renderAdminMatches(foundItem, result, matches));
         }));
     }
 
@@ -7765,10 +7756,6 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
 
     private String fetchAdminItems(String idToken) {
         return getAuthorized("/api/admin/items", idToken);
-    }
-
-    private String fetchAdminMatches(String foundItemId, String idToken) {
-        return getAuthorized("/api/admin/matches/" + foundItemId, idToken);
     }
 
     private void loadAdminAlerts(boolean unreadOnly) {
