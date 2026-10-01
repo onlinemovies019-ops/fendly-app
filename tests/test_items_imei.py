@@ -1,4 +1,5 @@
 import asyncio
+import os
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
@@ -8,9 +9,16 @@ from sqlalchemy.orm import Session
 
 import main
 from models import FoundItem, LostItem
+from routers import admin as admin_module
 from routers import items as items_module
 from routers.items import match_items
 from schemas import MatchRequest
+
+
+def test_admin_uid_parser_accepts_json_and_newline_lists(monkeypatch):
+    monkeypatch.setenv("ADMIN_FIREBASE_UIDS", '["uid-1", "uid-2"]\nuid-3\n')
+    parsed = admin_module._parse_admin_uids(os.getenv("ADMIN_FIREBASE_UIDS", ""))
+    assert parsed == {"uid-1", "uid-2", "uid-3"}
 
 
 @pytest.mark.asyncio

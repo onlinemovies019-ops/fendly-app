@@ -1,3 +1,4 @@
+import json
 import math
 import os
 import re
@@ -50,13 +51,31 @@ class NotifyRequest(BaseModel):
     score: float = Field(ge=0, le=1)
 
 
+def _parse_admin_uids(raw_value: str | None) -> set[str]:
+    if raw_value is None:
+        return set()
+
+    value = raw_value.strip()
+    if not value:
+        return set()
+    if value in {"*", "all", "ALL"}:
+        return {"*"}
+
+    candidates = set()
+    for token in re.findall(r"[A-Za-z0-9._:-]+", value):
+        if token and token.lower() not in {"all", "admin", "admins"}:
+            candidates.add(token)
+    return candidates
+
+
 def require_admin(uid: str = Depends(get_current_user)) -> str:
-    allowed = {value.strip() for value in os.getenv("ADMIN_FIREBASE_UIDS", "").split(",") if value.strip()}
+    allowed = _parse_admin_uids(os.getenv("ADMIN_FIREBASE_UIDS"))
     if not allowed:
         raise HTTPException(503, "Admin access is not configured")
-    if uid not in allowed:
-        raise HTTPException(403, "Admin access required")
-    return uid
+    if "*" in allowed or uid in allowed:
+        return uid
+    print(f"[ADMIN AUTH] rejected uid={uid!r}; configured_admin_uids={sorted(allowed)[:10]}", flush=True)
+    raise HTTPException(403, "Admin access required")
 
 
 @router.get("/items")
