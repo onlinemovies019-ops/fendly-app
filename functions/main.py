@@ -1,21 +1,33 @@
-# Welcome to Cloud Functions for Firebase for Python!
-# To get started, simply uncomment the below code or create your own.
-# Deploy with `firebase deploy`
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi import APIRouter
 
-from firebase_functions import https_fn
-from firebase_functions.options import set_global_options
-from firebase_admin import initialize_app
+app = FastAPI(title="Fendly API")
 
-# For cost control, you can set the maximum number of containers that can be
-# running at the same time. This helps mitigate the impact of unexpected
-# traffic spikes by instead downgrading performance. This limit is a per-function
-# limit. You can override the limit for each function using the max_instances
-# parameter in the decorator, e.g. @https_fn.on_request(max_instances=5).
-set_global_options(max_instances=10)
+router = APIRouter(prefix="/api")
 
-# initialize_app()
-#
-#
-# @https_fn.on_request()
-# def on_request_example(req: https_fn.Request) -> https_fn.Response:
-#     return https_fn.Response("Hello world!")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["Authorization", "Content-Type", "Accept", "Origin"],
+)
+
+
+@router.post("/items")
+async def create_item():
+    return {"ok": True, "message": "POST /api/items reached"}
+
+
+@router.post("/items/match")
+async def match_items():
+    return {"ok": True, "message": "POST /api/items/match reached"}
+
+
+app.include_router(router)
+
+
+@app.get("/health")
+async def health_check():
+    return {"status": "ok"}
