@@ -20,6 +20,7 @@ import androidx.appcompat.app.AppCompatDelegate;
 import androidx.core.os.LocaleListCompat;
 import android.os.Build;
 import android.os.Bundle;
+import android.speech.tts.UtteranceProgressListener;
 import android.text.InputFilter;
 import android.text.TextUtils;
 import android.util.Base64;
@@ -57,6 +58,7 @@ import android.widget.ArrayAdapter;
 import android.widget.AdapterView;
 import android.widget.ListView;
 import android.widget.Toast;
+import android.speech.tts.TextToSpeech;
 import android.text.Editable;
 import android.text.InputType;
 import android.text.SpannableString;
@@ -259,6 +261,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
     private EditText visibleEmail;
     private TextView visibleEmailVerify;
     private ImageView visibleAvatar;
+    private TextToSpeech ttsEngine;
     private EditText[] visibleMobileCells;
     private final Handler realtimeProfileHandler = new Handler(Looper.getMainLooper());
     private Runnable realtimeProfileSave;
@@ -459,8 +462,45 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
     protected void onDestroy() {
         if (cloudProfileListener != null) cloudProfileListener.remove();
         if (realtimeProfileSave != null) realtimeProfileHandler.removeCallbacks(realtimeProfileSave);
+        if (ttsEngine != null) {
+            ttsEngine.stop();
+            ttsEngine.shutdown();
+        }
         network.shutdownNow();
         super.onDestroy();
+    }
+
+    private void initTts() {
+        if (ttsEngine == null) {
+            ttsEngine = new TextToSpeech(this, status -> {
+                if (status == TextToSpeech.SUCCESS) {
+                    ttsEngine.setLanguage(Locale.getDefault());
+                }
+            });
+        }
+    }
+
+    private void speakOrStop(String textToSpeak, ImageView playPauseIcon) {
+        initTts();
+        if (ttsEngine == null) return;
+        if (ttsEngine.isSpeaking()) {
+            ttsEngine.stop();
+            playPauseIcon.setImageResource(android.R.drawable.ic_media_play);
+        } else {
+            ttsEngine.speak(textToSpeak, TextToSpeech.QUEUE_FLUSH, null, "GuideVoice");
+            playPauseIcon.setImageResource(android.R.drawable.ic_media_pause);
+            if (Build.VERSION.SDK_INT >= 21) {
+                ttsEngine.setOnUtteranceProgressListener(new UtteranceProgressListener() {
+                    @Override public void onStart(String utteranceId) {}
+                    @Override public void onDone(String utteranceId) {
+                        runOnUiThread(() -> playPauseIcon.setImageResource(android.R.drawable.ic_media_play));
+                    }
+                    @Override public void onError(String utteranceId) {
+                        runOnUiThread(() -> playPauseIcon.setImageResource(android.R.drawable.ic_media_play));
+                    }
+                });
+            }
+        }
     }
 
     @Override
@@ -7929,13 +7969,38 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         body.setPadding(0, 0, 0, dp(20));
         form.addView(body, new LinearLayout.LayoutParams(-1, -2));
 
+        LinearLayout actionsRow = new LinearLayout(this);
+        actionsRow.setOrientation(LinearLayout.HORIZONTAL);
+        actionsRow.setGravity(Gravity.CENTER_VERTICAL);
+
         TextView close = text("Got it", 14, GOLD_ON, Typeface.NORMAL);
         close.setGravity(Gravity.CENTER);
         close.setBackground(goldButton());
-        close.setOnClickListener(view -> dialog.dismiss());
-        form.addView(close, new LinearLayout.LayoutParams(-1, dp(44)));
+        close.setOnClickListener(view -> {
+            if (ttsEngine != null) ttsEngine.stop();
+            dialog.dismiss();
+        });
+        actionsRow.addView(close, new LinearLayout.LayoutParams(0, dp(44), 1f));
+
+        ImageView voiceButton = new ImageView(this);
+        voiceButton.setImageResource(android.R.drawable.ic_media_play);
+        voiceButton.setColorFilter(primaryTextColor());
+        voiceButton.setBackground(roundWithStroke(surfaceColor(), 10, fieldBorderColor()));
+        voiceButton.setPadding(dp(10), dp(10), dp(10), dp(10));
+        voiceButton.setContentDescription("Listen to guide");
+        voiceButton.setOnClickListener(v -> speakOrStop("How to Use My Reports. " + guideText, voiceButton));
+        LinearLayout.LayoutParams voiceParams = new LinearLayout.LayoutParams(dp(44), dp(44));
+        voiceParams.setMargins(dp(8), 0, 0, 0);
+        actionsRow.addView(voiceButton, voiceParams);
+
+        form.addView(actionsRow, new LinearLayout.LayoutParams(-1, -2));
 
         dialog.setContentView(form);
+        dialog.setOnDismissListener(d -> {
+            if (ttsEngine != null) {
+                ttsEngine.stop();
+            }
+        });
         dialog.show();
         Window window = dialog.getWindow();
         if (window != null) {
@@ -7970,13 +8035,38 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         body.setPadding(0, 0, 0, dp(20));
         form.addView(body, new LinearLayout.LayoutParams(-1, -2));
 
+        LinearLayout actionsRow = new LinearLayout(this);
+        actionsRow.setOrientation(LinearLayout.HORIZONTAL);
+        actionsRow.setGravity(Gravity.CENTER_VERTICAL);
+
         TextView close = text("Got it", 14, GOLD_ON, Typeface.NORMAL);
         close.setGravity(Gravity.CENTER);
         close.setBackground(goldButton());
-        close.setOnClickListener(view -> dialog.dismiss());
-        form.addView(close, new LinearLayout.LayoutParams(-1, dp(44)));
+        close.setOnClickListener(view -> {
+            if (ttsEngine != null) ttsEngine.stop();
+            dialog.dismiss();
+        });
+        actionsRow.addView(close, new LinearLayout.LayoutParams(0, dp(44), 1f));
+
+        ImageView voiceButton = new ImageView(this);
+        voiceButton.setImageResource(android.R.drawable.ic_media_play);
+        voiceButton.setColorFilter(primaryTextColor());
+        voiceButton.setBackground(roundWithStroke(surfaceColor(), 10, fieldBorderColor()));
+        voiceButton.setPadding(dp(10), dp(10), dp(10), dp(10));
+        voiceButton.setContentDescription("Listen to guide");
+        voiceButton.setOnClickListener(v -> speakOrStop("How to Report Lost and Found. " + guideText, voiceButton));
+        LinearLayout.LayoutParams voiceParams = new LinearLayout.LayoutParams(dp(44), dp(44));
+        voiceParams.setMargins(dp(8), 0, 0, 0);
+        actionsRow.addView(voiceButton, voiceParams);
+
+        form.addView(actionsRow, new LinearLayout.LayoutParams(-1, -2));
 
         dialog.setContentView(form);
+        dialog.setOnDismissListener(d -> {
+            if (ttsEngine != null) {
+                ttsEngine.stop();
+            }
+        });
         dialog.show();
         Window window = dialog.getWindow();
         if (window != null) {
