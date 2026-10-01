@@ -3350,22 +3350,41 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
 
     private void showProfilePhotoOptions() {
         boolean hasPicture = hasProfilePicture();
-        if (hasPicture) {
-            new AlertDialog.Builder(this)
-                    .setTitle(translate("Profile photo"))
-                    .setItems(new String[]{translate("See profile picture"), translate("Choose profile picture"), translate("Remove profile picture")}, (dialog, which) -> {
-                        if (which == 0) {
-                            showEnlargedProfilePicture();
-                        } else if (which == 1) {
-                            showChoosePhotoSourceOptions();
-                        } else {
-                            removeProfilePicture();
-                        }
-                    })
-                    .show();
-        } else {
+        Dialog dialog = new Dialog(this);
+        LinearLayout content = themedDialogContent(R.drawable.ic_field_person, "Profile photo", "Choose an action for your profile picture");
+
+        TextView seePhoto = actionButton("See profile picture", false);
+        seePhoto.setOnClickListener(v -> {
+            dialog.dismiss();
+            showEnlargedProfilePicture();
+        });
+        addFieldToDialog(content, seePhoto);
+
+        TextView choosePhoto = actionButton("Choose profile picture", false);
+        choosePhoto.setOnClickListener(v -> {
+            dialog.dismiss();
             showChoosePhotoSourceOptions();
+        });
+        addFieldToDialog(content, choosePhoto);
+
+        if (hasPicture) {
+            TextView removePhoto = actionButton("Remove profile picture", false);
+            removePhoto.setTextColor(Color.RED);
+            removePhoto.setOnClickListener(v -> {
+                dialog.dismiss();
+                removeProfilePicture();
+            });
+            addFieldToDialog(content, removePhoto);
         }
+
+        TextView cancel = actionButton("Cancel", true);
+        cancel.setOnClickListener(v -> dialog.dismiss());
+        addFieldToDialog(content, cancel);
+
+        dialog.setContentView(content);
+        dialog.setCanceledOnTouchOutside(true);
+        dialog.show();
+        sizeThemedDialog(dialog);
     }
 
     private void removeProfilePicture() {
@@ -3396,16 +3415,37 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
     }
 
     private void showChoosePhotoSourceOptions() {
-        new AlertDialog.Builder(this)
-                .setTitle(translate("Choose profile picture"))
-                .setItems(new String[]{translate("Choose from gallery"), translate("Take photo")}, (dialog, which) -> {
-                    if (which == 0) {
-                        openProfilePhotoPicker();
-                    } else {
-                        openProfilePhotoCamera();
-                    }
-                })
-                .show();
+        Dialog dialog = new Dialog(this);
+        LinearLayout content = themedDialogContent(R.drawable.ic_field_person, "Choose profile picture", "Select source for your profile picture");
+
+        TextView gallery = actionButton("Choose from gallery", false);
+        gallery.setOnClickListener(v -> {
+            dialog.dismiss();
+            openProfilePhotoPicker();
+        });
+        addFieldToDialog(content, gallery);
+
+        TextView camera = actionButton("Take photo", false);
+        camera.setOnClickListener(v -> {
+            dialog.dismiss();
+            openProfilePhotoCamera();
+        });
+        addFieldToDialog(content, camera);
+
+        TextView cancel = actionButton("Cancel", true);
+        cancel.setOnClickListener(v -> dialog.dismiss());
+        addFieldToDialog(content, cancel);
+
+        dialog.setContentView(content);
+        dialog.setCanceledOnTouchOutside(true);
+        dialog.show();
+        sizeThemedDialog(dialog);
+    }
+
+    private void addFieldToDialog(LinearLayout parent, View child) {
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(-1, dp(44));
+        params.setMargins(0, 0, 0, dp(10));
+        parent.addView(child, params);
     }
 
     private void showEnlargedProfilePicture() {
