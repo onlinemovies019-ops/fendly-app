@@ -58,7 +58,10 @@ class ItemCreateRequest(BaseModel):
 class ItemMatchRequest(BaseModel):
     imageUrl: Optional[str] = Field(default=None, max_length=1000)
     imei: Optional[str] = Field(default=None, max_length=32)
-    targetType: str = Field(..., min_length=1, max_length=10)
+    targetType: Optional[str] = Field(default=None, min_length=1, max_length=10)
+    found_item_id: Optional[str] = Field(default=None, min_length=1)
+    lost_item_id: Optional[str] = Field(default=None, min_length=1)
+    radius_degrees: float = Field(default=0.25, gt=0, le=10)
 
 
 app = FastAPI(title="Fendly API")
@@ -117,6 +120,22 @@ def _exact_imei_matches(clean_imei: str, target_type: str) -> list[dict[str, Any
     return matches
 
 
+def _item_by_id(item_id: str, item_type: str) -> dict[str, Any]:
+    client = _supabase_client()
+    if client is None:
+        raise HTTPException(status_code=503, detail="Item lookup is unavailable")
+
+    try:
+        response = client.table("items").select("*").eq("id", item_id).eq("type", item_type).execute()
+        rows = response.data or []
+    except Exception as error:
+        raise HTTPException(status_code=503, detail="Item lookup is unavailable") from error
+
+    if not rows:
+        raise HTTPException(status_code=404, detail="Report not found")
+    return rows[0]
+
+
 def _visual_matches(image_url: str, target_type: str) -> list[dict[str, Any]]:
     try:
         from ai_matching import create_embedding, item_text
@@ -166,7 +185,7 @@ def _visual_matches(image_url: str, target_type: str) -> list[dict[str, Any]]:
     return matches
 
 
-@router.post("/items")
+@router.post("/items", status_code=201)
 async def create_item(request: ItemCreateRequest):
     item_type = (request.type or "").strip().lower()
     if item_type not in {"lost", "found"}:
@@ -209,22 +228,39 @@ async def create_item(request: ItemCreateRequest):
 
 @router.post("/items/match")
 async def match_items(request: ItemMatchRequest):
-    target_type = (request.targetType or "").strip().lower()
-    if target_type not in {"lost", "found"}:
-        raise HTTPException(status_code=400, detail="targetType must be 'lost' or 'found'")
+    if request.found_item_id and request.lost_item_id:
+        raise HTTPException(status_code=400, detail="Provide exactly one of found_item_id or lost_item_id")
+
+    source_item = None
+    if request.found_item_id:
+        source_item = _item_by_id(request.found_item_id, "found")
+        target_type = "lost"
+    elif request.lost_item_id:
+        source_item = _item_by_id(request.lost_item_id, "lost")
+        target_type = "found"
+    else:
+        target_type = (request.targetType or "").strip().lower()
+        if target_type not in {"lost", "found"}:
+            raise HTTPException(status_code=400, detail="targetType must be 'lost' or 'found'")
+
+    cleaned_imei = clean_imei(request.imei)
+    if request.imei is not None and (cleaned_imei is None or len(cleaned_imei) != 15 or not cleaned_imei.isdigit()):
+        raise HTTPException(status_code=400, detail="Invalid 15-digit IMEI number")
+    if cleaned_imei is None and source_item is not None:
+        cleaned_imei = clean_imei(source_item.get("imei"))
+
+    image_url = request.imageUrl
+    if not image_url and source_item is not None:
+        image_url = source_item.get("image_url") or source_item.get("imageUrl")
 
     results: list[dict[str, Any]] = []
 
-    cleaned_imei = clean_imei(request.imei)
-    if request.imei is not None and (cleaned_imei is None or len(cleaned_imei) != 15 or not validate_luhn(cleaned_imei)):
-        raise HTTPException(status_code=400, detail="Invalid 15-digit IMEI number")
-
-    if cleaned_imei:
+    if cleaned_imei and len(cleaned_imei) == 15 and cleaned_imei.isdigit():
         exact_results = _exact_imei_matches(cleaned_imei, target_type)
         results.extend(exact_results)
 
-    if request.imageUrl:
-        visual_results = _visual_matches(request.imageUrl, target_type)
+    if image_url:
+        visual_results = _visual_matches(image_url, target_type)
         results.extend(visual_results)
 
     deduped: dict[str, dict[str, Any]] = {}
