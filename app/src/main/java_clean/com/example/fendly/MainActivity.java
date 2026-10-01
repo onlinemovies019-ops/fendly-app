@@ -7956,35 +7956,61 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
     }
 
     private void showAdminAlertsDialog(JSONArray alerts, String idToken) throws Exception {
-        LinearLayout content = new LinearLayout(this);
-        content.setOrientation(LinearLayout.VERTICAL);
-        content.setPadding(dp(20), dp(16), dp(20), dp(12));
+        Dialog dialog = new Dialog(this);
+        dialog.requestWindowFeature(Window.FEATURE_NO_TITLE);
+
+        LinearLayout form = new LinearLayout(this);
+        form.setOrientation(LinearLayout.VERTICAL);
+        form.setPadding(dp(22), dp(22), dp(22), dp(18));
+        form.setBackground(roundWithStroke(surfaceColor(), 26, borderColor()));
+
+        TextView bellIcon = text("🔔", 24, primaryTextColor(), Typeface.NORMAL);
+        bellIcon.setGravity(Gravity.CENTER);
+        LinearLayout.LayoutParams iconParams = new LinearLayout.LayoutParams(dp(50), dp(50));
+        iconParams.gravity = Gravity.CENTER_HORIZONTAL;
+        form.addView(bellIcon, iconParams);
+
+        TextView title = text("Match notifications", 18, primaryTextColor(), Typeface.BOLD);
+        title.setGravity(Gravity.CENTER);
+        title.setPadding(0, dp(4), 0, dp(12));
+        form.addView(title, new LinearLayout.LayoutParams(-1, -2));
+
         ScrollView scroll = new ScrollView(this);
         LinearLayout rows = new LinearLayout(this);
         rows.setOrientation(LinearLayout.VERTICAL);
+
         for (int index = 0; index < alerts.length(); index++) {
             JSONObject alert = alerts.getJSONObject(index);
             String details = alert.optString("found_title", "Found item") + " may match "
                     + alert.optString("lost_title", "a lost report") + "\n"
                     + Math.round(alert.optDouble("confidence", 0.0) * 100) + "% confidence";
-            TextView row = text(details, 14, primaryTextColor(), Typeface.NORMAL);
+            TextView row = text(details, 13, primaryTextColor(), Typeface.NORMAL);
             row.setPadding(dp(12), dp(10), dp(12), dp(10));
-            row.setBackground(roundWithStroke(surfaceColor(), 10, borderColor()));
+            row.setBackground(roundWithStroke(surfaceColor(), 10, fieldBorderColor()));
             LinearLayout.LayoutParams rowParams = new LinearLayout.LayoutParams(-1, -2);
             rowParams.setMargins(0, 0, 0, dp(8));
             rows.addView(row, rowParams);
+
             String alertId = alert.optString("id", "");
             if (!alert.optBoolean("is_read", false) && !alertId.isEmpty()) {
                 network.execute(() -> postAuthorized("/api/admin/alerts/" + alertId + "/read", idToken));
             }
         }
+
         scroll.addView(rows);
-        content.addView(scroll, new LinearLayout.LayoutParams(-1, Math.min(dp(360), dp(88) * alerts.length())));
-        new AlertDialog.Builder(this)
-                .setTitle("AI match notifications")
-                .setView(content)
-                .setPositiveButton("Close", null)
-                .show();
+        LinearLayout.LayoutParams scrollParams = new LinearLayout.LayoutParams(-1, Math.min(dp(260), dp(80) * alerts.length()));
+        scrollParams.setMargins(0, 0, 0, dp(16));
+        form.addView(scroll, scrollParams);
+
+        TextView close = text(translate("Close"), 14, GOLD_ON, Typeface.NORMAL);
+        close.setGravity(Gravity.CENTER);
+        close.setBackground(goldButton());
+        close.setOnClickListener(v -> dialog.dismiss());
+        form.addView(close, new LinearLayout.LayoutParams(-1, dp(44)));
+
+        dialog.setContentView(form);
+        dialog.show();
+        sizeThemedDialog(dialog);
     }
 
     private boolean postAuthorized(String path, String idToken) {
@@ -8529,7 +8555,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             notificationButton.setBackground(roundWithStroke(surfaceColor(), 14, borderColor()));
             notificationButton.setPadding(dp(8), dp(8), dp(8), dp(8));
             notificationButton.setElevation(dp(2));
-            notificationButton.setContentDescription("AI match notifications");
+            notificationButton.setContentDescription("Match notifications");
             notificationButton.setOnClickListener(view -> loadAdminAlerts(false));
             controls.addView(notificationButton, new LinearLayout.LayoutParams(dp(42), dp(42)));
         } else if (currentPage == PAGE_REPORTS) {
