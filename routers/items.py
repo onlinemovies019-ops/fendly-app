@@ -78,7 +78,7 @@ def _stored_report_field(value: str | None, label: str) -> str | None:
 
 
 async def _save_item(payload: ItemCreate, session: Session, uid: str, model: type[LostItem] | type[FoundItem]):
-    # 1. Validate IMEI BEFORE checking payment status
+    # 1. Validate IMEI first
     if getattr(payload, "imei", None):
         if not validate_luhn(str(payload.imei)):
             raise HTTPException(status_code=400, detail="Invalid 15-digit IMEI number")
@@ -86,12 +86,13 @@ async def _save_item(payload: ItemCreate, session: Session, uid: str, model: typ
     # 2. Handle Payment Verification with Test Bypass
     if model is LostItem:
         if payload.payment_id in ["test_bypass", "test_payment_123"] or (payload.payment_id and payload.payment_id.startswith("pay_test_")):
-            pass  # Bypass Razorpay verification for testing
+            pass  # Test bypass
         else:
             if not payload.payment_id:
                 raise HTTPException(status.HTTP_402_PAYMENT_REQUIRED, "A valid payment is required")
             verify_captured_payment(payload.payment_id, uid)
 
+    # 3. Async Tasks for Moderation and Embeddings
     mod_task = asyncio.create_task(moderate_content(payload.title, payload.description))
     emb_task = asyncio.create_task(create_embedding(item_text(payload.title, payload.description, payload.category)))
     img_task = asyncio.create_task(create_image_embedding(payload.image_url))
@@ -101,14 +102,13 @@ async def _save_item(payload: ItemCreate, session: Session, uid: str, model: typ
     if rejection_reason:
         raise HTTPException(status_code=422, detail=rejection_reason)
 
+    # 4. Create and persist record
     item_values = payload.model_dump(exclude={"payment_id"})
     record = model(**item_values, created_by=uid, embedding=embedding, image_embedding=image_embedding)
-    try:
-        session.commit()
-        session.refresh(record)
-    except Exception as exc:
-        session.rollback()
-        raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, f"Failed to save report: {str(exc)}") from exc
+
+    session.add(record)
+    session.commit()
+    session.refresh(record)
     return record
 
 
@@ -383,7 +383,7 @@ async def match_items(
 ) -> list[dict[str, object]]:
     session = _require_db_session(session)
 
-    # 1. Direct IMEI Search Handling (Fixes Test 3 & Test 4)
+    # 1. Direct IMEI Matching Path
     if getattr(request, "imei", None):
         clean_imei = "".join(filter(str.isdigit, str(request.imei)))
         target_type = getattr(request, "targetType", "lost")
@@ -393,8 +393,7 @@ async def match_items(
 
         results = []
         for item in matched_records:
-            # Mask 15-digit IMEI for privacy (e.g., 358241******567)
-            raw_imei = item.imei or ""
+            raw_imei = getattr(item, "imei", "") or ""
             masked_imei = f"{raw_imei[:6]}******{raw_imei[-3:]}" if len(raw_imei) == 15 else raw_imei
 
             item_dict = item.__dict__.copy()
@@ -408,7 +407,7 @@ async def match_items(
             })
         return results
 
-    # 2. Standard Item-ID Matching Fallback (for requests with lost_item_id or found_item_id)
+    # 2. Standard Item-ID Matching Fallback
     if bool(request.found_item_id) == bool(request.lost_item_id):
         raise HTTPException(400, "Provide exactly one of found_item_id or lost_item_id")
 
