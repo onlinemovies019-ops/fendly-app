@@ -4213,13 +4213,31 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
 
     private void showImageOptions(int slot) {
         pendingImageSlot = slot;
-        new AlertDialog.Builder(this)
-                .setTitle("Add image")
-                .setItems(new String[]{"Choose from gallery", "Take photo"}, (dialog, which) -> {
-                    if (which == 0) openGalleryForSlot(slot);
-                    else openCameraForSlot(slot);
-                })
-                .show();
+        Dialog dialog = new Dialog(this);
+        LinearLayout content = themedDialogContent(R.drawable.add_image, "Add image", "Choose source for item image");
+
+        TextView gallery = actionButton("Choose from gallery", false);
+        gallery.setOnClickListener(v -> {
+            dialog.dismiss();
+            openGalleryForSlot(slot);
+        });
+        addFieldToDialog(content, gallery);
+
+        TextView camera = actionButton("Take photo", false);
+        camera.setOnClickListener(v -> {
+            dialog.dismiss();
+            openCameraForSlot(slot);
+        });
+        addFieldToDialog(content, camera);
+
+        TextView cancel = actionButton("Cancel", true);
+        cancel.setOnClickListener(v -> dialog.dismiss());
+        addFieldToDialog(content, cancel);
+
+        dialog.setContentView(content);
+        dialog.setCanceledOnTouchOutside(true);
+        dialog.show();
+        sizeThemedDialog(dialog);
     }
 
     private void openGalleryForSlot(int slot) {
