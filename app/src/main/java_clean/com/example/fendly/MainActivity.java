@@ -3456,6 +3456,9 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             SharedPreferences account = getSharedPreferences("fendly_account", MODE_PRIVATE);
             account.edit().putString("profile_image_url", finalImageUrl).apply();
 
+            selectedProfileImage = null;
+            capturedProfileImage = null;
+
             String username = account.getString("username", "");
             String fullName = account.getString("full_name", "");
             String email = account.getString("email", "");
