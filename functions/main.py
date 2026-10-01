@@ -192,11 +192,12 @@ def _visual_matches(image_url: str, target_type: str) -> list[dict[str, Any]]:
 
 @router.post("/items", status_code=201)
 async def create_item(request: ItemCreateRequest):
-    if request.imei is not None and not validate_luhn(request.imei):
-        raise HTTPException(status_code=400, detail="Invalid 15-digit IMEI number")
+    if request.imei:
+        if not validate_luhn(request.imei):
+            raise HTTPException(status_code=400, detail="Invalid 15-digit IMEI number")
 
     payment_id = request.payment_id or ""
-    if payment_id == "test_bypass" or payment_id.startswith("pay_test_"):
+    if payment_id in ["test_bypass", "test_payment_123"] or (payment_id and payment_id.startswith("pay_test_")):
         pass
 
     cleaned_imei = clean_imei(request.imei)

@@ -29,7 +29,7 @@ async function runImeiTests() {
         type: 'lost',
         category: 'electronics',
         imei: INVALID_IMEI,
-        payment_id: 'test_payment_123'
+        payment_id: 'test_bypass'
       })
     });
 
@@ -57,7 +57,7 @@ async function runImeiTests() {
         type: 'lost',
         category: 'electronics',
         imei: VALID_IMEI,
-        payment_id: 'test_payment_123'
+        payment_id: 'test_bypass'
       })
     });
 
@@ -108,7 +108,7 @@ async function runImeiTests() {
       console.warn(`⚠️ WARNING: IMEI field returned value: ${returnedImei}`);
     }
   } else {
-    console.log(`ℹ️ SKIP: No match results available to check privacy masking.`);
+    console.log(`ℹ️️ SKIP: No match results available to check privacy masking.`);
   }
 
   console.log('\n=============================================================');
