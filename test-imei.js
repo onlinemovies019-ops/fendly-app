@@ -28,7 +28,8 @@ async function runImeiTests() {
         description: 'Testing Luhn validation',
         type: 'lost',
         category: 'electronics',
-        imei: INVALID_IMEI
+        imei: INVALID_IMEI,
+        payment_id: 'test_payment_123'
       })
     });
 
@@ -36,7 +37,7 @@ async function runImeiTests() {
     if (res1.status === 400) {
       console.log(`✅ PASSED: Server correctly rejected invalid IMEI (HTTP 400): "${data1.detail || data1.message}"`);
     } else {
-      console.error(`❌ FAILED: Expected HTTP 400 for bad IMEI, but got HTTP ${res1.status}`);
+      console.error(`❌ FAILED: Expected HTTP 400 for bad IMEI, but got HTTP ${res1.status}:`, data1);
     }
   } catch (err) {
     console.error('❌ Error in Test 1:', err.message);
@@ -55,7 +56,8 @@ async function runImeiTests() {
         description: 'Black phone lost near burdi road',
         type: 'lost',
         category: 'electronics',
-        imei: VALID_IMEI
+        imei: VALID_IMEI,
+        payment_id: 'test_payment_123'
       })
     });
 
@@ -102,10 +104,8 @@ async function runImeiTests() {
     console.log(`   Raw Returned IMEI field: "${returnedImei}"`);
     if (returnedImei && returnedImei.includes('*')) {
       console.log(`✅ PASSED: IMEI field is properly masked for privacy! (${returnedImei})`);
-    } else if (returnedImei === VALID_IMEI) {
-      console.warn(`⚠️ WARNING: Full raw IMEI returned without masking. Ensure privacy masking is applied.`);
     } else {
-      console.log(`ℹ️ INFO: IMEI field returned value: ${returnedImei}`);
+      console.warn(`⚠️ WARNING: IMEI field returned value: ${returnedImei}`);
     }
   } else {
     console.log(`ℹ️ SKIP: No match results available to check privacy masking.`);

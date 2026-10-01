@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 
 def validate_luhn(imei: str) -> bool:
     """Validate a 15-digit IMEI using the Luhn checksum algorithm."""
-    clean = re.sub(r"[\s-]", "", str(imei or ""))
+    clean = re.sub(r"\D", "", str(imei or ""))
     if len(clean) != 15 or not clean.isdigit():
         return False
 
@@ -28,11 +28,13 @@ def validate_luhn(imei: str) -> bool:
 def clean_imei(raw: Optional[str]) -> Optional[str]:
     if raw is None:
         return None
-    cleaned = re.sub(r"[\s-]", "", str(raw).strip())
+    cleaned = re.sub(r"\D", "", str(raw))
     return cleaned if cleaned else None
 
 
 def mask_imei(imei: Optional[str]) -> Optional[str]:
+    if imei and "*" in imei:
+        return imei
     value = clean_imei(imei)
     if not value:
         return None
@@ -187,13 +189,13 @@ def _visual_matches(image_url: str, target_type: str) -> list[dict[str, Any]]:
 
 @router.post("/items", status_code=201)
 async def create_item(request: ItemCreateRequest):
-    item_type = (request.type or "").strip().lower()
-    if item_type not in {"lost", "found"}:
-        raise HTTPException(status_code=400, detail="type must be 'lost' or 'found'")
-
     cleaned_imei = clean_imei(request.imei)
     if request.imei is not None and (cleaned_imei is None or len(cleaned_imei) != 15 or not validate_luhn(cleaned_imei)):
         raise HTTPException(status_code=400, detail="Invalid 15-digit IMEI number")
+
+    item_type = (request.type or "").strip().lower()
+    if item_type not in {"lost", "found"}:
+        raise HTTPException(status_code=400, detail="type must be 'lost' or 'found'")
 
     payload: dict[str, Any] = {
         "title": request.title,
