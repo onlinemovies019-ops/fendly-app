@@ -2517,10 +2517,12 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         screenRenderer = () -> showReport(type);
         currentReportType = type;
         LinearLayout root = screenBase("");
-        root.addView(text("Click Lost/Found button to report", 15, primaryTextColor(), Typeface.NORMAL), contentParams(-1, dp(22), dp(14)));
+        TextView reportHeader = text("Click Lost/Found button to report", 15, primaryTextColor(), Typeface.NORMAL);
+        reportHeader.setGravity(Gravity.CENTER);
+        root.addView(reportHeader, contentParams(-1, dp(22), dp(14)));
         LinearLayout typeToggle = new LinearLayout(this);
         typeToggle.setOrientation(LinearLayout.HORIZONTAL);
-        TextView lostToggle = reportTypeToggle("Lost/Theft", "LOST".equals(type), LOST_GREEN, LOST_GREEN_ON);
+        TextView lostToggle = reportTypeToggle("LOST/THEFT", "LOST".equals(type), LOST_GREEN, LOST_GREEN_ON);
         TextView foundToggle = reportTypeToggle("Found", "FOUND".equals(type), FOUND_GOLD, FOUND_GOLD_ON);
         lostToggle.setOnClickListener(view -> showReport("LOST"));
         foundToggle.setOnClickListener(view -> showReport("FOUND"));
