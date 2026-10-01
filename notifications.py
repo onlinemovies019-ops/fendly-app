@@ -113,12 +113,14 @@ def persist_admin_match_alert(
     if existing is not None:
         return False
 
-    details = f"Found '{found_item.title}' may match lost report '{lost_item.title}'."
+    found_title = found_item.title_en or "English translation unavailable"
+    lost_title = lost_item.title_en or "English translation unavailable"
+    details = f"Found '{found_title}' may match lost report '{lost_title}'."
     alert = AdminMatchAlert(
         found_item_id=found_item.id,
         lost_item_id=lost_item.id,
-        found_title=found_item.title,
-        lost_title=lost_item.title,
+        found_title=found_title,
+        lost_title=lost_title,
         confidence=confidence,
         reason=details,
     )
@@ -134,7 +136,7 @@ def persist_admin_match_alert(
         return False
 
     alert.email_sent = send_admin_match_email(
-        found_item.title,
+        found_title,
         confidence,
         f"{details} Confidence: {confidence:.1%}",
     )

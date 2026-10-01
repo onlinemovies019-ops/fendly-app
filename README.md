@@ -27,6 +27,12 @@ Required environment variables:
 - Matching is local and free: keyword similarity is combined with location
 	proximity. OpenAI is optional; if absent, the app falls back to a local
 	free sentence-transformers model.
+- `OPENAI_API_KEY` also enables English translations of non-English reports for
+	admin views. Original report text stays unchanged for users; the admin API
+	stores translations separately and backfills older reports when viewed.
+	Translation requests use `OPENAI_TRANSLATION_MODEL` (default `gpt-4o-mini`)
+	and incur OpenAI API usage charges. Without a working key, admins see an
+	explicit translation-unavailable message instead of untranslated text.
 
 Uploads use Supabase Storage when configured. Without those variables, local
 development writes to `static/uploads`; Render's free filesystem is ephemeral.

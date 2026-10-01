@@ -135,6 +135,7 @@ import android.net.Uri;
 import android.provider.MediaStore;
 import android.provider.Settings;
 import android.location.Location;
+import android.location.LocationListener;
 import android.location.LocationManager;
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -187,6 +188,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
     private String activeLocationReportType;
     private TextView locationStatus;
     private TextView locationToggleStatus;
+    private LocationListener activeLocationListener;
     private String phoneVerificationId;
     private boolean phoneVerificationHandled;
     private String currentReportType;
@@ -540,9 +542,9 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
 
     private String translateHowToReportText() {
         String[] texts = {
-                "1. Reporting Lost Items:\n• Tap the green LOST button on the home screen.\n• Enter item details, category, description, and photo.\n\n2. Reporting Found Items:\n• Tap the gold FOUND button on the home screen when you find an item.\n• Fill in the details of the found item.\n\n3. Tracking Your Reports:\n• Visit My Reports anytime to track your submitted lost or found items and view updates.",
+                "1. Reporting Lost Items:\n• Tap the green LOST/THEFT button on the home screen.\n• Enter item details, category, description, and photo.\n\n2. Reporting Found Items:\n• Tap the gold FOUND button on the home screen when you find an item.\n• Fill in the details of the found item.\n\n3. Tracking Your Reports:\n• Visit My Reports anytime to track your submitted lost or found items and view updates.",
                 "1. खोई हुई वस्तुएं रिपोर्ट करें:\n• होम स्क्रीन पर हरे LOST बटन पर टैप करें।\n• वस्तु का विवरण, श्रेणी, जानकारी और फोटो दर्ज करें।\n\n2. मिली हुई वस्तुएं रिपोर्ट करें:\n• वस्तु मिलने पर होम स्क्रीन पर सुनहरे FOUND बटन पर टैप करें।\n• मिली हुई वस्तु का विवरण भरें।\n\n3. अपनी रिपोर्ट ट्रैक करें:\n• अपनी जमा की गई रिपोर्ट और अपडेट देखने के लिए कभी भी My Reports पर जाएं।",
-                "1. हरवलेल्या वस्तूंची नोंद:\n• होम स्क्रीनवरील हिरव्या LOST बटणावर टॅप करा.\n• वस्तूचे तपशील, वर्ग, वर्णन आणि फोटो प्रविष्ट करा.\n\n2. सापडलेल्या वस्तूंची नोंद:\n• वस्तू सापडल्यावर होम स्क्रीनवरील सोनेरी FOUND बटणावर टॅप करा.\n• सापडलेल्या वस्तूचा तपशील भरा.\n\n3. अहवाल ट्रॅक करा:\n• तुमचे सादर केलेले अहवाल आणि अपडेट्स पाहण्यासाठी कधीही My Reports ला भेट द्या.",
+                "1. हरवलेल्या वस्तूंची नोंद:\n• होम स्क्रीनवरील हिरव्या 'हरवले/चोरी' बटणावर टॅप करा.\n• वस्तूचे तपशील, वर्ग, वर्णन आणि फोटो प्रविष्ट करा.\n\n2. सापडलेल्या वस्तूंची नोंद:\n• वस्तू सापडल्यावर होम स्क्रीनवरील सोनेरी 'सापडले' बटणावर टॅप करा.\n• सापडलेल्या वस्तूचा तपशील भरा.\n\n3. अहवाल ट्रॅक करा:\n• तुमचे सादर केलेले अहवाल आणि अपडेट्स पाहण्यासाठी कधीही 'माझे अहवाल' ला भेट द्या.",
                 "1. ખોવાયેલ વસ્તુઓની જાણ કરો:\n• હોમ સ્ક્રીન પર લીલા LOST બટન પર ટેપ કરો.\n• વસ્તુની વિગતો, શ્રેણી, વર્ણન અને ફોટો દાખલ કરો.\n\n2. મળેલ વસ્તુઓની જાણ કરો:\n• વસ્તુ મળે ત્યારે હોમ સ્ક્રીન પર સોનેરી FOUND બટન પર ટેપ કરો.\n• મળેલ વસ્તુની વિગતો ભરો.\n\n3. તમારા રિપોર્ટ ટ્રેક કરો:\n• તમારા સબમિટ કરેલા રિપોર્ટ અને અપડેટ્સ જોવા માટે ગમે ત્યારે My Reports ની મુલાકાત લો.",
                 "1. হারানো আইটেম রিপোর্ট করা:\n• হোম স্ক্রিনে সবুজ LOST বোতামে ট্যাপ করুন।\n• আইটেমের বিবরণ, বিভাগ, বর্ণনা এবং ছবি লিখুন।\n\n2. পাওয়া আইটেম রিপোর্ট করা:\n• কোনো আইটেম পেলে হোম স্ক্রিনে সোনালী FOUND বোতামে ট্যাপ করুন।\n• পাওয়া আইটেমের বিবরণ পূরণ করুন।\n\n3. আপনার রিপোর্ট ট্র্যাক করা:\n• আপনার জমা দেওয়া রিপোর্ট এবং আপডেট দেখতে যেকোনো সময় My Reports দেখুন।",
                 "1. தொலைந்த பொருட்களை அறிக்கையிடல்:\n• முகப்புத் திரையில் உள்ள பச்சை நிற LOST பொத்தானைத் தட்டவும்.\n• பொருளின் விவரங்கள், வகை, விளக்கம் மற்றும் புகைப்படத்தை உள்ளிடவும்.\n\n2. கிடைத்த பொருட்களை அறிக்கையிடல்:\n• ஒரு பொருள் கிடைக்கும்போது முகப்புத் திரையில் உள்ள தங்க நிற FOUND பொத்தானைத் தட்டவும்.\n• கிடைத்த பொருளின் விவரங்களை நிரப்பவும்.\n\n3. உங்கள் அறிக்கைகளைக் கண்காணித்தல்:\n• சமர்ப்பிக்கப்பட்ட அறிக்கைகள் மற்றும் புதுப்பிப்புகளைப் பார்க்க எப்போதும் My Reports பகுதிக்குச் செல்லவும்.",
@@ -551,7 +553,24 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                 "1. നഷ്ടപ്പെട്ടവ റിപ്പോർട്ട് ചെയ്യൽ:\n• ഹോം സ്‌ക്രീനിലെ പച്ച LOST ബട്ടണിൽ ടാപ്പ് ചെയ്യുക.\n• ഇനത്തിന്റെ വിശദാംശങ്ങൾ, വിഭാഗം, വിവരണം, ഫോട്ടോ എന്നിവ നൽകുക.\n\n2. കണ്ടെത്തിയവ റിപ്പോർട്ട് ചെയ്യൽ:\n• ഒരു ഇനം കണ്ടെത്തുമ്പോൾ ഹോം സ്‌ക്രീനിലെ സുവർണ്ണ FOUND ബട്ടണിൽ ടാപ്പ് ചെയ്യുക.\n• കണ്ടെത്തിയ ഇനത്തിന്റെ വിവരങ്ങൾ നൽകുക.\n\n3. റിപ്പോർട്ടുകൾ ട്രാക്ക് ചെയ്യൽ:\n• സമർപ്പിച്ച റിപ്പോർട്ടുകളും അപ്‌ഡേറ്റുകളും കാണാൻ എപ്പോൾ വേണമെങ്കിലും My Reports സന്ദർശിക്കുക."
         };
         int lang = Math.max(0, Math.min(selectedLanguage, texts.length - 1));
-        return texts[lang];
+        if (lang == 0) return texts[lang];
+
+        String[] lostButtonLabels = {
+            "LOST", "खोया", "हरवले/चोरी", "ખોવાયેલું", "হারানো",
+            "தொலைந்தது", "పోగొట్టుకున్న", "ಕಳೆದುಹೋದ", "നഷ്ടപ്പെട്ട"
+        };
+        String[] foundButtonLabels = {
+            "FOUND", "मिला", "सापडले", "મળેલ", "পাওয়া",
+            "கிடைத்தது", "దొరికిన", "ಸಿಕ್ಕಿದ", "കണ്ടെത്തിയത്"
+        };
+        String[] myReportsLabels = {
+            "My Reports", "मेरी रिपोर्टें", "माझे अहवाल", "મારા અહેવાલો", "আমার রিপোর্ট",
+            "எனது அறிக்கைகள்", "నా నివేదికలు", "ನನ್ನ ವರದಿಗಳು", "എന്റെ റിപ്പോർട്ടുകൾ"
+        };
+        return texts[lang]
+            .replace("LOST", lostButtonLabels[lang])
+            .replace("FOUND", foundButtonLabels[lang])
+            .replace("My Reports", myReportsLabels[lang]);
     }
 
     private String translateMyReportsTitle() {
@@ -572,18 +591,18 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
 
     private String translateMyReportsText() {
         String[] texts = {
-                "1. View Submitted Reports:\n• Review all your active lost and found item submissions in one centralized list.\n\n2. Track Status & AI Matches:\n• Monitor report statuses and check for any potential AI item matches.\n\n3. Edit or Delete Reports:\n• Update report information once if needed, or delete items once recovered or resolved.",
-                "1. जमा की गई रिपोर्ट देखें:\n• अपनी सभी सक्रिय खोई और मिली हुई रिपोर्ट एक ही सूची में देखें।\n\n2. स्थिति और AI मिलान ट्रैक करें:\n• रिपोर्ट की स्थिति पर नज़र रखें और किसी भी संभावित AI मिलान की जांच करें।\n\n3. रिपोर्ट संपादित या हटाएं:\n• आवश्यकता पड़ने पर जानकारी अपडेट करें, या वस्तु मिलने पर रिपोर्ट हटाएं।",
-                "1. सादर केलेले अहवाल पाहा:\n• तुमचे सर्व सक्रिय हरवलेले आणि सापडलेले अहवाल एकाच यादीत पाहा.\n\n2. स्थिती आणि AI जुळणी ट्रॅक करा:\n• अहवाल स्थितीवर लक्ष ठेवा आणि संभाव्य AI जुळण्या तपासा.\n\n3. अहवाल संपादित करा किंवा हटवा:\n• गरज असल्यास माहिती अपडेट करा, किंवा वस्तू परत मिळाल्यावर अहवाल हटवा.",
-                "1. સબમિટ કરેલા રિપોર્ટ જુઓ:\n• તમારા બધા સક્રિય ખોવાયેલ અને મળેલ રિપોર્ટ એક જ યાદીમાં જુઓ.\n\n2. સ્ટેટસ અને AI મેચ ટ્રેક કરો:\n• રિપોર્ટ સ્ટેટસ પર નજર રાખો અને સંભવિત AI મેચ તપાસો.\n\n3. રિપોર્ટ એડિટ અથવા ડિલીટ કરો:\n• જરૂર જણાય તો માહિતી અપડેટ કરો, અથવા વસ્તુ મળી જાય ત્યારે ડિલીટ કરો.",
-                "1. জমা দেওয়া রিপোর্ট দেখুন:\n• একটি তালিকায় আপনার সমস্ত সক্রিয় হারানো এবং পাওয়া রিপোর্ট দেখুন।\n\n2. স্থিতি এবং AI ম্যাচ ট্র্যাক করুন:\n• রিপোর্টের স্থিতি ট্র্যাক করুন এবং যেকোনো সম্ভাব্য AI ম্যাচ দেখুন।\n\n3. রিপোর্ট সম্পাদনা বা মুছুন:\n• প্রয়োজন হলে তথ্য আপডেট করুন, বা উদ্ধার হলে মুছুন।",
-                "1. சமர்ப்பிக்கப்பட்ட அறிக்கைகளைப் பார்க்கவும்:\n• உங்கள் செயலில் உள்ள அனைத்து அறிக்கைகளையும் ஒரே பட்டியலில் பார்க்கவும்.\n\n2. நிலை மற்றும் AI பொருத்தங்களைக் கண்காணிக்கவும்:\n• அறிக்கைகளின் நிலையைக் கண்காணித்து சாத்தியமான AI பொருத்தங்களைச் சரிபார்க்கவும்.\n\n3. அறிக்கைகளைத் திருத்தவும் அல்லது நீக்கவும்:\n• தேவைப்பட்டால் தகவலைப் புதுப்பிக்கவும், அல்லது பொருள்கள் கிடைத்ததும் நீக்கவும்.",
-                "1. సమర్పించిన రిపోర్టులను చూడండి:\n• మీ క్రియాశీల రిపోర్టులన్నింటినీ ఒకే జాబితాలో చూడండి.\n\n2. స్థితి మరియు AI మ్యాచ్‌లను ట్రాక్ చేయండి:\n• రిపోర్టుల స్థితిని పర్యవేక్షించండి మరియు ఏవైనా AI మ్యాచ్‌లను తనిఖీ చేయండి.\n\n3. రిపోర్టులను సవరించండి లేదా తొలగించండి:\n• అవసరమైతే సమాచారాన్ని అప్‌డేట్ చేయండి లేదా వస్తువు దొరికిన తర్వాత తొలగించండి.",
-                "1. ಸಲ್ಲಿಸಿದ ವರದಿಗಳನ್ನು ವೀಕ್ಷಿಸಿ:\n• ನಿಮ್ಮ ಎಲ್ಲಾ ಸಕ್ರಿಯ ವರದಿಗಳನ್ನು ಒಂದೇ ಪಟ್ಟಿಯಲ್ಲಿ ಪರಿಶೀಲಿಸಿ.\n\n2. ಸ್ಥಿತಿ ಮತ್ತು AI ಪಂದ್ಯಗಳನ್ನು ಟ್ರ್ಯಾಕ್ ಮಾಡಿ:\n• ವರದಿಗಳ ಸ್ಥಿತಿಯನ್ನು ಮೇಲ್ವಿಚಾರಣೆ ಮಾಡಿ ಮತ್ತು ಸಂಭಾವ್ಯ AI ಪಂದ್ಯಗಳನ್ನು ಪರಿಶೀಲಿಸಿ.\n\n3. ವರದಿಗಳನ್ನು ಸಂಪಾದಿಸಿ ಅಥವಾ ಅಳಿಸಿ:\n• ಅಗತ್ಯವಿದ್ದರೆ ಮಾಹಿತಿಯನ್ನು ನವೀಕರಿಸಿ, ಅಥವಾ ವಸ್ತು ಸಿಕ್ಕ ನಂತರ ಅಳಿಸಿ.",
-                "1. സമർപ്പിച്ച റിപ്പോർട്ടുകൾ കാണുക:\n• നിങ്ങളുടെ എല്ലാ റിപ്പോർട്ടുകളും ഒറ്റ ലിസ്റ്റിൽ കാണുക.\n\n2. സ്റ്റാറ്റസും AI മാച്ചുകളും ട്രാക്ക് ചെയ്യുക:\n• റിപ്പോർട്ട് സ്റ്റാറ്റസ് നിരീക്ഷിക്കുകയും സാധ്യമായ AI മാച്ചുകൾ പരിശോധിക്കുകയും ചെയ്യുക.\n\n3. റിപ്പോർട്ടുകൾ എഡിറ്റ് ചെയ്യുക അല്ലെങ്കിൽ ഇല്ലാതാക്കുക:\n• ആവശ്യമെങ്കിൽ വിവരങ്ങൾ അപ്ഡേറ്റ് ചെയ്യുക, അല്ലെങ്കിൽ ഇനം തിരികെ ലഭിച്ചാൽ ഇല്ലാതാക്കുക."
+                "1. View Submitted Reports:\n• Review all your active lost and found item submissions in one centralized list.\n\n2. Track Status & Matches:\n• Monitor report statuses and check for any potential item matches.\n\n3. Editing Reports:\n• Your uploaded report may only be edited once within 5 hours of creation; after that, it cannot be edited.",
+                "1. जमा की गई रिपोर्ट देखें:\n• अपनी सभी सक्रिय खोई और मिली हुई रिपोर्ट एक ही सूची में देखें।\n\n2. स्थिति और AI मिलान ट्रैक करें:\n• रिपोर्ट की स्थिति पर नज़र रखें और किसी भी संभावित AI मिलान की जांच करें।\n\n3. रिपोर्ट संपादित करें:\n• आपकी अपलोड की गई रिपोर्ट निर्माण के 5 घंटे के भीतर केवल एक बार संपादित की जा सकती है; उसके बाद इसे संपादित नहीं किया जा सकता।",
+                "1. सादर केलेले अहवाल पाहा:\n• तुमचे सर्व सक्रिय हरवलेले आणि सापडलेले अहवाल एकाच यादीत पाहा.\n\n2. स्थिती आणि AI जुळणी ट्रॅक करा:\n• अहवाल स्थितीवर लक्ष ठेवा आणि संभाव्य AI जुळण्या तपासा.\n\n3. अहवाल संपादित करा:\n• तुमचा अपलोड केलेला अहवाल तयार केल्यापासून ५ तासांच्या आत फक्त एकदाच संपादित केला जाऊ शकतो; त्यानंतर तो संपादित केला जाऊ शकत नाही.",
+                "1. સબમિટ કરેલા રિપોર્ટ જુઓ:\n• તમારા બધા સક્રિય ખોવાયેલ અને મળેલ રિપોર્ટ એક જ યાદીમાં જુઓ.\n\n2. સ્ટેટસ અને AI મેચ ટ્રેક કરો:\n• રિપોર્ટ સ્ટેટસ પર નજર રાખો અને સંભવિત AI મેચ તપાસો.\n\n3. રિપોર્ટ એડિટ કરો:\n• તમારો અપલોડ કરેલો રિપોર્ટ બનાવ્યાના 5 કલાકની અંદર માત્ર એક જ વાર એડિટ કરી શકાય છે; ત્યારબાદ તેને એડિટ કરી શકાશે નહીં.",
+                "1. জমা দেওয়া রিপোর্ট দেখুন:\n• একটি তালিকায় আপনার সমস্ত সক্রিয় হারানো এবং পাওয়া রিপোর্ট দেখুন।\n\n2. স্থিতি এবং AI ম্যাচ ট্র্যাক করুন:\n• রিপোর্টের স্থিতি ট্র্যাক করুন এবং যেকোনো সম্ভাব্য AI ম্যাচ দেখুন।\n\n3. রিপোর্ট সম্পাদনা করুন:\n• আপনার আপলোড করা রিপোর্ট তৈরির ৫ ঘণ্টার মধ্যে শুধুমাত্র একবার সম্পাদনা করা যেতে পারে; তারপরে এটি সম্পাদনা করা যাবে না।",
+                "1. சமர்ப்பிக்கப்பட்ட அறிக்கைகளைப் பார்க்கவும்:\n• உங்கள் செயலில் உள்ள அனைத்து அறிக்கைகளையும் ஒரே பட்டியலில் பார்க்கவும்.\n\n2. நிலை மற்றும் AI பொருத்தங்களைக் கண்காணிக்கவும்:\n• அறிக்கைகளின் நிலையைக் கண்காணித்து சாத்தியமான AI பொருத்தங்களைச் சரிபார்க்கவும்.\n\n3. அறிக்கைகளைத் திருத்துதல்:\n• நீங்கள் பதிவேற்றிய அறிக்கையை உருவாக்கிய 5 மணிநேரத்திற்குள் ஒரு முறை மட்டுமே திருத்த முடியும்; அதற்குப் பிறகு திருத்த முடியாது.",
+                "1. సమర్పించిన రిపోర్టులను చూడండి:\n• మీ క్రియాశీల రిపోర్టులన్నింటినీ ఒకే జాబితాలో చూడండి.\n\n2. స్థితి మరియు AI మ్యాచ్‌లను ట్రాక్ చేయండి:\n• రిపోర్టుల స్థితిని పర్యవేక్షించండి మరియు ఏవైనా AI మ్యాచ్‌లను తనిఖీ చేయండి.\n\n3. రిపోర్టులను సవరించడం:\n• మీరు అప్‌లోడ్ చేసిన రిపోర్ట్‌ను సృష్టించిన 5 గంటలలోపు ఒకసారి మాత్రమే సవరించవచ్చు; ఆ తర్వాత సవరించలేరు.",
+                "1. ಸಲ್ಲಿಸಿದ ವರದಿಗಳನ್ನು ವೀಕ್ಷಿಸಿ:\n• ನಿಮ್ಮ ಎಲ್ಲಾ ಸಕ್ರಿಯ ವರದಿಗಳನ್ನು ಒಂದೇ ಪಟ್ಟಿಯಲ್ಲಿ ಪರಿಶೀಲಿಸಿ.\n\n2. ಸ್ಥಿತಿ ಮತ್ತು AI ಪಂದ್ಯಗಳನ್ನು ಟ್ರ್ಯಾಕ್ ಮಾಡಿ:\n• ವರದಿಗಳ ಸ್ಥಿತಿಯನ್ನು ಮೇಲ್ವಿಚಾರಣೆ ಮಾಡಿ ಮತ್ತು ಸಂಭಾವ್ಯ AI ಪಂದ್ಯಗಳನ್ನು ಪರಿಶೀಲಿಸಿ.\n\n3. ವರದಿಗಳನ್ನು ಸಂಪಾದಿಸುವುದು:\n• ನೀವು ಅಪ್‌ಲೋಡ್ ಮಾಡಿದ ವರದಿಯನ್ನು ರಚಿಸಿದ 5 ಗಂಟೆಗಳ ಒಳಗೆ ಒಮ್ಮೆ ಮಾತ್ರ ಸಂಪಾದಿಸಬಹುದು; ಅದರ ನಂತರ ಅದನ್ನು ಸಂಪಾದಿಸಲು ಸಾಧ್ಯವಿಲ್ಲ.",
+                "1. സമർപ്പിച്ച റിപ്പോർട്ടുകൾ കാണുക:\n• നിങ്ങളുടെ എല്ലാ റിപ്പോർട്ടുകളും ഒറ്റ ലിസ്റ്റിൽ കാണുക.\n\n2. സ്റ്റാറ്റസും AI മാച്ചുകളും ട്രാക്ക് ചെയ്യുക:\n• റിപ്പോർട്ട് സ്റ്റാറ്റസ് നിരീക്ഷിക്കുകയും സാധ്യമായ AI മാച്ചുകൾ പരിശോധിക്കുകയും ചെയ്യുക.\n\n3. റിപ്പോർട്ടുകൾ എഡിറ്റ് ചെയ്യൽ:\n• നിങ്ങൾ അപ്‌ലോഡ് ചെയ്ത റിപ്പോർട്ട് സൃഷ്ടിച്ച് 5 മണിക്കൂറിനുള്ളിൽ ഒരു തവണ മാത്രമേ എഡിറ്റ് ചെയ്യാൻ സാധിക്കൂ; അതിനുശേഷം എഡിറ്റ് ചെയ്യാൻ കഴിയില്ല."
         };
         int lang = Math.max(0, Math.min(selectedLanguage, texts.length - 1));
-        return texts[lang];
+        return lang == 0 ? texts[lang] : texts[lang].replace("AI ", "");
     }
 
     @Override
@@ -727,7 +746,48 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             buildScreen();
             return;
         }
+        if (currentPage == PAGE_AUTH) {
+            showLogoutConfirmationDialog();
+            return;
+        }
         super.onBackPressed();
+    }
+
+    private void showLogoutConfirmationDialog() {
+        Dialog dialog = new Dialog(this);
+        dialog.requestWindowFeature(Window.FEATURE_NO_TITLE);
+        LinearLayout content = themedDialogContent(
+                R.drawable.ic_field_lock,
+                translate("Log out"),
+                translate("Do you really want to log out of the app?")
+        );
+        LinearLayout actions = new LinearLayout(this);
+        actions.setOrientation(LinearLayout.HORIZONTAL);
+        actions.setGravity(Gravity.CENTER);
+
+        TextView no = filledButton(translate("No"), LOST_GREEN, LOST_GREEN_ON);
+        no.setOnClickListener(view -> dialog.dismiss());
+        LinearLayout.LayoutParams noParams = new LinearLayout.LayoutParams(0, dp(44), 1f);
+        actions.addView(no, noParams);
+
+        TextView yes = filledButton(translate("Yes"), FOUND_GOLD, FOUND_GOLD_ON);
+        LinearLayout.LayoutParams yesParams = new LinearLayout.LayoutParams(0, dp(44), 1f);
+        yesParams.setMargins(dp(12), 0, 0, 0);
+        actions.addView(yes, yesParams);
+
+        content.addView(actions, new LinearLayout.LayoutParams(-1, dp(44)));
+        yes.setOnClickListener(view -> {
+            dialog.dismiss();
+            try {
+                FirebaseAuth.getInstance().signOut();
+            } catch (Exception ignored) {}
+            finishAffinity();
+        });
+
+        dialog.setContentView(content);
+        dialog.setCanceledOnTouchOutside(true);
+        dialog.show();
+        sizeThemedDialog(dialog);
     }
 
     private int responsiveHorizontalPadding() {
@@ -2589,7 +2649,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         addHeading("Find what matters.", "Lost or Found? We Connect the Dots.");
         LinearLayout choices = new LinearLayout(this);
         choices.setOrientation(LinearLayout.HORIZONTAL);
-        TextView lost = actionButton("LOST", true);
+        TextView lost = actionButton("LOST/THEFT", true);
         lost.setBackground(round(Color.rgb(11, 93, 69), 18));
         lost.setTextColor(Color.WHITE);
         lost.setOnClickListener(view -> showReport("LOST"));
@@ -2761,6 +2821,9 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         });
         locationStatus = addLocation;
         locationToggleStatus = addLocation;
+        if (!hasLocation && ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) {
+            requestLocation(addLocation, addLocation);
+        }
 
         root.addView(imageSlots(), contentParams(-1, dp(104), dp(14)));
 
@@ -3068,8 +3131,8 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         publish.setEnabled(false);
         Uri image = selectedImage;
         Bitmap cameraImage = capturedImage;
-        double latitude = hasLocation ? currentLat : 0.0;
-        double longitude = hasLocation ? currentLng : 0.0;
+        double latitude = (hasLocation || currentLat != 0.0 || currentLng != 0.0) ? currentLat : 0.0;
+        double longitude = (hasLocation || currentLat != 0.0 || currentLng != 0.0) ? currentLng : 0.0;
         if (FirebaseAuth.getInstance().getCurrentUser() == null) {
             publish.setText("Sign in to submit");
             publish.setEnabled(true);
@@ -3152,6 +3215,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                 reportDoc.put("type", type);
                 reportDoc.put("title", title);
                 reportDoc.put("description", description);
+                reportDoc.put("source_language", getTtsLocaleForSelectedLanguage().getLanguage());
                 reportDoc.put("report_location", location);
                 reportDoc.put("report_date", date);
                 reportDoc.put("latitude", latitude);
@@ -3171,7 +3235,8 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
 
             AiMatchService.ApiResponse response = AiMatchService.createItem(
                     title, description, imageUrl, type, latitude, longitude,
-                    location, date, paymentId, imeiValue, idToken);
+                    location, date, paymentId, imeiValue,
+                    getTtsLocaleForSelectedLanguage().getLanguage(), idToken);
             if (!response.isSuccessful()) {
                 lastSubmissionError = "Could not save report (" + response.getStatusCode() + "): " + response.getErrorMessage();
                 return new ItemSubmissionResult(response.getStatusCode(), lastSubmissionError, null, null);
@@ -3391,6 +3456,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             Map<String, Object> reportDoc = new LinkedHashMap<>();
             reportDoc.put("title", title);
             reportDoc.put("description", description);
+            reportDoc.put("source_language", getTtsLocaleForSelectedLanguage().getLanguage());
             reportDoc.put("report_location", location);
             reportDoc.put("report_date", date);
             if (imageUrl != null) reportDoc.put("image_url", imageUrl);
@@ -3414,7 +3480,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             connection.setRequestProperty("Authorization", "Bearer " + idToken);
             connection.setRequestProperty("Content-Type", "application/json; charset=UTF-8");
             String imageJson = imageUrl == null || imageUrl.trim().isEmpty() ? "null" : "\"" + escapeJson(imageUrl) + "\"";
-            String body = "{\"title\":\"" + escapeJson(title) + "\",\"description\":\"" + escapeJson(description) + "\",\"report_location\":\"" + escapeJson(location) + "\",\"report_date\":\"" + escapeJson(date) + "\",\"category\":\"other\",\"lat\":0.0,\"lng\":0.0,\"image_url\":" + imageJson + "}";
+            String body = "{\"title\":\"" + escapeJson(title) + "\",\"description\":\"" + escapeJson(description) + "\",\"source_language\":\"" + getTtsLocaleForSelectedLanguage().getLanguage() + "\",\"report_location\":\"" + escapeJson(location) + "\",\"report_date\":\"" + escapeJson(date) + "\",\"category\":\"other\",\"lat\":0.0,\"lng\":0.0,\"image_url\":" + imageJson + "}";
             try (OutputStream output = connection.getOutputStream()) {
                 output.write(body.getBytes(StandardCharsets.UTF_8));
             }
@@ -4776,7 +4842,10 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                 String displayType = "FOUND".equalsIgnoreCase(type) ? translate("FOUND") : "LOST".equalsIgnoreCase(type) ? translate("LOST") : translate("Item");
                 String reportId = report.optString("id", report.optString("_id", ""));
                 String reportImageUrl = report.optString("image_url", null);
-                boolean canEdit = report.optInt("edit_count", 0) == 0;
+                long createdAtMs = parseReportCreatedAtMillis(report);
+                long ageMs = System.currentTimeMillis() - createdAtMs;
+                boolean isWithin5Hours = createdAtMs > 0 && ageMs >= 0 && ageMs <= 5 * 3600 * 1000L;
+                boolean canEdit = report.optInt("edit_count", 0) == 0 && isWithin5Hours;
                 addField(activeContent, reportRow(title, displayType + "  ·  " + detail, () -> {
                     editingReportId = reportId;
                     editingReportType = type;
@@ -7111,7 +7180,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         return card;
     }
 
-    private LinearLayout aiMatchCard() {
+    private LinearLayout matchCard() {
         LinearLayout card = new LinearLayout(this);
         card.setOrientation(LinearLayout.VERTICAL);
         card.setPadding(dp(14), dp(14), dp(14), dp(14));
@@ -7256,20 +7325,59 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             Location best = null;
             for (String provider : new String[]{LocationManager.GPS_PROVIDER, LocationManager.NETWORK_PROVIDER}) {
                 Location candidate = manager.getLastKnownLocation(provider);
-                if (candidate != null && (best == null || candidate.getTime() > best.getTime())) best = candidate;
+                if (candidate != null && candidate.getLatitude() != 0.0 && candidate.getLongitude() != 0.0
+                        && (best == null || candidate.getTime() > best.getTime())) {
+                    best = candidate;
+                }
             }
-            if (best == null) {
-                applyLocationToggleVisualState(button, toggle, false);
-                return;
+
+            if (best != null) {
+                currentLat = best.getLatitude();
+                currentLng = best.getLongitude();
+                hasLocation = true;
+                activeLocationReportType = currentReportType;
+                applyLocationToggleVisualState(button, toggle, true);
+            } else if (toggle != null) {
+                toggle.setText("Locating...");
+                toggle.setTextColor(secondaryTextColor());
             }
-            currentLat = best.getLatitude();
-            currentLng = best.getLongitude();
-            hasLocation = true;
-            activeLocationReportType = currentReportType;
-            applyLocationToggleVisualState(button, toggle, true);
+
+            if (activeLocationListener != null) {
+                try {
+                    manager.removeUpdates(activeLocationListener);
+                } catch (Exception ignored) {}
+            }
+
+            activeLocationListener = new LocationListener() {
+                @Override
+                public void onLocationChanged(Location location) {
+                    if (location != null && location.getLatitude() != 0.0 && location.getLongitude() != 0.0) {
+                        currentLat = location.getLatitude();
+                        currentLng = location.getLongitude();
+                        hasLocation = true;
+                        activeLocationReportType = currentReportType;
+                        runOnUiThread(() -> applyLocationToggleVisualState(button, toggle, true));
+                        try {
+                            manager.removeUpdates(this);
+                        } catch (Exception ignored) {}
+                    }
+                }
+
+                @Override public void onStatusChanged(String provider, int status, Bundle extras) {}
+                @Override public void onProviderEnabled(String provider) {}
+                @Override public void onProviderDisabled(String provider) {}
+            };
+
+            Looper looper = Looper.getMainLooper();
+            if (gpsEnabled) {
+                manager.requestLocationUpdates(LocationManager.GPS_PROVIDER, 1000L, 1f, activeLocationListener, looper);
+            }
+            if (networkEnabled) {
+                manager.requestLocationUpdates(LocationManager.NETWORK_PROVIDER, 1000L, 1f, activeLocationListener, looper);
+            }
         } catch (SecurityException error) {
             if (button != null) button.setText("Location permission required");
-        }
+        } catch (Exception ignored) {}
     }
 
     @Override
@@ -7516,6 +7624,24 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         return summary;
     }
 
+    private boolean isDummyReport(JSONObject item) {
+        if (item == null) return true;
+        String title = item.optString("title", "").toLowerCase(Locale.US);
+        String desc = item.optString("description", "").toLowerCase(Locale.US);
+        String createdBy = item.optString("created_by", "").toLowerCase(Locale.US);
+        return title.contains("dummy") || title.contains("test") || title.contains("sample")
+                || desc.contains("dummy") || desc.contains("test") || desc.contains("sample")
+                || createdBy.contains("dummy") || createdBy.contains("test") || createdBy.startsWith("test_");
+    }
+
+    private boolean isDummyAlert(JSONObject alert) {
+        if (alert == null) return true;
+        String foundTitle = alert.optString("found_title", "").toLowerCase(Locale.US);
+        String lostTitle = alert.optString("lost_title", "").toLowerCase(Locale.US);
+        return foundTitle.contains("dummy") || foundTitle.contains("test") || foundTitle.contains("sample")
+                || lostTitle.contains("dummy") || lostTitle.contains("test") || lostTitle.contains("sample");
+    }
+
     private void renderAdminReports(String response, LinearLayout reports, TextView matchesHeading,
                                     LinearLayout matches, TextView lostCount, TextView foundCount) {
         reports.removeAllViews();
@@ -7531,6 +7657,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             LinearLayout foundSection = adminReportSection("FOUND REPORTS", FOUND_GOLD);
             for (int index = 0; index < items.length(); index++) {
                 JSONObject item = items.getJSONObject(index);
+                if (isDummyReport(item)) continue;
                 if ("FOUND".equalsIgnoreCase(item.optString("type"))) {
                     found++;
                     foundSection.addView(adminReportCard(item, true, matchesHeading, matches));
@@ -7541,8 +7668,11 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             }
             lostCount.setText("LOST  " + lost);
             foundCount.setText("FOUND  " + found);
-            reports.addView(lostSection, contentParams(-1, -2, 0));
-            reports.addView(foundSection, contentParams(-1, -2, dp(12)));
+            if (lost > 0) reports.addView(lostSection, contentParams(-1, -2, 0));
+            if (found > 0) reports.addView(foundSection, contentParams(-1, -2, dp(12)));
+            if (lost == 0 && found == 0) {
+                reports.addView(text("No live reports currently available.", 13, secondaryTextColor(), Typeface.NORMAL));
+            }
         } catch (Exception error) {
             reports.addView(text("Reports could not be read.", 13, secondaryTextColor(), Typeface.NORMAL));
         }
@@ -7568,7 +7698,19 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         TextView detail = text(details, 11, secondaryTextColor(), Typeface.NORMAL);
         detail.setMaxLines(2);
         card.addView(detail, new LinearLayout.LayoutParams(-1, dp(38)));
-        TextView location = text(String.format(Locale.US, "Location  %.4f, %.4f", item.optDouble("lat", 0.0), item.optDouble("lng", 0.0)), 10, secondaryTextColor(), Typeface.NORMAL);
+        double lat = item.optDouble("lat", item.optDouble("latitude", 0.0));
+        double lng = item.optDouble("lng", item.optDouble("longitude", 0.0));
+        String locStr = item.optString("report_location", item.optString("location", "")).trim();
+        String locDisplay;
+        if (lat != 0.0 || lng != 0.0) {
+            locDisplay = String.format(Locale.US, "Location: %.6f, %.6f", lat, lng);
+            if (!locStr.isEmpty()) locDisplay += " (" + locStr + ")";
+        } else if (!locStr.isEmpty()) {
+            locDisplay = "Location: " + locStr;
+        } else {
+            locDisplay = "Location: 0.0000, 0.0000";
+        }
+        TextView location = text(locDisplay, 10, secondaryTextColor(), Typeface.NORMAL);
         card.addView(location, new LinearLayout.LayoutParams(-1, dp(20)));
         if (isFound) {
             TextView review = text("Review matches  ›", 11, GOLD_ON, Typeface.NORMAL);
@@ -7941,6 +8083,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                     JSONArray visibleAlerts = new JSONArray();
                     for (int index = 0; index < alerts.length(); index++) {
                         JSONObject alert = alerts.getJSONObject(index);
+                        if (isDummyAlert(alert)) continue;
                         if (!unreadOnly || !alert.optBoolean("is_read", false)) visibleAlerts.put(alert);
                     }
                     if (visibleAlerts.length() == 0) {
@@ -8975,18 +9118,18 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                 "Unlock lost-item submissions.", "Found-item reports stay free forever. Lost-item submissions are Rs 99 per year.",
                 "Pay and submit lost report", "Back to report", "Your reports", "Keep track of items you are helping to reunite.", "Back home",
                 "Dummy user", "Your account details and preferences.", "Admin dashboard", "Private moderation workspace", "English only · confidential user details",
-                "Loading live admin data...", "Review AI match", "Confirm and notify owner", "Exit admin"
+                "Loading live admin data...", "Review match", "Confirm and notify owner", "Exit admin"
         };
         String[][] translations = {
                 english, // 0: en
-                {"अपनी प्रोफ़ाइल पूरी करें", "आपके बारे में थोड़ा", "इससे पड़ोसियों को पता चलेगा कि वे किसकी मदद कर रहे हैं।", "सहेजें और जारी रखें", "पिन से लॉगिन", "वापसी पर स्वागत है।", "अपने Fendly उपयोगकर्ता नाम और पिन का उपयोग करें।", "लॉगिन", "होम", "जो महत्वपूर्ण है उसे खोजें।", "पास में कुछ खोया? कुछ मिला? यहां से शुरू करें।", "खोया", "मिला", "मेरी रिपोर्ट", "मेरी प्रोफ़ाइल", "मिली वस्तु पोस्ट करें", "खोई वस्तु रिपोर्ट करें", "इसे घर पहुंचाने में मदद करें।", "आइए इसे खोजें।", "स्पष्ट विवरण जोड़ें ताकि सही व्यक्ति पहचान सके।", "वस्तु का नाम", "विवरण और पहचान की जानकारी", "स्थान या पहचान चिन्ह", "दिनांक और समय", "वस्तु की तस्वीर अपलोड करें", "तस्वीर चुनी गई", "कैमरे से तस्वीर लें", "वर्तमान स्थान उपयोग करें", "मिली वस्तु प्रकाशित करें", "खोई वस्तु प्रकाशित करें", "Fendly Plus", "खोई वस्तु की रिपोर्ट अनलॉक करें।", "मिली वस्तु की रिपोर्ट हमेशा निःशुल्क है। खोई वस्तु की रिपोर्ट Rs 99 प्रति वर्ष है।", "भुगतान करें और खोई रिपोर्ट भेजें", "रिपोर्ट पर वापस जाएं", "मेरी रिपोर्ट", "जिन वस्तुओं को मिलाने में मदद कर रहे हैं उनका रिकॉर्ड रखें।", "होम पर वापस जाएं", "डमी उपयोगकर्ता", "आपके खाते का विवरण और प्राथमिकताएं।", "एडमिन डैशबोर्ड", "निजी मॉडरेशन कार्यक्षेत्र", "केवल अंग्रेज़ी · गोपनीय उपयोगकर्ता विवरण", "लाइव एडमिन डेटा लोड हो रहा है...", "AI मिलान देखें", "पुष्टि करें और मालिक को सूचित करें", "एडमिन से बाहर निकलें"}, // 1: hi
-                {"पूर्ण प्रोफाइल", "तुमच्याबद्दल थोडे", "यामुळे शेजाऱ्यांना ते कोणाला मदत करत आहेत हे समजेल.", "जतन करा आणि पुढे जा", "पिनने लॉगिन", "पुन्हा स्वागत आहे.", "तुमचे Fendly वापरकर्तानाव आणि पिन वापरा.", "लॉगिन", "मुख्यपृष्ठ", "महत्त्वाचे शोधा.", "जवळ काही हरवले? काही सापडले? इथून सुरुवात करा.", "हरवले", "सापडले", "माझे अहवाल", "माझे प्रोफाइल", "सापडलेली वस्तू पोस्ट करा", "हरवलेली वस्तू नोंदवा", "ते घरी पोहोचवण्यास मदत करा.", "चला ते शोधूया.", "योग्य व्यक्ती ओळखू शकेल असे स्पष्ट तपशील जोडा.", "वस्तूचे नाव", "वर्णन आणि ओळख तपशील", "ठिकाण किंवा खूण", "दिनांक आणि वेळ", "वस्तूचा फोटो अपलोड करा", "फोटो निवडला", "कॅमेऱ्याने फोटो घ्या", "सध्याचे स्थान वापरा", "सापडलेली वस्तू प्रकाशित करा", "हरवलेली वस्तू प्रकाशित करा", "Fendly Plus", "हरवलेल्या वस्तूंचे अहवाल सुरू करा.", "सापडलेल्या वस्तूंचे अहवाल कायम विनामूल्य आहेत. हरवलेल्या वस्तूंचे अहवाल वर्षाला Rs 99 आहेत.", "भरणा करून हरवलेला अहवाल पाठवा", "अहवालाकडे परत जा", "माझे अहवाल", "तुम्ही पुन्हा जोडण्यास मदत करत असलेल्या वस्तूंचा मागोवा ठेवा.", "मुख्यपृष्ठावर परत जा", "डमी वापरकर्ता", "तुमच्या खात्याचे तपशील आणि प्राधान्ये.", "अॅडमिन डॅशबोर्ड", "खासगी मॉडरेशन कार्यक्षेत्र", "फक्त इंग्रजी · गोपनीय वापरकर्ता तपशील", "लाइव्ह अॅडमिन डेटा लोड होत आहे...", "AI जुळणी पाहा", "पुष्टी करून मालकाला कळवा", "अॅडमिनमधून बाहेर पडा"}, // 2: mr
-                {"તમારી પ્રોફાઇલ પૂર્ણ કરો", "તમારા વિશે થોડું", "આ પડોશીઓને જાણવામાં મદદ કરે છે કે તેઓ કોને મદદ કરી રહ્યા છે.", "સાચવો અને આગળ વધો", "PIN વડે લોગિન", "પાછા સ્વાગત છે.", "તમારી Fendly પ્રોફાઇલમાંથી યુઝરનામ અને PIN નો ઉપયોગ કરો.", "લોગિન", "હોમ", "જે મહત્ત્વનું છે તે શોધો.", "આસપાસ કંઈ ખોવાયું? કંઈ મળ્યું? અહીંથી શરૂ કરો.", "ખોવાયેલ", "મળેલ", "મારા અહેવાલો", "મારી પ્રોફાઇલ", "મળેલ વસ્તુ પોસ્ટ કરો", "ખોવાયેલ વસ્તુની જાણ કરો", "તેને ઘરે પહોંચાડવામાં મદદ કરો.", "ચાલો તે શોધીએ.", "સ્પષ્ટ વિગતો ઉમેરો જેથી સાચી વ્યક્તિ તેને ઓળખી શકે.", "વસ્તુનું નામ", "વર્ણન અને ઓળખની વિગતો", "સ્થળ અથવા ઓળખચિહ્ન", "તારીખ અને સમય", "વસ્તુની છબી અપલોડ કરો", "છબી પસંદ કરી", "કેમેરાથી ફોટો લો", "વર્તમાન સ્થાનનો ઉપયોગ કરો", "મળેલ વસ્તુ પ્રકાશિત કરો", "ખોવાયેલ વસ્તુ પ્રકાશિત કરો", "Fendly Plus", "ખોવાયેલ વસ્તુના રિપોર્ટ અનલોક કરો.", "મળેલ વસ્તુના રિપોર્ટ હંમેશા મફત છે. ખોવાયેલ વસ્તુના રિપોર્ટ વર્ષે Rs 99 છે.", "ચૂકવણી કરો અને ખોવાયેલ રિપોર્ટ સબમિટ કરો", "રિપોર્ટ પર પાછા જાઓ", "તમારા અહેવાલો", "તમે જેને ફરી મેળવવામાં મદદ કરી રહ્યા છો તે વસ્તુઓનો ટ્રેક રાખો.", "હોમ પર પાછા જાઓ", "ડમી યુઝર", "તમારા ખાતાની વિગતો અને પસંદગીઓ.", "એડમિન ડેશબોર્ડ", "ખાનગી મોડરેશન વર્કસ્પેસ", "માત્ર અંગ્રેજી · ગોપનીય વપરાશકર્તા વિગતો", "લાઈવ એડમિન ડેટા લોડ થઈ રહ્યો છે...", "AI મેચ સમીક્ષા કરો", "પુષ્ટિ કરો અને માલિકને જાણ કરો", "એડમિનમાંથી બહાર નીકળો"}, // 3: gu
-                {"আপনার প্রোফাইল সম্পূর্ণ করুন", "আপনার সম্পর্কে কিছু", "এটি প্রতিবেশীদের জানতে সাহায্য করে তারা কার সাহায্য করছে।", "সংরক্ষণ করুন এবং চালিয়ে যান", "পিন দিয়ে লগইন", "ফিরে আসার জন্য স্বাগতম।", "আপনার Fendly ব্যবহারকারীর নাম এবং পিন ব্যবহার করুন।", "লগইন", "হোম", "গুরুত্বপূর্ণ জিনিস খুঁজুন।", "কাছাকাছি কিছু হারিয়েছে? কিছু পেয়েছেন? এখান থেকে শুরু করুন।", "হারিয়ে গেছে", "পাওয়া গেছে", "আমার রিপোর্ট", "আমার প্রোফাইল", "পাওয়া আইটেম পোস্ট করুন", "হারানো আইটেম রিপোর্ট করুন", "এটিকে বাড়িতে ফিরিয়ে দিতে সাহায্য করুন।", "চলো এটি খুঁজে বের করি।", "সঠিক ব্যক্তি শনাক্ত করার জন্য স্পষ্ট বিবরণ যোগ করুন।", "আইটেমের নাম", "বর্ণনা ও শনাক্তকরণ তথ্য", "অবস্থান বা চিহ্ন", "তারিখ ও সময়", "আইটেমের ছবি আপলোড করুন", "চিত্র নির্বাচন করা হয়েছে", "ক্যামেরা দিয়ে ছবি নিন", "বর্তমান অবস্থান ব্যবহার করুন", "পাওয়া আইটেম প্রকাশ করুন", "হারানো আইটেম প্রকাশ করুন", "Fendly Plus", "হারানো আইটেম রিপোর্ট আনলক করুন।", "পাওয়া আইটেম রিপোর্ট সবসময় বিনামূল্যে। হারানো আইটেম রিপোর্ট বছরে Rs 99।", "পেমেন্ট করুন এবং হারানো রিপোর্ট জমা দিন", "রিপোর্টে ফিরে যান", "আমার রিপোর্ট", "আপনি কী কী আইটেম আবার একত্রিত করতে সাহায্য করছেন তার রেকর্ড রাখুন।", "হোমে ফিরে যান", "ডামি ব্যবহারকারী", "আপনার অ্যাকাউন্টের বিবরণ ও পছন্দসমূহ।", "অ্যাডমিন ড্যাশবোর্ড", "ব্যক্তিগত মডারেশন ওয়ার্কস্পেস", "শুধু ইংরেজি · গোপন ব্যবহারকারী বিবরণ", "লাইভ অ্যাডমিন ডেটা লোড হচ্ছে...", "AI ম্যাচ দেখুন", "নিশ্চিত করুন এবং মালিককে অবহিত করুন", "অ্যাডমিন থেকে বের হন"}, // 4: bn
-                {"உங்கள் சுயவிவரத்தை முழுமையாக்குங்கள்", "உங்களைப் பற்றி சிறிது", "இது யாருக்கு உதவுகிறார்கள் என்பதை அண்டை வீட்டாருக்குத் தெரியப்படுத்த உதவுகிறது.", "சேமித்து தொடரவும்", "PIN மூலம் உள்நுழைவு", "மீண்டும் வருக.", "உங்கள் Fendly சுயவிவரத்தின் பயனர்பெயர் மற்றும் PIN ஐப் பயன்படுத்தவும்.", "உள்நுழை", "முகப்பு", "முக்கியமானவற்றைக் கண்டறியவும்.", "அருகில் தொலைந்ததா? ஏதேனும் கிடைத்ததா? இங்கிருந்து தொடங்குங்கள்.", "தொலைந்தது", "கிடைத்தது", "என் அறிக்கைகள்", "என் சுயவிவரம்", "கிடைத்த பொருளைப் பதிவிடவும்", "தொலைந்த பொருளை அறிக்கை செய்யவும்", "அதை வீட்டிற்குச் சேர்க்க உதவுங்கள்.", "அதைக் கண்டுபிடிப்போம்.", "சரியான நபர் அடையாளம் காண தெளிவான விவரங்களைச் சேர்க்கவும்.", "பொருளின் பெயர்", "விளக்கம் மற்றும் அடையாள விவரங்கள்", "இடம் அல்லது அடையாளம்", "தேதி மற்றும் நேரம்", "பொருளின் படத்தைப் பதிவேற்றவும்", "படம் தேர்ந்தெடுக்கப்பட்டது", "கேமரா மூலம் படம் எடுக்கவும்", "தற்போதைய இடத்தைப் பயன்படுத்தவும்", "கிடைத்த பொருளை வெளியிடுங்கள்", "தொலைந்த பொருளை வெளியிடுங்கள்", "Fendly Plus", "தொலைந்த பொருள் அறிக்கைகளைத் திறக்கவும்.", "கிடைத்த பொருள் அறிக்கைகள் எப்போதும் இலவசம். தொலைந்த பொருள் அறிக்கைகள் ஆண்டிற்கு Rs 99.", "பணம் செலுத்தி அறிக்கையைச் சமர்ப்பிக்கவும்", "அறிக்கைக்குத் திரும்புக", "உங்கள் அறிக்கைகள்", "நீங்கள் மீண்டும் சேர்க்க உதவும் பொருட்களைக் கண்காணிக்கவும்.", "முகப்பிற்குத் திரும்புக", "மாதிரி பயனர்", "உங்கள் கணக்கு விவரங்கள் மற்றும் முன்னுரிமைகள்.", "நிர்வாகி குழு", "தனியார் மிதமான பணிப்பகுதி", "ஆங்கிலம் மட்டும் · இரகசிய பயனர் விவரங்கள்", "நிர்வாகி தரவு ஏற்றப்படுகிறது...", "AI பொருத்தத்தை மதிப்பாய்வு செய்க", "உறுதிசெய்து உரிமையாளருக்கு அறிவிக்கவும்", "நிர்வாகியிலிருந்து வெளியேறு"}, // 5: ta
-                {"మీ ప్రొఫైల్‌ను పూర్తి చేయండి", "మీ గురించి కొద్దిపాటి సమాచారం", "ఇది పొరుగు వారికి ఎవరికి సహాయం చేస్తున్నారో తెలుసుకోవడంలో సహాయపడుతుంది.", "సేవ్ చేసి కొనసాగించండి", "పిన్‌తో లాగిన్", "మళ్ళీ స్వాగతం", "మీ Fendly వినియోగదారు పేరు మరియు పిన్‌ను ఉపయోగించండి.", "లాగిన్", "హోమ్", "ముఖ్యమైన వాటిని కనుగొనండి.", "ఇక్కడకు దగ్గరలో ఏదైనా పోయిందా? ఏదైనా దొరికిందా? ఇక్కడ ప్రారంభించండి.", "కోల్పోయినవి", "కనుగొన్నది", "నా రిపోర్ట్లు", "నా ప్రొఫైల్", "కనుగొన్న అంశాన్ని పోస్ట్ చేయండి", "కోల్పోయిన అంశాన్ని రిపోర్ట్ చేయండి", "దానిని ఇంటికి చేర్చడానికి సహాయం చేయండి.", "వెతుకుదాం.", "సరైన వ్యక్తి గుర్తించగలిగే స్పష్టమైన వివరాలను జోడించండి.", "అంశం పేరు", "వివరణ మరియు గుర్తింపు వివరాలు", "స్థలం లేదా పరిశీలన", "తేదీ మరియు సమయం", "అంశపు ఫోటో అప్లోడ్ చేయండి", "ఫోటో ఎంపికైంది", "కెమెరా నుండి ఫోటో తీయండి", "ప్రస్తుత స్థానం ఉపయోగించండి", "కనుగొన్న అంశాన్ని ప్రచురించండి", "కోల్పోయిన అంశాన్ని ప్రచురించండి", "Fendly Plus", "కోల్పోయిన వస్తువుల రిపోర్ట్లను అన్‌లాక్ చేయండి.", "కనుగొన్న వస్తువుల రిపోర్ట్లు ఎల్లప్పుడూ ఉచితం. కోల్పోయిన వస్తువుల రిపోర్ట్లు సంవత్సరానికి Rs 99.", "చెల్లించి కోల్పోయిన రిపోర్టును సమర్పించండి", "రిపోర్టుకు తిరిగి వెళ్లండి", "నా రిపోర్ట్లు", "మీరు పునరుద్ధరించడానికి సహాయం చేస్తున్న వస్తువుల రికార్డ్‌ను పర్యవేక్షించండి.", "హోమ్కి తిరిగి వెళ్లండి", "డమ్మీ యూజర్", "మీ అకౌంట్ వివరాలు మరియు ప్రాధాన్యతలు.", "అడ్మిన్ డాష్‌బోర్డ్", "ప్రైవేట్ మోడరేషన్ వర్క్‌స్పేస్", "ఇంగ్లీష్ మాత్రమే · గోప్య వినియోగదారు వివరాలు", "లైవ్ అడ్మిన్ డేటాను లోడ్ చేస్తున్నారు...", "AI మ్యాచ్ చూసుకోండి", "నిర్ధారించండి మరియు యజమానికి తెలియజేయండి", "అడ్మిన్ నుండి నిష్క్రమించండి"}, // 6: te
-                {"ನಿಮ್ಮ ಪ್ರೊಫೈಲ್ ಪೂರ್ಣಗೊಳಿಸಿ", "ನಿಮ್ಮ ಬಗ್ಗೆ ಸ್ವಲ್ಪ ಮಾಹಿತಿ", "ಇದು ನೆರವಿನವರನ್ನು ಯಾರು ಸಹಾಯ ಮಾಡುತ್ತಿದ್ದಾರೆಂದು ತಿಳಿಸಲು ಸಹಾಯ ಮಾಡುತ್ತದೆ.", "ಸೇವ್ ಮಾಡಿ ಮತ್ತು ಮುಂದುವರಿಸಿ", "ಪಿನ್ ಮೂಲಕ ಲಾಗಿನ್", "ಮರಳಿ ಸ್ವಾಗತ", "ನಿಮ್ಮ Fendly ಬಳಕೆದಾರಹೆಸರು ಮತ್ತು ಪಿನ್ ಬಳಸಿ.", "ಲಾಗಿನ್", "ಹೋಮ್", "ಪ್ರಮುಖವಾದ್ದನ್ನು ಹುಡುಕಿ.", "ಹತ್ತಿರದಲ್ಲಿ ಯಾವುದೋ ಕಳೆದುಹೋಗಿದೆಯೇ? ಏನಾದರೂ ಸಿಕ್ಕಿದೆಯೇ? ಇಲ್ಲಿಂದ ಪ್ರಾರಂಭಿಸಿ.", "ಕಳೆದುಹೋಗಿದೆ", "ಸಿಕ್ಕಿದೆ", "ನನ್ನ ವರದಿಗಳು", "ನನ್ನ ಪ್ರೊಫೈಲ್", "ಕಂಡ ವಸ್ತು ಪೋಸ್ಟ್ ಮಾಡಿ", "ಕಳೆದುಹೋಗಿದ ವಸ್ತು ವರದಿ ಮಾಡಿ", "ಅದನ್ನು ಮನೆಗೆ ಸೇರಿಸಲು ಸಹಾಯ ಮಾಡಿ.", "ಮುತ್ತಲಿನವರೊಂದಿಗೆ ಹುಡುಕೋಣ.", "ಸರಿಯಾದ ವ್ಯಕ್ತಿ ಗುರುತಿಸಿಕೊಳ್ಳಲು ಸ್ಪಷ್ಟ ವಿವರಗಳನ್ನು ಸೇರಿಸಿ.", "ವಸ್ತುವಿನ ಹೆಸರು", "ವಿವರಣೆ ಮತ್ತು ಗುರುತಿಸುವ ವಿವರಗಳು", "ಸ್ಥಳ ಅಥವಾ ಗುರುತು", "ದಿನಾಂಕ ಮತ್ತು ಸಮಯ", "ವಸ್ತುವಿನ ಚಿತ್ರ ಅಪ್‌ಲೋಡ್ ಮಾಡಿ", "ಚಿತ್ರ ಆಯ್ಕೆಮಾಡಲಾಗಿದೆ", "ಕ್ಯಾಮರಾದಿಂದ ಫೋಟೋ ತೆಗೆದುಕೊಳ್ಳಿ", "ಪ್ರಸ್ತುತ ಸ್ಥಳವನ್ನು ಬಳಸಿ", "ಕಂಡ ವಸ್ತು ಪ್ರಕಟಿಸಿ", "ಕಳೆದುಹೋಗಿದ ವಸ್ತು ಪ್ರಕಟಿಸಿ", "Fendly Plus", "ಕಳೆದುಹೋಗಿದ ವಸ್ತು ವರದಿಗಳನ್ನು desbloಕ್ ಮಾಡಿ.", "ಕಂಡ ವಸ್ತು ವರದಿಗಳು ಶಾಶ್ವತವಾಗಿ ಉಚಿತವಾಗಿರುತ್ತವೆ. ಕಳೆದುಹೋಗಿದ ವಸ್ತು ವರದಿಗಳು ವರ್ಷಕ್ಕೆ Rs 99.", "ಚెలಾಯಿಸಿ ಮತ್ತು ಕಳೆದುಹೋಗಿದ ವರದಿಯನ್ನು ಸಲ್ಲಿಸಿ", "ವರದಿಗೆ ಹಿಂತಿರುಗಿ", "ನನ್ನ ವರದಿಗಳು", "ನೀವು ಒಟ್ಟುಗೂಡಿಸಲು ಸಹಾಯ ಮಾಡುವ ವಸ್ತುಗಳ ರೆಕಾರ್ಡ್ ಅನ್ನು ನಿರ್ವಹಿಸಿ.", "ಮನೆಯತ್ತ ಹಿಂತಿರುಗಿ", "ಡಮ್ಮಿ ಬಳಕೆದಾರ", "ನಿಮ್ಮ ಖಾತೆ ವಿವರಗಳು ಮತ್ತು ಆದ್ಯತೆಗಳು.", "ಅಡ್ಮಿನ್ ಡ್ಯಾಶ್‌ಬೋರ್ಡ್", "ಖಾಸಗಿ मॉಡರೇಶನ್ ಕಾರ್ಯಕ್ಷೇತ್ರ", "ಇಂಗ್ಲಿಷ್ ಮಾತ್ರ · ರಹಸ್ಯ ಬಳಕೆದಾರ ವಿವರಗಳು", "ಲೈವ್ ಅಡ್ಮಿನ್ ಡೇಟಾವನ್ನು ಲೋಡ್ ಮಾಡಲಾಗುತ್ತಿದೆ...", "AI ಪಂದ್ಯವನ್ನು ವೀಕ್ಷಿಸಿ", "ನಿಶ್ಚಿತಪಡಿಸಿ ಮತ್ತು ಮಾಲೀಕನಿಗೆ ತಿಳಿಸಿ", "ಅಡ್ಮಿನ್ ನಿಂದ ನಿರ್ಗಮಿಸಿ"}, // 7: kn
-                {"നിങ്ങളുടെ പ്രൊഫൈൽ പൂർത്തിയാക്കുക", "നിങ്ങളെക്കുറിച്ച് കുറച്ച്", "ഇത് അയൽവാസികൾക്ക് ആരെ സഹായിക്കുന്നുവെന്ന് അറിയാൻ സഹായിക്കുന്നു.", "സേവ് ചെയ്ത് മുന്നോട്ട് പോകുക", "പിൻ ഉപയോഗിച്ച് ലോഗിൻ", "വീണ്ടും സ്വാഗതം", "നിങ്ങളുടെ Fendly യൂസർനെയം, പിൻ ഉപയോഗിക്കുക.", "ലോഗിൻ", "ഹോം", "പ്രധാനമായ വസ്തുക്കൾ കണ്ടെത്തുക.", "സമീപത്ത് തന്നെ നഷ്ടപ്പെട്ടോ? എന്തെങ്കിലും കണ്ടെത്തിയോ? ഇവിടെ ആരംഭിക്കുക.", "നഷ്ടപ്പെട്ടു", "കണ്ടെത്തി", "എന്റെ റിപ്പോർട്ടുകൾ", "എന്റെ പ്രൊഫൈൽ", "കണ്ടെത്തിയ ഇനം പോസ്റ്റുചെയ്യുക", "നഷ്ടപ്പെട്ട ഇനം റിപ്പോർട്ട് ചെയ്യുക", "അത് വീട്ടിലേക്ക് എത്തിക്കാൻ സഹായിക്കുക.", "കണ്ടുപിടിക്കാം.", "ശരിയായ വ്യക്തിയെ തിരിച്ചറിയാൻ വ്യക്തമായ വിശദാംശങ്ങൾ ചേർക്കുക.", "ഇനത്തിന്റെ പേര്", "വിവരണം, തിരിച്ചറിയൽ വിശദാംശങ്ങൾ", "സ്ഥലം അല്ലെങ്കിൽ അടയാളം", "തീയതിയും സമയവും", "ഇനത്തിന്റെ ചിത്രം അപ്‌ലോഡ് ചെയ്യുക", "ചിത്രം തിരഞ്ഞെടുത്തു", "ക്യാമറയിൽ നിന്ന് ഫോട്ടോ എടുക്കുക", "നിലവിലെ സ്ഥലം ഉപയോഗിക്കുക", "കണ്ടെത്തിയ ഇനം പ്രസിദ്ധീകരിക്കുക", "നഷ്ടപ്പെട്ട ഇനം പ്രസിദ്ധീകരിക്കുക", "Fendly Plus", "നഷ്ടപ്പെട്ട ഇനങ്ങളുടെ റിപ്പോർട്ടുകൾ അൺലോക്ക് ചെയ്യുക.", "കണ്ടെത്തിയ ഇനങ്ങളുടെ റിപ്പോർട്ടുകൾ എല്ലായ്പ്പോഴും സൗജന്യമാണ്. നഷ്ടപ്പെട്ട ഇനങ്ങളുടെ റിപ്പോർട്ടുകൾ പ്രതിവർഷം Rs 99.", "പേയ്‌മെന്റ് ചെയ്യുകയും നഷ്ടപ്പെട്ട റിപ്പോർട്ട് സമർപ്പിക്കുകയും ചെയ്യുക", "റിപ്പോർട്ടിലേക്ക് തിരികെ പോകുക", "എന്റെ റിപ്പോർട്ടുകൾ", "നിങ്ങൾ വീണ്ടും കൂട്ടിച്ചേർക്കാൻ സഹായിക്കുന്ന ഇനങ്ങളുടെ രേഖ സൂക്ഷിക്കുക.", "ഹോമിലേക്ക് മടങ്ങുക", "ഡമ്മി ഉപയോക്താവ്", "നിങ്ങളുടെ അക്കൗണ്ട് വിശദാംശങ്ങളും മുൻഗണനകളും.", "അഡ്മിൻ ഡാഷ്‌ബോർഡ്", "സ്വകാര്യ മോഡറേഷൻ വർക്ക്‌സ്പേസ്", "ഇംഗ്ലീഷ് മാത്രം · രഹസ്യ ഉപയോക്തൃ വിശദാംശങ്ങൾ", "ലൈവ് അഡ്മിൻ ഡാറ്റ ലോഡ് ചെയ്യുകയാണ്...", "AI മാച്ച് കാണുക", "സ്ഥിരീകരിക്കുകയും ഉടമയെ അറിയിക്കുകയും ചെയ്യുക", "അഡ്മിനിൽ നിന്ന് പുറത്തുകടക്കുക"} // 8: ml
+                {"अपनी प्रोफ़ाइल पूरी करें", "आपके बारे में थोड़ा", "इससे पड़ोसियों को पता चलेगा कि वे किसकी मदद कर रहे हैं।", "सहेजें और जारी रखें", "पिन से लॉगिन", "वापसी पर स्वागत है।", "अपने Fendly उपयोगकर्ता नाम और पिन का उपयोग करें।", "लॉगिन", "होम", "जो महत्वपूर्ण है उसे खोजें।", "पास में कुछ खोया? कुछ मिला? यहां से शुरू करें।", "खोया", "मिला", "मेरी रिपोर्ट", "मेरी प्रोफ़ाइल", "मिली वस्तु पोस्ट करें", "खोई वस्तु रिपोर्ट करें", "इसे घर पहुंचाने में मदद करें।", "आइए इसे खोजें।", "स्पष्ट विवरण जोड़ें ताकि सही व्यक्ति पहचान सके।", "वस्तु का नाम", "विवरण और पहचान की जानकारी", "स्थान या पहचान चिन्ह", "दिनांक और समय", "वस्तु की तस्वीर अपलोड करें", "तस्वीर चुनी गई", "कैमरे से तस्वीर लें", "वर्तमान स्थान उपयोग करें", "मिली वस्तु प्रकाशित करें", "खोई वस्तु प्रकाशित करें", "Fendly Plus", "खोई वस्तु की रिपोर्ट अनलॉक करें।", "मिली वस्तु की रिपोर्ट हमेशा निःशुल्क है। खोई वस्तु की रिपोर्ट Rs 99 प्रति वर्ष है।", "भुगतान करें और खोई रिपोर्ट भेजें", "रिपोर्ट पर वापस जाएं", "मेरी रिपोर्ट", "जिन वस्तुओं को मिलाने में मदद कर रहे हैं उनका रिकॉर्ड रखें।", "होम पर वापस जाएं", "डमी उपयोगकर्ता", "आपके खाते का विवरण और प्राथमिकताएं।", "एडमिन डैशबोर्ड", "निजी मॉडरेशन कार्यक्षेत्र", "केवल अंग्रेज़ी · गोपनीय उपयोगकर्ता विवरण", "लाइव एडमिन डेटा लोड हो रहा है...", "मिलान देखें", "पुष्टि करें और मालिक को सूचित करें", "एडमिन से बाहर निकलें"}, // 1: hi
+                {"पूर्ण प्रोफाइल", "तुमच्याबद्दल थोडे", "यामुळे शेजाऱ्यांना ते कोणाला मदत करत आहेत हे समजेल.", "जतन करा आणि पुढे जा", "पिनने लॉगिन", "पुन्हा स्वागत आहे.", "तुमचे Fendly वापरकर्तानाव आणि पिन वापरा.", "लॉगिन", "मुख्यपृष्ठ", "महत्त्वाचे शोधा.", "जवळ काही हरवले? काही सापडले? इथून सुरुवात करा.", "हरवले", "सापडले", "माझे अहवाल", "माझे प्रोफाइल", "सापडलेली वस्तू पोस्ट करा", "हरवलेली वस्तू नोंदवा", "ते घरी पोहोचवण्यास मदत करा.", "चला ते शोधूया.", "योग्य व्यक्ती ओळखू शकेल असे स्पष्ट तपशील जोडा.", "वस्तूचे नाव", "वर्णन आणि ओळख तपशील", "ठिकाण किंवा खूण", "दिनांक आणि वेळ", "वस्तूचा फोटो अपलोड करा", "फोटो निवडला", "कॅमेऱ्याने फोटो घ्या", "सध्याचे स्थान वापरा", "सापडलेली वस्तू प्रकाशित करा", "हरवलेली वस्तू प्रकाशित करा", "Fendly Plus", "हरवलेल्या वस्तूंचे अहवाल सुरू करा.", "सापडलेल्या वस्तूंचे अहवाल कायम विनामूल्य आहेत. हरवलेल्या वस्तूंचे अहवाल वर्षाला Rs 99 आहेत.", "भरणा करून हरवलेला अहवाल पाठवा", "अहवालाकडे परत जा", "माझे अहवाल", "तुम्ही पुन्हा जोडण्यास मदत करत असलेल्या वस्तूंचा मागोवा ठेवा.", "मुख्यपृष्ठावर परत जा", "डमी वापरकर्ता", "तुमच्या खात्याचे तपशील आणि प्राधान्ये.", "अॅडमिन डॅशबोर्ड", "खासगी मॉडरेशन कार्यक्षेत्र", "फक्त इंग्रजी · गोपनीय वापरकर्ता तपशील", "लाइव्ह अॅडमिन डेटा लोड होत आहे...", "जुळणी पाहा", "पुष्टी करून मालकाला कळवा", "अॅडमिनमधून बाहेर पडा"}, // 2: mr
+                {"તમારી પ્રોફાઇલ પૂર્ણ કરો", "તમારા વિશે થોડું", "આ પડોશીઓને જાણવામાં મદદ કરે છે કે તેઓ કોને મદદ કરી રહ્યા છે.", "સાચવો અને આગળ વધો", "PIN વડે લોગિન", "પાછા સ્વાગત છે.", "તમારી ફ્રેન્ડલી પ્રોફાઇલમાંથી યુઝરનામ અને PIN નો ઉપયોગ કરો.", "લોગિન", "હોમ", "જે મહત્ત્વનું છે તે શોધો.", "આસપાસ કંઈ ખોવાયું? કંઈ મળ્યું? અહીંથી શરૂ કરો.", "ખોવાયેલ", "મળેલ", "મારા અહેવાલો", "મારી પ્રોફાઇલ", "મળેલ વસ્તુ પોસ્ટ કરો", "ખોવાયેલ વસ્તુની જાણ કરો", "તેને ઘરે પહોંચાડવામાં મદદ કરો.", "ચાલો તે શોધીએ.", "સ્પષ્ટ વિગતો ઉમેરો જેથી સાચી વ્યક્તિ તેને ઓળખી શકે.", "વસ્તુનું નામ", "વર્ણન અને ઓળખની વિગતો", "સ્થળ અથવા ઓળખચિહ્ન", "તારીખ અને સમય", "વસ્તુની છબી અપલોડ કરો", "છબી પસંદ કરી", "કેમેરાથી ફોટો લો", "વર્તમાન સ્થાનનો ઉપયોગ કરો", "મળેલ વસ્તુ પ્રકાશિત કરો", "ખોવાયેલ વસ્તુ પ્રકાશિત કરો", "Fendly Plus", "ખોવાયેલ વસ્તુના રિપોર્ટ અનલોક કરો.", "મળેલ વસ્તુના રિપોર્ટ હંમેશા મફત છે. ખોવાયેલ વસ્તુના રિપોર્ટ વર્ષે Rs 99 છે.", "ચૂકવણી કરો અને ખોવાયેલ રિપોર્ટ સબમિટ કરો", "રિપોર્ટ પર પાછા જાઓ", "તમારા અહેવાલો", "તમે જેને ફરી મેળવવામાં મદદ કરી રહ્યા છો તે વસ્તુઓનો ટ્રેક રાખો.", "હોમ પર પાછા જાઓ", "ડમી યુઝર", "તમારા ખાતાની વિગતો અને પસંદગીઓ.", "એડમિન ડેશબોર્ડ", "ખાનગી મોડરેશન વર્કસ્પેસ", "માત્ર અંગ્રેજી · ગોપનીય વપરાશકર્તા વિગતો", "લાઈવ એડમિન ડેટા લોડ થઈ રહ્યો છે...", "મેચ સમીક્ષા કરો", "પુષ્ટિ કરો અને માલિકને જાણ કરો", "એડમિનમાંથી બહાર નીકળો"}, // 3: gu
+                {"আপনার প্রোফাইল সম্পূর্ণ করুন", "আপনার সম্পর্কে কিছু", "এটি প্রতিবেশীদের জানতে সাহায্য করে তারা কার সাহায্য করছে।", "সংরক্ষণ করুন এবং চালিয়ে যান", "পিন দিয়ে লগইন", "ফিরে আসার জন্য স্বাগতম।", "আপনার Fendly ব্যবহারকারীর নাম এবং পিন ব্যবহার করুন।", "লগইন", "হোম", "গুরুত্বপূর্ণ জিনিস খুঁজুন।", "কাছাকাছি কিছু হারিয়েছে? কিছু পেয়েছেন? এখান থেকে শুরু করুন।", "হারিয়ে গেছে", "পাওয়া গেছে", "আমার রিপোর্ট", "আমার প্রোফাইল", "পাওয়া আইটেম পোস্ট করুন", "হারানো আইটেম রিপোর্ট করুন", "এটিকে বাড়িতে ফিরিয়ে দিতে সাহায্য করুন।", "চলো এটি খুঁজে বের করি।", "সঠিক ব্যক্তি শনাক্ত করার জন্য স্পষ্ট বিবরণ যোগ করুন।", "আইটেমের নাম", "বর্ণনা ও শনাক্তকরণ তথ্য", "অবস্থান বা চিহ্ন", "তারিখ ও সময়", "আইটেমের ছবি আপলোড করুন", "চিত্র নির্বাচন করা হয়েছে", "ক্যামেরা দিয়ে ছবি নিন", "বর্তমান অবস্থান ব্যবহার করুন", "পাওয়া আইটেম প্রকাশ করুন", "হারানো আইটেম প্রকাশ করুন", "Fendly Plus", "হারানো আইটেম রিপোর্ট আনলক করুন।", "পাওয়া আইটেম রিপোর্ট সবসময় বিনামূল্যে। হারানো আইটেম রিপোর্ট বছরে Rs 99।", "পেমেন্ট করুন এবং হারানো রিপোর্ট জমা দিন", "রিপোর্টে ফিরে যান", "আমার রিপোর্ট", "আপনি কী কী আইটেম আবার একত্রিত করতে সাহায্য করছেন তার রেকর্ড রাখুন।", "হোমে ফিরে যান", "ডামি ব্যবহারকারী", "আপনার অ্যাকাউন্টে বিবরণ ও পছন্দসমূহ।", "অ্যাডমিন ড্যাশবোর্ড", "ব্যক্তিগত মডারেশন ওয়ার্কস্পেস", "শুধু ইংরেজি · গোপন ব্যবহারকারী বিবরণ", "লাইভ অ্যাডমিন ডেটা লোড হচ্ছে...", "ম্যাচ দেখুন", "নিশ্চিত করুন এবং মালিককে অবহিত করুন", "অ্যাডমিন থেকে বের হন"}, // 4: bn
+                {"உங்கள் சுயவிவரத்தை முழுமையாக்குங்கள்", "உங்களைப் பற்றி சிறிது", "இது யாருக்கு உதவுகிறார்கள் என்பதை அண்டை வீட்டாருக்குத் தெரியப்படுத்த உதவுகிறது.", "சேமித்து தொடரவும்", "PIN மூலம் உள்நுழைவு", "மீண்டும் வருக.", "உங்கள் Fendly சுயவிவரத்தின் பயனர்பெயர் மற்றும் PIN ஐப் பயன்படுத்தவும்.", "உள்நுழை", "முகப்பு", "முக்கியமானவற்றைக் கண்டறியவும்.", "அருகில் தொலைந்ததா? ஏதேனும் கிடைத்ததா? இங்கிருந்து தொடங்குங்கள்.", "தொலைந்தது", "கிடைத்தது", "என் அறிக்கைகள்", "என் சுயவிவரம்", "கிடைத்த பொருளைப் பதிவிடவும்", "தொலைந்த பொருளை அறிக்கை செய்யவும்", "அதை வீட்டிற்குச் சேர்க்க உதவுங்கள்.", "அதைக் கண்டுபிடிப்போம்.", "சரியான நபர் அடையாளம் காண தெளிவான விவரங்களைச் சேர்க்கவும்.", "பொருளின் பெயர்", "விளக்கம் மற்றும் அடையாள விவரங்கள்", "இடம் அல்லது அடையாளம்", "தேதி மற்றும் நேரம்", "பொருளின் படத்தைப் பதிவேற்றவும்", "படம் தேர்ந்தெடுக்கப்பட்டது", "கேமரா மூலம் படம் எடுக்கவும்", "தற்போதைய இடத்தைப் பயன்படுத்தவும்", "கிடைத்த பொருளை வெளியிடுங்கள்", "தொலைந்த பொருளை வெளியிடுங்கள்", "Fendly Plus", "தொலைந்த பொருள் அறிக்கைகளைத் திறக்கவும்.", "கிடைத்த பொருள் அறிக்கைகள் எப்போதும் இலவசம். தொலைந்த பொருள் அறிக்கைகள் ஆண்டிற்கு Rs 99.", "பணம் செலுத்தி அறிக்கையைச் சமர்ப்பிக்கவும்", "அறிக்கைக்குத் திரும்புக", "உங்கள் அறிக்கைகள்", "நீங்கள் மீண்டும் சேர்க்க உதவும் பொருட்களைக் கண்காணிக்கவும்.", "முகப்பிற்குத் திரும்புக", "மாதிரி பயனர்", "உங்கள் கணக்கு விவரங்கள் மற்றும் முன்னுரிமைகள்.", "நிர்வாகி குழு", "தனியார் மிதமான பணிப்பகுதி", "ஆங்கிலம் மட்டும் · இரகசிய பயனர் விவரங்கள்", "நிர்வாகி தரவு ஏற்றப்படுகிறது...", "பொருத்தத்தை மதிப்பாய்வு செய்க", "உறுதிசெய்து உரிமையாளருக்கு அறிவிக்கவும்", "நிர்வாகியிலிருந்து வெளியேறு"}, // 5: ta
+                {"మీ ప్రొఫైల్‌ను పూర్తి చేయండి", "మీ గురించి కొద్దిపాటి సమాచారం", "ఇది పొరుగు వారికి ఎవరికి సహాయం చేస్తున్నారో తెలుసుకోవడంలో సహాయపడుతుంది.", "సేవ్ చేసి కొనసాగించండి", "పిన్‌తో లాగిన్", "మళ్ళీ స్వాగతం", "మీ Fendly వినియోగదారు పేరు మరియు పిన్‌ను ఉపయోగించండి.", "లాగిన్", "హోమ్", "ముఖ్యమైన వాటిని కనుగొనండి.", "ఇక్కడకు దగ్గరలో ఏదైనా పోయిందా? ఏదైనా దొరికిందా? ఇక్కడ ప్రారంభించండి.", "కోల్పోయినవి", "కనుగొన్నది", "నా రిపోర్ట్లు", "నా ప్రొఫైల్", "కనుగొన్న అంశాన్ని పోస్ట్ చేయండి", "కోల్పోయిన అంశాన్ని రిపోర్ట్ చేయండి", "దానిని ఇంటికి చేర్చడానికి సహాయం చేయండి.", "వెతుకుదాం.", "సరైన వ్యక్తి గుర్తించగలిగే స్పష్టమైన వివరాలను జోడించండి.", "అంశం పేరు", "వివరణ మరియు గుర్తింపు వివరాలు", "స్థలం లేదా పరిశీలన", "తేదీ మరియు సమయం", "అంశపు ఫోటో అప్లోడ్ చేయండి", "ఫోటో ఎంపికైంది", "కెమెరా నుండి ఫోటో తీయండి", "ప్రస్తుత స్థానం ఉపయోగించండి", "కనుగొన్న అంశాన్ని ప్రచురించండి", "కోల్పోయిన అంశాన్ని ప్రచురించండి", "Fendly Plus", "కోల్పోయిన వస్తువుల రిపోర్ట్లను అన్‌లాక్ చేయండి.", "కనుగొన్న వస్తువుల రిపోర్ట్లు ఎల్లప్పుడూ ఉచితం. కోల్పోయిన వస్తువుల రిపోర్ట్లు సంవత్సరానికి Rs 99.", "చెల్లించి కోల్పోయిన రిపోర్టును సమర్పించండి", "రిపోర్టుకు తిరిగి వెళ్లండి", "నా రిపోర్ట్లు", "మీరు పునరుద్ధరించడానికి సహాయం చేస్తున్న వస్తువుల రికార్డ్‌ను పర్యవేక్షించండి.", "హోమ్కి తిరిగి వెళ్లండి", "డమ్మీ యూజర్", "మీ అకౌంట్ వివరాలు మరియు ప్రాధాన్యతలు.", "అడ్మిన్ డాష్‌బోర్డ్", "ప్రైవేట్ మోడరేషన్ వర్క్‌స్పేస్", "ఇంగ్లీష్ మాత్రమే · గోప్య వినియోగదారు వివరాలు", "లైవ్ అడ్మిన్ డేటాను లోడ్ చేస్తున్నారు...", "మ్యాచ్ చూసుకోండి", "నిర్ధారించండి మరియు యజమానికి తెలియజేయండి", "అడ్మిన్ నుండి నిష్క్రమించండి"}, // 6: te
+                {"ನಿಮ್ಮ ಪ್ರೊಫೈಲ್ ಪೂರ್ಣಗೊಳಿಸಿ", "ನಿಮ್ಮ ಬಗ್ಗೆ ಸ್ವಲ್ಪ ಮಾಹಿತಿ", "ಇದು ನೆರವಿನವರನ್ನು ಯಾರು ಸಹಾಯ ಮಾಡುತ್ತಿದ್ದಾರೆಂದು ತಿಳಿಸಲು ಸಹಾಯ ಮಾಡುತ್ತದೆ.", "ಸೇವ್ ಮಾಡಿ ಮತ್ತು ಮುಂದುವರಿಸಿ", "ಪಿನ್ ಮೂಲಕ ಲಾಗಿನ್", "ಮರಳಿ ಸ್ವಾಗತ", "ನಿಮ್ಮ Fendly ಬಳಕೆದಾರಹೆಸರು ಮತ್ತು ಪಿನ್ ಬಳಸಿ.", "ಲಾಗಿನ್", "ಹೋಮ್", "ಪ್ರಮುಖವಾದ್ದನ್ನು ಹುಡುಕಿ.", "ಹತ್ತಿರದಲ್ಲಿ ಯಾವುದೋ ಕಳೆದುಹೋಗಿದೆಯೇ? ಏನಾದರೂ ಸಿಕ್ಕಿದೆಯೇ? ಇಲ್ಲಿಂದ ಪ್ರಾರಂಭಿಸಿ.", "ಕಳೆದುಹೋಗಿದೆ", "ಸಿಕ್ಕಿದೆ", "ನನ್ನ ವರದಿಗಳು", "ನನ್ನ ಪ್ರೊಫೈಲ್", "ಕಂಡ ವಸ್ತು ಪೋಸ್ಟ್ ಮಾಡಿ", "ಕಳೆದುಹೋಗಿದ ವಸ್ತು ವರದಿ ಮಾಡಿ", "ಅದನ್ನು ಮನೆಗೆ ಸೇರಿಸಲು ಸಹಾಯ ಮಾಡಿ.", "ಮುತ್ತಲಿನವರೊಂದಿಗೆ ಹುಡುಕೋಣ.", "ಸರಿಯಾದ ವ್ಯಕ್ತಿ ಗುರುತಿಸಿಕೊಳ್ಳಲು ಸ್ಪಷ್ಟ ವಿವರಗಳನ್ನು ಸೇರಿಸಿ.", "ವಸ್ತುವಿನ ಹೆಸರು", "ವಿವರಣೆ ಮತ್ತು ಗುರುತಿಸುವ ವಿವರಗಳು", "ಸ್ಥಳ ಅಥವಾ ಗುರುತು", "ದಿನಾಂಕ ಮತ್ತು ಸಮಯ", "ವಸ್ತುವಿನ ಚಿತ್ರ ಅಪ್‌ಲೋಡ್ ಮಾಡಿ", "ಚಿತ್ರ ಆಯ್ಕೆಮಾಡಲಾಗಿದೆ", "ಕ್ಯಾಮರಾದಿಂದ ಫೋಟೋ ತೆಗೆದುಕೊಳ್ಳಿ", "ಪ್ರಸ್ತುತ ಸ್ಥಳವನ್ನು ಬಳಸಿ", "ಕಂಡ ವಸ್ತು ಪ್ರಕಟಿಸಿ", "ಕಳೆದುಹೋಗಿದ ವಸ್ತು ಪ್ರಕಟಿಸಿ", "Fendly Plus", "ಕಳೆದುಹೋಗಿದ ವಸ್ತು ವರದಿಗಳನ್ನು desbloಕ್ ಮಾಡಿ.", "ಕಂಡ ವಸ್ತು ವರದಿಗಳು ಶಾಶ್ವತವಾಗಿ ಉಚಿತವಾಗಿರುತ್ತವೆ. ಕಳೆದುಹೋಗಿದ ವಸ್ತು ವರದಿಗಳು ವರ್ಷಕ್ಕೆ Rs 99.", "ಚెలಾಯಿಸಿ ಮತ್ತು ಕಳೆದುಹೋಗಿದ ವರದಿಯನ್ನು ಸಲ್ಲಿಸಿ", "ವರದಿಗೆ ಹಿಂತಿರುಗಿ", "ನನ್ನ ವರದಿಗಳು", "ನೀವು ಒಟ್ಟುಗೂಡಿಸಲು ಸಹಾಯ ಮಾಡುವ ವಸ್ತುಗಳ ರೆಕಾರ್ಡ್ ಅನ್ನು ನಿರ್ವಹಿಸಿ.", "ಮನೆಯತ್ತ ಹಿಂತಿರುಗಿ", "ಡಮ್ಮি ಬಳಕೆದಾರ", "ನಿಮ್ಮ ಖಾತೆ ವಿವರಗಳು ಮತ್ತು ಆದ್ಯತೆಗಳು.", "ಅಡ್ಮಿನ್ ಡ್ಯಾಶ್‌ಬೋರ್ಡ್", "ಖಾಸಗಿ मॉಡರೇಶನ್ ಕಾರ್ಯಕ್ಷೇತ್ರ", "ಇಂಗ್ಲಿಷ್ ಮಾತ್ರ · ರಹಸ್ಯ ಬಳಕೆದಾರ ವಿವರಗಳು", "ಲೈವ್ ಅಡ್ಮಿನ್ ಡೇಟಾವನ್ನು ಲೋಡ್ ಮಾಡಲಾಗುತ್ತಿದೆ...", "ಪಂದ್ಯವನ್ನು ವೀಕ್ಷಿಸಿ", "ನಿಶ್ಚಿತಪಡಿಸಿ ಮತ್ತು ಮಾಲೀಕನಿಗೆ ತಿಳಿಸಿ", "ಅಡ್ಮಿನ್ ನಿಂದ ನಿರ್ಗಮಿಸಿ"}, // 7: kn
+                {"നിങ്ങളുടെ പ്രൊഫൈൽ പൂർത്തിയാക്കുക", "നിങ്ങളെക്കുറിച്ച് കുറച്ച്", "ഇത് അയൽവാസികൾക്ക് ആരെ സഹായിക്കുന്നുവെന്ന് അറിയാൻ സഹായിക്കുന്നു.", "സേവ് ചെയ്ത് മുന്നോട്ട് പോകുക", "പിൻ ഉപയോഗിച്ച് ലോഗിൻ", "വീണ്ടും സ്വാഗതം", "നിങ്ങളുടെ Fendly യൂസർനെയം, പിൻ ഉപയോഗിക്കുക.", "ലോഗിൻ", "ഹോം", "പ്രധാനമായ വസ്തുക്കൾ കണ്ടെത്തുക.", "സമീപത്ത് തന്നെ നഷ്ടപ്പെട്ടോ? എന്തെങ്കിലും കണ്ടെത്തിയോ? ഇവിടെ ആരംഭിക്കുക.", "നഷ്ടപ്പെട്ടു", "കണ്ടെത്തി", "എന്റെ റിപ്പോർട്ടുകൾ", "എന്റെ പ്രൊഫൈൽ", "കണ്ടെത്തിയ ഇനം പോസ്റ്റുചെയ്യുക", "നഷ്ടപ്പെട്ട ഇനം റിപ്പോർട്ട് ചെയ്യുക", "അത് വീട്ടിലേക്ക് എത്തിക്കാൻ സഹായിക്കുക.", "കണ്ടുപിടിക്കാം.", "ശരിയായ വ്യക്തിയെ തിരിച്ചറിയാൻ വ്യക്തമായ വിശദാംശങ്ങൾ ചേർക്കുക.", "ഇനത്തിന്റെ പേര്", "വിവരണം, തിരിച്ചറിയൽ വിശദാംശങ്ങൾ", "സ്ഥലം അല്ലെങ്കിൽ അടയാളം", "തീയതിയും സമയവും", "ഇനത്തിന്റെ ചിത്രം അപ്‌ಲೋഡ് ചെയ്യുക", "ചിത്രം തിരഞ്ഞെടുത്തു", "ക്യാമറയിൽ നിന്ന് ഫോട്ടോ എടുക്കുക", "നിലവിലെ സ്ഥലം ഉപയോഗിക്കുക", "കണ്ടെത്തിയ ഇനം പ്രസിദ്ധീകരിക്കുക", "നഷ്ടപ്പെട്ട ഇനം പ്രസിദ്ധീകരിക്കുക", "Fendly Plus", "നഷ്ടപ്പെട്ട ഇനങ്ങളുടെ റിപ്പോർട്ടുകൾ അൺലോക്ക് ചെയ്യുക.", "കണ്ടെത്തിയ ഇനങ്ങളുടെ റിപ്പോർട്ടുകൾ എല്ലായ്പ്പോഴും സൗജന്യമാണ്. നഷ്ടപ്പെട്ട ഇനങ്ങളുടെ റിപ്പോർട്ടുകൾ പ്രതിവർഷം Rs 99.", "പേയ്‌മെന്റ് ചെയ്യുകയും നഷ്ടപ്പെട്ട റിപ്പോർട്ട് സമർപ്പിക്കുകയും ചെയ്യുക", "റിപ്പോർട്ടിലേക്ക് തിരികെ പോകുക", "എന്റെ റിപ്പോർട്ടുകൾ", "നിങ്ങൾ വീണ്ടും കൂട്ടിച്ചേർക്കാൻ സഹായിക്കുന്ന ഇനങ്ങളുടെ രേഖ സൂക്ഷിക്കുക.", "ഹോമിലേക്ക് മടങ്ങുക", "ഡമ്മി ഉപയോക്താവ്", "നിങ്ങളുടെ അക്കൗണ്ട് വിശദാംശങ്ങളും മുൻഗണനകളും.", "അഡ്മിൻ ഡാഷ്‌ബോർഡ്", "സ്വകാര്യ മോഡറേഷൻ വർക്ക്‌സ്പേസ്", "ഇംഗ്ലീഷ് മാത്രം · രഹസ്യ ഉപയോക്തൃ വിശദാംശങ്ങൾ", "ലൈവ് അഡ്മിൻ ഡാറ്റ ലോഡ് ചെയ്യുകയാണ്...", "മാച്ച് കാണുക", "സ്ഥിരീകരിക്കുകയും ഉടമയെ അറിയിക്കുകയും ചെയ്യുക", "അഡ്മിനിൽ നിന്ന് പുറത്തുകടക്കുക"} // 8: ml
         };
         int language = Math.max(0, Math.min(selectedLanguage, translations.length - 1));
         for (int index = 0; index < english.length; index++) {

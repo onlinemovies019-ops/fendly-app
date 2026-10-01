@@ -58,11 +58,13 @@ public final class AiMatchService {
             String date,
             String paymentId,
             String imei,
+            String sourceLanguage,
             String idToken
     ) throws Exception {
         JSONObject payload = new JSONObject()
                 .put("title", title)
                 .put("description", description)
+                .put("source_language", sourceLanguage)
                 .put("imageUrl", imageUrl == null ? JSONObject.NULL : imageUrl)
                 .put("type", type == null ? "found" : type.toLowerCase(Locale.US))
                 .put("lat", latitude)

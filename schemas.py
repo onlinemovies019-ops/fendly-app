@@ -6,6 +6,7 @@ from pydantic import BaseModel, ConfigDict, Field
 class ItemCreate(BaseModel):
     title: str = Field(min_length=1, max_length=160)
     description: str = Field(min_length=1, max_length=5000)
+    source_language: str = Field(default="auto", max_length=16)
     lat: float = Field(default=0.0, ge=-90, le=90)
     lng: float = Field(default=0.0, ge=-180, le=180)
     report_date: str | None = Field(default=None, max_length=32)
@@ -19,6 +20,7 @@ class ItemCreate(BaseModel):
 class ItemUpdate(BaseModel):
     title: str = Field(min_length=1, max_length=160)
     description: str = Field(min_length=1, max_length=5000)
+    source_language: str = Field(default="auto", max_length=16)
     lat: float = Field(default=0.0, ge=-90, le=90)
     lng: float = Field(default=0.0, ge=-180, le=180)
     report_date: str | None = Field(default=None, max_length=32)

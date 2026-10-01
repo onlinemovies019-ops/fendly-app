@@ -4,7 +4,7 @@ import logging
 import math
 import os
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Literal, Optional
 from uuid import uuid4
@@ -27,6 +27,7 @@ from models import FoundItem, LostItem
 from notifications import persist_admin_match_alert, send_admin_match_email, send_match_notifications
 from routers.payments import verify_captured_payment
 from schemas import ItemCreate, ItemResponse, ItemUpdate, MatchRequest, MatchResponse
+from translation import translate_report_fields
 
 def validate_luhn(imei: str) -> bool:
     digits = [int(d) for d in imei if d.isdigit()]
@@ -138,6 +139,7 @@ async def notify_admin_of_match(
 class ItemSubmission(BaseModel):
     title: str = Field(min_length=1, max_length=160)
     description: str = Field(min_length=1, max_length=5000)
+    source_language: str = Field(default="auto", max_length=16)
     imageUrl: str | None = Field(default=None, max_length=1000)
     type: Literal["lost", "found"]
     imei: str | None = Field(default=None, max_length=32)
@@ -179,14 +181,29 @@ async def _save_item(payload: ItemCreate, session: Session, uid: str, model: typ
     mod_task = asyncio.create_task(moderate_content(payload.title, payload.description))
     emb_task = asyncio.create_task(create_embedding(item_text(payload.title, payload.description, payload.category)))
     img_task = asyncio.create_task(create_image_embedding(payload.image_url))
+    translation_task = asyncio.create_task(translate_report_fields(
+        payload.title,
+        payload.description,
+        payload.report_location,
+        category=payload.category,
+        source_language=payload.source_language,
+    ))
 
-    rejection_reason, embedding, image_embedding = await asyncio.gather(mod_task, emb_task, img_task)
+    rejection_reason, embedding, image_embedding, translated_fields = await asyncio.gather(
+        mod_task, emb_task, img_task, translation_task
+    )
 
     if rejection_reason:
         raise HTTPException(status_code=422, detail=rejection_reason)
 
     # 4. Create and persist record
     item_values = payload.model_dump(exclude={"payment_id"})
+    item_values.update(
+        title_en=translated_fields["title"] if translated_fields else None,
+        description_en=translated_fields["description"] if translated_fields else None,
+        report_location_en=translated_fields["report_location"] if translated_fields else None,
+        category_en=translated_fields["category"] if translated_fields else None,
+    )
     record = model(**item_values, created_by=uid, embedding=embedding, image_embedding=image_embedding)
 
     session.add(record)
@@ -355,6 +372,7 @@ async def create_item_compat(
         payload = ItemCreate(
             title=request.title,
             description=request.description,
+            source_language=request.source_language,
             image_url=request.imageUrl,
             imei=request.imei,
             lat=request.lat,
@@ -421,11 +439,28 @@ async def update_item(
         raise HTTPException(404, "Report not found")
     if record.edit_count >= 1:
         raise HTTPException(409, "This report can only be edited once")
+    if record.created_at:
+        now = datetime.now(timezone.utc)
+        created_at = record.created_at if record.created_at.tzinfo else record.created_at.replace(tzinfo=timezone.utc)
+        if (now - created_at) > timedelta(hours=5):
+            raise HTTPException(409, "Reports can only be edited within 5 hours of creation")
     rejection_reason = await moderate_content(payload.title, payload.description)
     if rejection_reason:
         raise HTTPException(status_code=422, detail=rejection_reason)
+    translated_fields = await translate_report_fields(
+        payload.title,
+        payload.description,
+        payload.report_location,
+        category=payload.category,
+        source_language=payload.source_language,
+    )
     record.title = payload.title
     record.description = payload.description
+    record.title_en = translated_fields["title"] if translated_fields else None
+    record.description_en = translated_fields["description"] if translated_fields else None
+    record.report_location_en = translated_fields["report_location"] if translated_fields else None
+    record.category_en = translated_fields["category"] if translated_fields else None
+    record.source_language = payload.source_language
     record.category = payload.category
     record.lat = payload.lat
     record.lng = payload.lng
