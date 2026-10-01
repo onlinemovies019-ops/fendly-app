@@ -382,43 +382,34 @@ async def match_items(
 ) -> list[dict[str, object]]:
     session = _require_db_session(session)
 
-    if request.imei is not None:
-        clean_imei = re.sub(r"\D", "", str(request.imei))
-        target_type = (request.targetType or "").strip().lower()
-        if target_type not in {"lost", "found"}:
-            target_type = "lost"
+    # 1. Direct IMEI Matching Path (Fixed with select())
+    if getattr(request, "imei", None):
+        clean_imei = "".join(filter(str.isdigit, str(request.imei)))
+        target_type = getattr(request, "targetType", "lost")
 
         model = LostItem if target_type == "lost" else FoundItem
-        matched_records = session.scalars(select(model).where(model.imei == clean_imei)).all()
 
-        results: list[dict[str, object]] = []
+        # Use SQLModel statement execution instead of session.query
+        statement = select(model).where(model.imei == clean_imei)
+        matched_records = session.exec(statement).all()
+
+        results = []
         for item in matched_records:
             raw_imei = getattr(item, "imei", "") or ""
-            masked_imei = raw_imei if len(raw_imei) < 9 else f"{raw_imei[:6]}{'*' * max(0, len(raw_imei) - 9)}{raw_imei[-3:]}"
-            results.append(
-                {
-                    "item": {
-                        "id": item.id,
-                        "title": item.title,
-                        "description": item.description,
-                        "category": item.category,
-                        "lat": item.lat,
-                        "lng": item.lng,
-                        "report_date": item.report_date,
-                        "report_location": item.report_location,
-                        "image_url": item.image_url,
-                        "created_by": item.created_by,
-                        "created_at": item.created_at,
-                        "edit_count": item.edit_count,
-                        "imei": masked_imei,
-                    },
-                    "score": 1.0,
-                    "matchType": "EXACT_IMEI",
-                    "imei": masked_imei,
-                }
-            )
+            masked_imei = f"{raw_imei[:6]}******{raw_imei[-3:]}" if len(raw_imei) == 15 else raw_imei
+
+            item_dict = item.__dict__.copy()
+            item_dict["imei"] = masked_imei
+
+            results.append({
+                "item": item_dict,
+                "score": 1.0,
+                "matchType": "EXACT_IMEI",
+                "explanation": "Exact 15-digit IMEI serial match"
+            })
         return results
 
+    # 2. Standard Item-ID Matching Fallback
     if bool(request.found_item_id) == bool(request.lost_item_id):
         raise HTTPException(400, "Provide exactly one of found_item_id or lost_item_id")
 
