@@ -8,9 +8,9 @@ service.
 
 ```bash
 python3.11 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-uvicorn main:app --reload
+./.venv/bin/python -m pip install -r requirements.txt
+./.venv/bin/python -c "import email_validator; print('email-validator is installed')"
+./.venv/bin/python -m uvicorn main:app --reload
 ```
 
 Required environment variables:

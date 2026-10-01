@@ -115,6 +115,8 @@ async def lifespan(_: FastAPI):
             add_column_if_missing("found_items", "image_embedding", "vector(512)")
             add_column_if_missing("lost_items", "embedding", "vector(1536)")
             add_column_if_missing("found_items", "embedding", "vector(1536)")
+            add_column_if_missing("lost_items", "imei", "varchar(32)")
+            add_column_if_missing("found_items", "imei", "varchar(32)")
             add_column_if_missing("lost_items", "report_date", "varchar(32)")
             add_column_if_missing("lost_items", "report_location", "varchar(500)")
             add_column_if_missing("lost_items", "edit_count", "integer", not_null=True, default="0")
