@@ -91,13 +91,16 @@ def _supabase_client() -> Any | None:
     return create_client(url, key)
 
 
-def _exact_imei_matches(clean_imei: str, target_type: str) -> list[dict[str, Any]]:
+def _exact_imei_matches(clean_imei: str, target_type: Optional[str] = None) -> list[dict[str, Any]]:
     client = _supabase_client()
     if client is None:
         return []
 
     try:
-        response = client.table("items").select("*").eq("imei", clean_imei).eq("type", target_type).execute()
+        query = client.table("items").select("*").eq("imei", clean_imei)
+        if target_type:
+            query = query.eq("type", target_type)
+        response = query.execute()
         rows = response.data or []
     except Exception:
         return []
@@ -193,7 +196,7 @@ async def create_item(request: ItemCreateRequest):
         raise HTTPException(status_code=400, detail="Invalid 15-digit IMEI number")
 
     payment_id = request.payment_id or ""
-    if payment_id == "test_payment_123" or payment_id.startswith("test_"):
+    if payment_id == "test_bypass" or payment_id.startswith("pay_test_"):
         pass
 
     cleaned_imei = clean_imei(request.imei)
@@ -246,9 +249,10 @@ async def match_items(request: ItemMatchRequest):
         target_type = "found"
     else:
         target_type = (request.targetType or "").strip().lower()
-        if target_type not in {"lost", "found"}:
-            if request.imei is None:
-                raise HTTPException(status_code=400, detail="targetType must be 'lost' or 'found'")
+        if request.imei is not None and target_type and target_type not in {"lost", "found"}:
+            raise HTTPException(status_code=400, detail="targetType must be 'lost' or 'found'")
+        if request.imei is None and target_type not in {"lost", "found"}:
+            target_type = ""
 
     cleaned_imei = clean_imei(request.imei)
     if request.imei is not None and (cleaned_imei is None or len(cleaned_imei) != 15 or not cleaned_imei.isdigit()):
@@ -262,11 +266,11 @@ async def match_items(request: ItemMatchRequest):
 
     results: list[dict[str, Any]] = []
 
-    if cleaned_imei and len(cleaned_imei) == 15 and cleaned_imei.isdigit() and target_type in {"lost", "found"}:
-        exact_results = _exact_imei_matches(cleaned_imei, target_type)
+    if cleaned_imei and len(cleaned_imei) == 15 and cleaned_imei.isdigit():
+        exact_results = _exact_imei_matches(cleaned_imei, target_type if target_type in {"lost", "found"} else None)
         results.extend(exact_results)
 
-    if image_url:
+    if image_url and target_type in {"lost", "found"}:
         visual_results = _visual_matches(image_url, target_type)
         results.extend(visual_results)
 
