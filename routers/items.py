@@ -460,6 +460,7 @@ async def list_my_items(
             "title": item.title,
             "description": item.description,
             "category": item.category,
+            "imei": item.imei,
             "lat": item.lat,
             "lng": item.lng,
             "report_date": item.report_date or _stored_report_field(item.description, "Date"),

@@ -4894,7 +4894,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                 long ageMs = System.currentTimeMillis() - createdAtMs;
                 boolean isWithin5Hours = createdAtMs > 0 && ageMs >= 0 && ageMs <= 5 * 3600 * 1000L;
                 boolean canEdit = report.optInt("edit_count", 0) == 0 && isWithin5Hours;
-                addField(activeContent, reportRow(title, displayType + "  ·  " + detail, () -> {
+                LinearLayout reportCard = reportRow(title, displayType + "  ·  " + detail, () -> {
                     editingReportId = reportId;
                     editingReportType = type;
                     editingReportImageUrl = reportImageUrl;
@@ -4907,7 +4907,9 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                     Arrays.fill(reportImages, null);
                     Arrays.fill(reportCameraImages, null);
                     showReport(type);
-                }, canEdit, () -> deleteReport(reportId, type)));
+                }, canEdit, () -> deleteReport(reportId, type));
+                reportCard.setOnClickListener(view -> showReportDetailsDialog(report, false));
+                addField(activeContent, reportCard);
             }
 
             if (allReports.isEmpty()) {
@@ -6376,7 +6378,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
 
         EditText imeiNumberField = field("");
         imeiNumberField.setText(account.getString("imei_number", ""));
-        imeiNumberField.setHint("This will help you find your lost mobile");
+        imeiNumberField.setHint("Protect this device against future loss or theft");
         imeiNumberField.setHintTextColor(Color.GRAY);
         imeiNumberField.setInputType(InputType.TYPE_CLASS_NUMBER);
         imeiNumberField.setFilters(new InputFilter[]{new InputFilter.LengthFilter(15)});
@@ -7898,12 +7900,86 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             TextView review = text("Review matches  ›", 11, GOLD_ON, Typeface.NORMAL);
             review.setGravity(Gravity.CENTER);
             review.setBackground(roundWithStroke(GOLD, 10, GOLD));
+            review.setOnClickListener(view -> loadAdminMatches(item, matchesHeading, matches));
             LinearLayout.LayoutParams reviewParams = new LinearLayout.LayoutParams(-1, dp(36));
             reviewParams.setMargins(0, dp(8), 0, 0);
             card.addView(review, reviewParams);
-            card.setOnClickListener(view -> loadAdminMatches(item, matchesHeading, matches));
         }
+        card.setOnClickListener(view -> showReportDetailsDialog(item, true));
         return card;
+    }
+
+    private void showReportDetailsDialog(JSONObject report, boolean adminView) {
+        String type = report.optString("type", "ITEM");
+        String title = report.optString("original_title", report.optString("title", "Untitled item")).trim();
+        LinearLayout details = new LinearLayout(this);
+        details.setOrientation(LinearLayout.VERTICAL);
+        details.setPadding(dp(16), dp(8), dp(16), dp(8));
+
+        String imageUrl = report.optString("image_url", report.optString("imageUrl", "")).trim();
+        if (!imageUrl.isEmpty()) {
+            ImageView image = new ImageView(this);
+            image.setScaleType(ImageView.ScaleType.FIT_CENTER);
+            image.setBackground(roundWithStroke(backgroundColor(), 10, borderColor()));
+            image.setImageDrawable(new ColorDrawable(Color.argb(100, 190, 190, 190)));
+            details.addView(image, new LinearLayout.LayoutParams(-1, dp(210)));
+            Glide.with(this).load(imageUrl)
+                    .placeholder(new ColorDrawable(Color.argb(100, 190, 190, 190)))
+                    .error(new ColorDrawable(Color.argb(100, 190, 190, 190)))
+                    .into(image);
+        }
+
+        addReportDetail(details, "Report type", type);
+        addReportDetail(details, "Title", title);
+        addTranslatedReportDetail(details, "English title", report.optString("title", ""), title, adminView);
+        String category = report.optString("original_category", report.optString("category", "")).trim();
+        addReportDetail(details, "Category", category);
+        addTranslatedReportDetail(details, "English category", report.optString("category", ""), category, adminView);
+        String description = report.optString("original_description", report.optString("description", "")).trim();
+        addReportDetail(details, "Description", description);
+        addTranslatedReportDetail(details, "English description", report.optString("description", ""), description, adminView);
+        addReportDetail(details, "Date", report.optString("report_date", ""));
+        String location = report.optString("original_report_location", report.optString("report_location", report.optString("location", ""))).trim();
+        addReportDetail(details, "Location", location);
+        addTranslatedReportDetail(details, "English location", report.optString("report_location", ""), location, adminView);
+        if (report.has("lat") || report.has("latitude") || report.has("lng") || report.has("longitude")) {
+            double latitude = report.optDouble("lat", report.optDouble("latitude", 0.0));
+            double longitude = report.optDouble("lng", report.optDouble("longitude", 0.0));
+            if (latitude != 0.0 || longitude != 0.0) {
+                addReportDetail(details, "Coordinates", String.format(Locale.US, "%.6f, %.6f", latitude, longitude));
+            }
+        }
+        addReportDetail(details, "IMEI", report.optString("imei", report.optString("imei_number", "")));
+        addReportDetail(details, "Status", report.optString("status", ""));
+        addReportDetail(details, "Posted", report.optString("created_at", ""));
+        if (adminView) addReportDetail(details, "Reporter ID", report.optString("created_by", ""));
+
+        ScrollView scroll = new ScrollView(this);
+        scroll.setFillViewport(false);
+        scroll.addView(details, new ScrollView.LayoutParams(-1, -2));
+        new AlertDialog.Builder(this)
+                .setTitle(("FOUND".equalsIgnoreCase(type) ? "Found" : "Lost") + " report details")
+                .setView(scroll)
+                .setPositiveButton("Close", null)
+                .show();
+    }
+
+    private void addTranslatedReportDetail(LinearLayout parent, String label, String value, String source, boolean adminView) {
+        String normalizedValue = value == null ? "" : value.trim();
+        String normalizedSource = source == null ? "" : source.trim();
+        if (adminView && !normalizedValue.isEmpty() && !normalizedValue.equalsIgnoreCase(normalizedSource)) {
+            addReportDetail(parent, label, normalizedValue);
+        }
+    }
+
+    private void addReportDetail(LinearLayout parent, String label, String value) {
+        String content = value == null ? "" : value.trim();
+        if (content.isEmpty() || content.equalsIgnoreCase("null")) return;
+        TextView labelView = text(label, 11, secondaryTextColor(), Typeface.NORMAL);
+        labelView.setPadding(0, dp(10), 0, dp(2));
+        parent.addView(labelView, new LinearLayout.LayoutParams(-1, -2));
+        TextView valueView = text(content, 14, primaryTextColor(), Typeface.NORMAL);
+        parent.addView(valueView, new LinearLayout.LayoutParams(-1, -2));
     }
 
     private void loadAdminMatches(JSONObject foundItem, TextView heading, LinearLayout matches) {
@@ -8151,7 +8227,9 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                                             + "  ·  " + report.optString("category", "other")
                                             + "  ·  location: " + report.optDouble("lat", 0.0) + ", " + report.optDouble("lng", 0.0)
                                             + "  ·  " + imageState;
-                                    addField(results, reportRow(report.optString("title", "Untitled"), reportDetails));
+                                        LinearLayout reportRow = reportRow(report.optString("title", "Untitled"), reportDetails);
+                                        reportRow.setOnClickListener(view -> showReportDetailsDialog(report, true));
+                                        addField(results, reportRow);
                                 }
                             }
                         }
