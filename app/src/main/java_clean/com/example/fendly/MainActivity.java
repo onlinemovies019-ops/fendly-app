@@ -3065,11 +3065,10 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                 }
                 activateAnnualSubscription(paymentId);
                 if (pendingPaymentItem == null && pendingPaymentDescription == null && pendingPaymentImei == null && pendingPaymentLocation == null && pendingPaymentDate == null) {
+                    Toast.makeText(this, "Payment Successful", Toast.LENGTH_LONG).show();
                     showProfile();
                     return;
                 }
-                currentPage = PAGE_REPORTS;
-                showReports();
                 submitItem("LOST", pendingPaymentItem, pendingPaymentDescription, pendingPaymentImei, pendingPaymentLocation, pendingPaymentDate, pendingPaymentButton, paymentId);
             });
         })).addOnFailureListener(error -> paymentFailed("Authentication failed"));
@@ -3153,10 +3152,18 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                 runOnUiThread(() -> {
                     publish.setEnabled(true);
                     int code = submission.statusCode;
-                    if (code >= 200 && code < 300) {
-                        String message = submission.errorMessage == null || submission.errorMessage.trim().isEmpty()
-                                ? "Report saved securely"
-                                : "Report saved without image: " + submission.errorMessage;
+                    if ((code >= 200 && code < 300) || submission.firestoreSaved) {
+                        boolean paidLostReport = paymentId != null && "LOST".equalsIgnoreCase(type);
+                        String message;
+                        if (paidLostReport && code >= 200 && code < 300) {
+                            message = "Payment Successful. Report submitted.";
+                        } else if (paidLostReport) {
+                            message = "Payment Successful. Report is saved in My Reports; server sync is unavailable.";
+                        } else {
+                            message = submission.errorMessage == null || submission.errorMessage.trim().isEmpty()
+                                    ? "Report saved securely"
+                                    : "Report saved without image: " + submission.errorMessage;
+                        }
                         Toast.makeText(this, message, Toast.LENGTH_LONG).show();
                         showReports();
                         if (submission.matches != null) {
@@ -3185,17 +3192,24 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         final String errorMessage;
         final String matchError;
         final JSONArray matches;
+        final boolean firestoreSaved;
 
         ItemSubmissionResult(int statusCode, String errorMessage, String matchError, JSONArray matches) {
+            this(statusCode, errorMessage, matchError, matches, false);
+        }
+
+        ItemSubmissionResult(int statusCode, String errorMessage, String matchError, JSONArray matches, boolean firestoreSaved) {
             this.statusCode = statusCode;
             this.errorMessage = errorMessage;
             this.matchError = matchError;
             this.matches = matches;
+            this.firestoreSaved = firestoreSaved;
         }
     }
 
     private ItemSubmissionResult postItem(String type, String title, String description, String location, String date, double latitude, double longitude, Uri image, Bitmap cameraImage, String imeiValue, String idToken, String paymentId) {
         lastSubmissionError = null;
+        boolean firestoreSaved = false;
         try {
             String imageUrl = null;
             if (image != null || cameraImage != null) {
@@ -3229,8 +3243,17 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                 reportDoc.put("edit_count", 0);
                 reportDoc.put("created_at", new Date());
 
-                FirebaseFirestore.getInstance().collection(collectionName).document(reportId)
-                        .set(reportDoc, SetOptions.merge());
+                try {
+                    Tasks.await(
+                        FirebaseFirestore.getInstance().collection(collectionName).document(reportId)
+                            .set(reportDoc, SetOptions.merge()),
+                        20,
+                        TimeUnit.SECONDS
+                    );
+                    firestoreSaved = true;
+                } catch (Exception firestoreError) {
+                    lastSubmissionError = "report copy unavailable";
+                }
             }
 
             AiMatchService.ApiResponse response = AiMatchService.createItem(
@@ -3239,7 +3262,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                     getTtsLocaleForSelectedLanguage().getLanguage(), idToken);
             if (!response.isSuccessful()) {
                 lastSubmissionError = "Could not save report (" + response.getStatusCode() + "): " + response.getErrorMessage();
-                return new ItemSubmissionResult(response.getStatusCode(), lastSubmissionError, null, null);
+                return new ItemSubmissionResult(response.getStatusCode(), lastSubmissionError, null, null, firestoreSaved);
             }
 
             JSONArray matches = null;
@@ -3257,10 +3280,10 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                     matchError = matchException.getClass().getSimpleName();
                 }
             }
-            return new ItemSubmissionResult(response.getStatusCode(), lastSubmissionError, matchError, matches);
+            return new ItemSubmissionResult(response.getStatusCode(), lastSubmissionError, matchError, matches, firestoreSaved);
         } catch (Exception error) {
             lastSubmissionError = "Could not save report: " + error.getClass().getSimpleName();
-            return new ItemSubmissionResult(-1, lastSubmissionError, null, null);
+            return new ItemSubmissionResult(-1, lastSubmissionError, null, null, firestoreSaved);
         }
     }
 
