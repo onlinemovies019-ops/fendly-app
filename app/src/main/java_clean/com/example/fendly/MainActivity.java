@@ -6366,11 +6366,19 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
 
         LinearLayout advancedHeaderRow = new LinearLayout(this);
         advancedHeaderRow.setOrientation(LinearLayout.HORIZONTAL);
-        advancedHeaderRow.setGravity(Gravity.CENTER_VERTICAL);
+        advancedHeaderRow.setGravity(Gravity.CENTER);
         advancedHeaderRow.setPadding(dp(12), dp(12), dp(12), dp(12));
-        TextView advancedSettingsTitle = text("Advanced settings", 15, accentColor(), Typeface.BOLD);
-        advancedSettingsTitle.setLayoutParams(new LinearLayout.LayoutParams(0, -2, 1f));
-        TextView advancedSettingsArrow = text(">", 18, accentColor(), Typeface.BOLD);
+        advancedHeaderRow.setBackgroundColor(Color.TRANSPARENT);
+
+        TextView advancedSettingsTitle = text("Advanced settings", 15, Color.BLACK, Typeface.BOLD);
+        advancedSettingsTitle.setGravity(Gravity.CENTER);
+        advancedSettingsTitle.setLayoutParams(new LinearLayout.LayoutParams(-2, -2));
+
+        TextView advancedSettingsArrow = text(">", 18, Color.BLACK, Typeface.BOLD);
+        advancedSettingsArrow.setGravity(Gravity.CENTER);
+        advancedSettingsArrow.setPadding(dp(6), 0, 0, 0);
+        advancedSettingsArrow.setLayoutParams(new LinearLayout.LayoutParams(-2, -2));
+
         advancedHeaderRow.addView(advancedSettingsTitle);
         advancedHeaderRow.addView(advancedSettingsArrow);
         advancedHeaderRow.setOnClickListener(view -> {
