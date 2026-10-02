@@ -8013,16 +8013,22 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                 FrameLayout.LayoutParams countParams = new FrameLayout.LayoutParams(dp(56), dp(28), Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL);
                 countParams.setMargins(0, 0, 0, dp(8));
                 imageFrame.addView(imageCount, countParams);
-                View.OnClickListener updateCount = view -> imageCount.setText((imageIndex[0] + 1) + " / " + imageUrls.size());
+                previous.bringToFront();
+                next.bringToFront();
+                imageCount.bringToFront();
+
+                Runnable updateSelectedImage = () -> {
+                    if (imageUrls.isEmpty()) return;
+                    showSelectedImage.run();
+                    imageCount.setText((imageIndex[0] + 1) + " / " + imageUrls.size());
+                };
                 previous.setOnClickListener(view -> {
                     imageIndex[0] = (imageIndex[0] - 1 + imageUrls.size()) % imageUrls.size();
-                    showSelectedImage.run();
-                    updateCount.onClick(view);
+                    updateSelectedImage.run();
                 });
                 next.setOnClickListener(view -> {
                     imageIndex[0] = (imageIndex[0] + 1) % imageUrls.size();
-                    showSelectedImage.run();
-                    updateCount.onClick(view);
+                    updateSelectedImage.run();
                 });
             }
         }
@@ -8051,11 +8057,16 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             preciseLocation = "No location shared";
         }
         addReportDetail(details, "Precise location", preciseLocation);
-        addReportDetail(details, "Posted", report.optString("created_at", ""));
-        if (adminView) addReportDetail(details, "Reporter ID", report.optString("created_by", ""));
+        if (adminView) {
+            addReportDetail(details, "Posted", report.optString("created_at", ""));
+            addReportDetail(details, "Reporter ID", report.optString("created_by", ""));
+        }
 
         ScrollView scroll = new ScrollView(this);
         scroll.setFillViewport(false);
+        scroll.setVerticalScrollBarEnabled(false);
+        scroll.setHorizontalScrollBarEnabled(false);
+        scroll.setOverScrollMode(View.OVER_SCROLL_NEVER);
         scroll.addView(details, new ScrollView.LayoutParams(-1, -2));
         int maxContentHeight = Math.max(dp(180), getResources().getDisplayMetrics().heightPixels - dp(300));
         content.addView(scroll, new LinearLayout.LayoutParams(-1, Math.min(dp(390), maxContentHeight)));
