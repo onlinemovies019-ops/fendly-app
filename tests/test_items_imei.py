@@ -19,6 +19,26 @@ from schemas import ItemCreate, ItemUpdate, MatchRequest
 from translation import translate_report_fields, translate_report_fields_batch
 
 
+@pytest.mark.parametrize(("title", "description", "expected"), [
+    ("Mobile phone", "Black smartphone", "Electronics"),
+    ("Cat", "Small brown pet", "Animals"),
+    ("Missing child", "Boy last seen near school", "People"),
+    ("Wallet", "Black leather item", "Apparels and accessories"),
+    ("Bicycle", "Blue cycle", "Automobile"),
+    ("Unrecognized object", "No useful details", "other"),
+])
+def test_infer_item_category_from_report_text(title, description, expected):
+    assert items_module.infer_item_category(title, description) == expected
+
+
+def test_resolve_item_category_preserves_explicit_category():
+    assert items_module.resolve_item_category("electronics", "Wallet", "Leather purse") == "electronics"
+
+
+def test_report_title_category_takes_priority_over_description_terms():
+    assert items_module.infer_item_category("Wallet", "Light-colored item") == "Apparels and accessories"
+
+
 @pytest.mark.asyncio
 async def test_english_report_translation_returns_original_fields_without_api_call(monkeypatch):
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
@@ -256,6 +276,48 @@ async def test_report_creation_keeps_original_and_stores_english_fields(monkeypa
     assert record.report_location_en == "Central station"
     assert record.category_en == "Bag"
     session.add.assert_called_once_with(record)
+
+
+@pytest.mark.asyncio
+async def test_report_creation_infers_category_from_english_translation(monkeypatch):
+    embedding_inputs = []
+
+    async def no_moderation(title, description):
+        return None
+
+    async def capture_embedding(text):
+        embedding_inputs.append(text)
+        return [0.0] * 1536
+
+    async def no_image_embedding(image_url):
+        return None
+
+    async def translated_fields(title, description, report_location, category="other", source_language=None):
+        return {
+            "title": "Mobile phone",
+            "description": "Black smartphone",
+            "report_location": "",
+            "category": "Other",
+        }
+
+    monkeypatch.setattr(items_module, "moderate_content", no_moderation)
+    monkeypatch.setattr(items_module, "create_embedding", capture_embedding)
+    monkeypatch.setattr(items_module, "create_image_embedding", no_image_embedding)
+    monkeypatch.setattr(items_module, "translate_report_fields", translated_fields)
+    session = Mock(spec=Session)
+    payload = ItemCreate(
+        title="मोबाइल वस्तु",
+        description="काली वस्तु",
+        category="other",
+        source_language="hi",
+    )
+
+    record = await items_module._save_item(payload, session, "user-1", FoundItem)
+
+    assert record.category == "Electronics"
+    assert record.category_en == "Electronics"
+    assert len(embedding_inputs) == 2
+    assert "Electronics" in embedding_inputs[-1]
 
 
 @pytest.mark.asyncio

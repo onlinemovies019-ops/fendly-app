@@ -216,7 +216,74 @@ def _stored_report_field(value: str | None, label: str) -> str | None:
     return match.group(1).strip() if match else None
 
 
+ITEM_CATEGORY_KEYWORDS = (
+    ("Electronics", (
+        "smartphone", "mobile phone", "cell phone", "phone", "mobile", "television",
+        "computer mouse", "wireless mouse", "laptop", "computer", "tablet", "charger",
+        "headphone", "earphone", "camera", "smartwatch", "smart watch", "refrigerator",
+        "fridge", "washing machine", "microwave", "speaker", "remote", "router", "monitor",
+        "printer", "keyboard", "tube light", "led light", "light bulb", "flashlight", "torch",
+        "lamp", "tv", "fan", "bulb",
+    )),
+    ("Animals", (
+        "animal", "dog", "puppy", "cat", "kitten", "mouse", "mice", "cow", "goat", "sheep",
+        "horse", "bird", "parrot", "rabbit", "pet", "fish", "snake",
+    )),
+    ("People", (
+        "missing person", "person", "people", "man", "men", "woman", "women", "male", "female",
+        "boy", "boys", "girl", "girls", "kid", "kids", "child", "children", "toddler",
+    )),
+    ("Apparels and accessories", (
+        "wallet", "purse", "handbag", "backpack", "bag", "belt", "spectacles", "sunglasses",
+        "goggles", "glasses", "eyeglasses", "spects", "specs", "clothing", "clothes", "apparel",
+        "shirt", "trousers", "pants", "dress", "jacket", "coat", "shoes", "sandals", "footwear",
+        "cap", "hat", "scarf", "gloves", "umbrella",
+    )),
+    ("Automobile", (
+        "auto-rickshaw", "motorcycle", "motorbike", "bicycle", "scooter", "scooty", "moped",
+        "vehicle", "tractor", "truck", "bus", "car", "bike", "cycle", "van", "auto",
+    )),
+    ("Documents", (
+        "identity card", "id card", "passport", "driver license", "driving license", "certificate",
+        "document", "aadhaar", "pan card", "license", "paper",
+    )),
+    ("Jewelry", (
+        "necklace", "bracelet", "earring", "jewelry", "jewellery", "bangle", "ring", "gold chain",
+    )),
+    ("Keys", ("keychain", "keys", "key")),
+    ("Household items", (
+        "furniture", "utensils", "cookware", "sofa", "chair", "table", "bed", "pillow", "blanket",
+        "curtain", "mattress", "kitchen appliance",
+    )),
+    ("Sports equipment", (
+        "cricket bat", "tennis racket", "football", "basketball", "volleyball", "sports equipment",
+        "racket", "bat", "ball",
+    )),
+    ("Toys", ("stuffed toy", "teddy bear", "toy", "doll", "puzzle")),
+    ("Tools", ("screwdriver", "wrench", "hammer", "drill", "toolbox", "tool")),
+    ("Medical items", ("medicine", "medication", "medical device", "inhaler", "blood pressure monitor")),
+)
+
+
+def infer_item_category(title: str, description: str) -> str:
+    for source_text in (title, description):
+        searchable_text = re.sub(r"\s+", " ", source_text or "").casefold()
+        for category, keywords in ITEM_CATEGORY_KEYWORDS:
+            for keyword in keywords:
+                if re.search(rf"(?<![a-z0-9]){re.escape(keyword)}(?![a-z0-9])", searchable_text):
+                    return category
+    return "other"
+
+
+def resolve_item_category(category: str | None, title: str, description: str) -> str:
+    provided_category = (category or "").strip()
+    if provided_category and provided_category.casefold() != "other":
+        return provided_category
+    return infer_item_category(title, description)
+
+
 async def _save_item(payload: ItemCreate, session: Session, uid: str, model: type[LostItem] | type[FoundItem]):
+    category = resolve_item_category(payload.category, payload.title, payload.description)
     if payload.imei:
         if not validate_luhn(str(payload.imei)):
             raise HTTPException(status_code=400, detail="Invalid 15-digit IMEI number")
@@ -230,13 +297,13 @@ async def _save_item(payload: ItemCreate, session: Session, uid: str, model: typ
             verify_captured_payment(payload.payment_id, uid)
 
     mod_task = asyncio.create_task(moderate_content(payload.title, payload.description))
-    emb_task = asyncio.create_task(create_embedding(item_text(payload.title, payload.description, payload.category)))
+    emb_task = asyncio.create_task(create_embedding(item_text(payload.title, payload.description, category)))
     img_task = asyncio.create_task(create_image_embedding(payload.image_url))
     translation_task = asyncio.create_task(translate_report_fields(
         payload.title,
         payload.description,
         payload.report_location,
-        category=payload.category,
+        category=category,
         source_language=payload.source_language,
     ))
 
@@ -247,8 +314,15 @@ async def _save_item(payload: ItemCreate, session: Session, uid: str, model: typ
     if rejection_reason:
         raise HTTPException(status_code=422, detail=rejection_reason)
 
+    if category == "other" and translated_fields:
+        category = infer_item_category(translated_fields.get("title", ""), translated_fields.get("description", ""))
+        if category != "other":
+            embedding = await create_embedding(item_text(payload.title, payload.description, category))
+            translated_fields["category"] = category
+
     # 4. Create and persist record
     item_values = payload.model_dump(exclude={"payment_id"})
+    item_values["category"] = category
     item_values.update(
         title_en=translated_fields["title"] if translated_fields else None,
         description_en=translated_fields["description"] if translated_fields else None,
@@ -499,21 +573,24 @@ async def update_item(
     rejection_reason = await moderate_content(payload.title, payload.description)
     if rejection_reason:
         raise HTTPException(status_code=422, detail=rejection_reason)
+    category = resolve_item_category(payload.category, payload.title, payload.description)
     translated_fields = await translate_report_fields(
         payload.title,
         payload.description,
         payload.report_location,
-        category=payload.category,
+        category=category,
         source_language=payload.source_language,
     )
+    if category == "other" and translated_fields:
+        category = infer_item_category(translated_fields.get("title", ""), translated_fields.get("description", ""))
     record.title = payload.title
     record.description = payload.description
     record.title_en = translated_fields["title"] if translated_fields else None
     record.description_en = translated_fields["description"] if translated_fields else None
     record.report_location_en = translated_fields["report_location"] if translated_fields else None
-    record.category_en = translated_fields["category"] if translated_fields else None
+    record.category_en = category if category != "other" and payload.category.strip().casefold() == "other" else translated_fields["category"] if translated_fields else None
     record.source_language = payload.source_language
-    record.category = payload.category
+    record.category = category
     record.lat = payload.lat
     record.lng = payload.lng
     record.report_date = payload.report_date

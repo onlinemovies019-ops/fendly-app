@@ -2198,17 +2198,19 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         content.setOrientation(LinearLayout.VERTICAL);
         content.setPadding(dp(22), dp(22), dp(22), dp(18));
         content.setBackground(roundWithStroke(surfaceColor(), 26, borderColor()));
-        ImageView icon = new ImageView(this);
-        icon.setImageResource(iconResource);
-        icon.setColorFilter(accentColor());
-        icon.setPadding(dp(12), dp(12), dp(12), dp(12));
-        LinearLayout.LayoutParams iconParams = new LinearLayout.LayoutParams(dp(60), dp(60));
-        iconParams.gravity = Gravity.CENTER_HORIZONTAL;
-        content.addView(icon, iconParams);
+        if (iconResource != 0) {
+            ImageView icon = new ImageView(this);
+            icon.setImageResource(iconResource);
+            icon.setColorFilter(accentColor());
+            icon.setPadding(dp(12), dp(12), dp(12), dp(12));
+            LinearLayout.LayoutParams iconParams = new LinearLayout.LayoutParams(dp(60), dp(60));
+            iconParams.gravity = Gravity.CENTER_HORIZONTAL;
+            content.addView(icon, iconParams);
+        }
         TextView title = text(translate(titleText), 18, primaryTextColor(), Typeface.NORMAL);
         title.setTypeface(localizedScriptTypeface(title.getText(), Typeface.NORMAL));
         title.setGravity(Gravity.CENTER);
-        title.setPadding(0, dp(8), 0, dp(2));
+        title.setPadding(0, iconResource == 0 ? 0 : dp(8), 0, dp(2));
         content.addView(title, new LinearLayout.LayoutParams(-1, -2));
         TextView subtitle = text(translate(subtitleText), 11, secondaryTextColor(), Typeface.NORMAL);
         subtitle.setTypeface(localizedScriptTypeface(subtitle.getText(), Typeface.NORMAL));
@@ -7912,9 +7914,16 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
     private void showReportDetailsDialog(JSONObject report, boolean adminView) {
         String type = report.optString("type", "ITEM");
         String title = report.optString("original_title", report.optString("title", "Untitled item")).trim();
+        String reportTypeLabel = "FOUND".equalsIgnoreCase(type) ? "Found" : "Lost";
+        Dialog dialog = new Dialog(this);
+        LinearLayout content = themedDialogContent(
+            0,
+            "Report details",
+            reportTypeLabel + " report · " + title);
+
         LinearLayout details = new LinearLayout(this);
         details.setOrientation(LinearLayout.VERTICAL);
-        details.setPadding(dp(16), dp(8), dp(16), dp(8));
+        details.setPadding(0, dp(8), 0, dp(8));
 
         String imageUrl = report.optString("image_url", report.optString("imageUrl", "")).trim();
         if (!imageUrl.isEmpty()) {
@@ -7940,28 +7949,36 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         addTranslatedReportDetail(details, "English description", report.optString("description", ""), description, adminView);
         addReportDetail(details, "Date", report.optString("report_date", ""));
         String location = report.optString("original_report_location", report.optString("report_location", report.optString("location", ""))).trim();
-        addReportDetail(details, "Location", location);
-        addTranslatedReportDetail(details, "English location", report.optString("report_location", ""), location, adminView);
-        if (report.has("lat") || report.has("latitude") || report.has("lng") || report.has("longitude")) {
-            double latitude = report.optDouble("lat", report.optDouble("latitude", 0.0));
-            double longitude = report.optDouble("lng", report.optDouble("longitude", 0.0));
-            if (latitude != 0.0 || longitude != 0.0) {
-                addReportDetail(details, "Coordinates", String.format(Locale.US, "%.6f, %.6f", latitude, longitude));
-            }
-        }
         addReportDetail(details, "IMEI", report.optString("imei", report.optString("imei_number", "")));
         addReportDetail(details, "Status", report.optString("status", ""));
+        double latitude = report.optDouble("lat", report.optDouble("latitude", 0.0));
+        double longitude = report.optDouble("lng", report.optDouble("longitude", 0.0));
+        String locationDetails;
+        if (latitude != 0.0 || longitude != 0.0) {
+            locationDetails = String.format(Locale.US, "%.6f, %.6f", latitude, longitude);
+            if (!location.isEmpty()) locationDetails += " · " + location;
+        } else {
+            locationDetails = location.isEmpty() ? "No location shared" : location;
+        }
+        addReportDetail(details, "Location", locationDetails);
+        addTranslatedReportDetail(details, "English location", report.optString("report_location", ""), location, adminView);
         addReportDetail(details, "Posted", report.optString("created_at", ""));
         if (adminView) addReportDetail(details, "Reporter ID", report.optString("created_by", ""));
 
         ScrollView scroll = new ScrollView(this);
         scroll.setFillViewport(false);
         scroll.addView(details, new ScrollView.LayoutParams(-1, -2));
-        new AlertDialog.Builder(this)
-                .setTitle(("FOUND".equalsIgnoreCase(type) ? "Found" : "Lost") + " report details")
-                .setView(scroll)
-                .setPositiveButton("Close", null)
-                .show();
+        int maxContentHeight = Math.max(dp(180), getResources().getDisplayMetrics().heightPixels - dp(300));
+        content.addView(scroll, new LinearLayout.LayoutParams(-1, Math.min(dp(390), maxContentHeight)));
+
+        TextView close = actionButton("Close", true);
+        close.setOnClickListener(view -> dialog.dismiss());
+        addFieldToDialog(content, close);
+
+        dialog.setContentView(content);
+        dialog.setCanceledOnTouchOutside(true);
+        dialog.show();
+        sizeThemedDialog(dialog);
     }
 
     private void addTranslatedReportDetail(LinearLayout parent, String label, String value, String source, boolean adminView) {
