@@ -2,7 +2,7 @@ from datetime import datetime
 from uuid import uuid4
 
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import Boolean, DateTime, Float, JSON, String, Text, UniqueConstraint, func
+from sqlalchemy import BigInteger, Boolean, DateTime, Float, JSON, String, Text, UniqueConstraint, func
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -24,6 +24,8 @@ class User(Base):
     profile_photo_url: Mapped[str | None] = mapped_column(String(1000))
     email_verified: Mapped[bool] = mapped_column(Boolean, default=False)
     mobile_verified: Mapped[bool] = mapped_column(Boolean, default=False)
+    annual_subscription_expires_at: Mapped[int | None] = mapped_column(BigInteger)
+    annual_subscription_payment_id: Mapped[str | None] = mapped_column(String(128))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 

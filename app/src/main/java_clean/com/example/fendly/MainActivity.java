@@ -383,6 +383,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             hydrateProfileFromBackend(null);
             hydrateCloudProfile(null);
             checkAndReloadUserVerification();
+            refreshAnnualSubscription(null);
         }
     }
 
@@ -3047,9 +3048,12 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
 
     private boolean hasActiveAnnualSubscription() {
         SharedPreferences account = getSharedPreferences("fendly_account", MODE_PRIVATE);
+        FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
         boolean active = account.getBoolean("annual_subscription_active", false);
         long expiresAt = account.getLong("annual_subscription_expires_at", 0L);
-        boolean stillValid = active && expiresAt > 0L && System.currentTimeMillis() < expiresAt;
+        boolean belongsToCurrentUser = user != null
+            && user.getUid().equals(account.getString("annual_subscription_firebase_uid", ""));
+        boolean stillValid = belongsToCurrentUser && active && expiresAt > 0L && System.currentTimeMillis() < expiresAt;
         if (!stillValid && active) {
             account.edit()
                 .putBoolean("annual_subscription_active", false)
@@ -3061,8 +3065,11 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
 
     private String annualSubscriptionStatusText() {
         SharedPreferences account = getSharedPreferences("fendly_account", MODE_PRIVATE);
+        FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
         long expiresAt = account.getLong("annual_subscription_expires_at", 0L);
-        if (!account.getBoolean("annual_subscription_active", false) || expiresAt <= 0L) {
+        boolean belongsToCurrentUser = user != null
+            && user.getUid().equals(account.getString("annual_subscription_firebase_uid", ""));
+        if (!belongsToCurrentUser || !account.getBoolean("annual_subscription_active", false) || expiresAt <= 0L) {
             return translate("Renew plan");
         }
         if (System.currentTimeMillis() >= expiresAt) {
@@ -3074,11 +3081,62 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
     }
 
     private void activateAnnualSubscription(String paymentId) {
-        getSharedPreferences("fendly_account", MODE_PRIVATE).edit()
+        SharedPreferences.Editor editor = getSharedPreferences("fendly_account", MODE_PRIVATE).edit()
             .putBoolean("annual_subscription_active", true)
             .putLong("annual_subscription_expires_at", System.currentTimeMillis() + TimeUnit.DAYS.toMillis(365L))
-            .putString("annual_subscription_payment_id", paymentId)
-            .apply();
+            .putString("annual_subscription_payment_id", paymentId);
+        FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
+        if (user != null) editor.putString("annual_subscription_firebase_uid", user.getUid());
+        editor.apply();
+    }
+
+    private void refreshAnnualSubscription(Runnable onComplete) {
+        FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
+        if (user == null) {
+            if (onComplete != null) onComplete.run();
+            return;
+        }
+        user.getIdToken(false).addOnSuccessListener(tokenResult -> network.execute(() -> {
+            String response = getAuthorized("/api/payments/subscription", tokenResult.getToken());
+            boolean loaded = false;
+            boolean active = false;
+            long expiresAt = 0L;
+            String paymentId = "";
+            try {
+                if (response != null) {
+                    JSONObject subscription = new JSONObject(response);
+                    active = subscription.optBoolean("active", false);
+                    expiresAt = subscription.optLong("expires_at", 0L);
+                    paymentId = subscription.optString("payment_id", "");
+                    loaded = true;
+                }
+            } catch (Exception ignored) {
+            }
+
+            final boolean subscriptionActive = active;
+            final boolean subscriptionLoaded = loaded;
+            if (loaded) {
+                SharedPreferences.Editor editor = getSharedPreferences("fendly_account", MODE_PRIVATE).edit()
+                        .putString("annual_subscription_firebase_uid", user.getUid())
+                        .putBoolean("annual_subscription_active", active)
+                        .putLong("annual_subscription_expires_at", expiresAt);
+                if (active && !paymentId.isEmpty()) {
+                    editor.putString("annual_subscription_payment_id", paymentId);
+                } else {
+                    editor.remove("annual_subscription_payment_id");
+                }
+                editor.apply();
+            }
+
+            runOnUiThread(() -> {
+                if (subscriptionLoaded && subscriptionActive && currentPage == PAGE_REPORT && screenRenderer != null) {
+                    screenRenderer.run();
+                }
+                if (onComplete != null) onComplete.run();
+            });
+        })).addOnFailureListener(error -> {
+            if (onComplete != null) runOnUiThread(onComplete);
+        });
     }
 
     @Override
@@ -5709,14 +5767,14 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
 
                     profileHydrated = true;
                     cloudProfileLoaded = true;
-                    if (onSuccess != null) runOnUiThread(onSuccess);
+                    refreshAnnualSubscription(onSuccess);
                 })
                 .addOnFailureListener(e -> {
                     SharedPreferences.Editor editor = getSharedPreferences("fendly_account", MODE_PRIVATE).edit();
                     editor.putBoolean("created", true);
                     editor.putString("username", formatUsernameDisplay(username));
                     editor.apply();
-                    if (onSuccess != null) runOnUiThread(onSuccess);
+                    refreshAnnualSubscription(onSuccess);
                 });
     }
 
@@ -6431,6 +6489,11 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         imeiNumberField.setText(account.getString("imei_number", ""));
         imeiNumberField.setHint("Protect this device against future loss or theft");
         imeiNumberField.setHintTextColor(Color.GRAY);
+        imeiNumberField.setTextSize(responsiveTextSize(13));
+        imeiNumberField.setSingleLine(false);
+        imeiNumberField.setMaxLines(2);
+        imeiNumberField.setHorizontallyScrolling(false);
+        imeiNumberField.setMinHeight(dp(58));
         imeiNumberField.setInputType(InputType.TYPE_CLASS_NUMBER);
         imeiNumberField.setFilters(new InputFilter[]{new InputFilter.LengthFilter(15)});
 
@@ -6704,15 +6767,16 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         if (Build.VERSION.SDK_INT >= 29) input.setForceDarkAllowed(false);
         input.setId(View.generateViewId());
         input.setHint("");
-        float fontScale = getSharedPreferences("fendly_settings", MODE_PRIVATE).getFloat("font_scale", 1.0f);
-        input.setTextSize(14 * Math.max(1.0f, Math.min(1.2f, fontScale)));
+        input.setTextSize(responsiveTextSize(14));
         input.setTag(Float.valueOf(14));
         input.setTextColor(primaryTextColor());
         input.setHintTextColor(secondaryTextColor());
         input.setGravity(Gravity.CENTER_VERTICAL | Gravity.START);
         input.setPadding(dp(16), dp(8), dp(16), dp(8));
         input.setIncludeFontPadding(false);
-        input.setSingleLine(true);
+        input.setSingleLine(false);
+        input.setMaxLines(2);
+        input.setHorizontallyScrolling(false);
         input.setImeOptions(EditorInfo.IME_ACTION_NEXT);
         input.setTypeface(typefaceForTextValue(input.getText(), Typeface.NORMAL));
         input.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);
@@ -7284,6 +7348,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
 
     private TextView filledButton(String label, int background, int foreground) {
         TextView button = text(label, 12, foreground, Typeface.NORMAL);
+        button.setTextSize(responsiveTextSize(12));
         button.setTextColor(background == LOST_GREEN ? Color.WHITE : foreground);
         button.setGravity(Gravity.CENTER);
         button.setBackground(round(background, 24));
@@ -7299,9 +7364,18 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
 
     private TextView outlinedButton(String label) {
         TextView button = text(label, 12, primaryTextColor(), Typeface.NORMAL);
+        button.setTextSize(responsiveTextSize(12));
         button.setGravity(Gravity.CENTER);
         button.setBackground(roundWithStroke(surfaceColor(), 24, borderColor()));
         return button;
+    }
+
+    private float responsiveTextSize(float baseSize) {
+        int screenWidthDp = getResources().getConfiguration().screenWidthDp;
+        float widthFactor = screenWidthDp < 360 ? 0.90f : screenWidthDp < 480 ? 0.94f : screenWidthDp < 720 ? 1.0f : 1.08f;
+        float fontScale = getSharedPreferences("fendly_settings", MODE_PRIVATE).getFloat("font_scale", 1.0f);
+        float safeFontScale = Math.max(0.85f, Math.min(1.25f, fontScale));
+        return baseSize * widthFactor * safeFontScale;
     }
 
     private TextView reportTypeToggle(String label, boolean selected, int selectedBackground, int selectedForeground) {
@@ -8663,8 +8737,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         TextView view = new TextView(this);
         String resolvedText = translate(value);
         view.setText(resolvedText);
-        float fontScale = getSharedPreferences("fendly_settings", MODE_PRIVATE).getFloat("font_scale", 1.0f);
-        view.setTextSize(size * Math.max(1.0f, Math.min(1.2f, fontScale)));
+        view.setTextSize(responsiveTextSize(size));
         view.setTag(Float.valueOf(size));
         view.setTextColor(color != 0 ? color : (darkMode ? Color.WHITE : LIGHT_TEXT));
         Typeface tf = typefaceForTextValue(resolvedText, Typeface.NORMAL);
