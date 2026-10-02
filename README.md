@@ -27,12 +27,14 @@ Required environment variables:
 - Matching is local and free: keyword similarity is combined with location
 	proximity. OpenAI is optional; if absent, the app falls back to a local
 	free sentence-transformers model.
-- `OPENAI_API_KEY` also enables English translations of non-English reports for
-	admin views. Original report text stays unchanged for users; the admin API
-	stores translations separately and backfills older reports when viewed.
-	Translation requests use `OPENAI_TRANSLATION_MODEL` (default `gpt-4o-mini`)
-	and incur OpenAI API usage charges. Without a working key, admins see an
-	explicit translation-unavailable message instead of untranslated text.
+- `GEMINI_API_KEY` enables English translations of non-English reports for
+	admin views and is preferred when both provider keys are set. `OPENAI_API_KEY`
+	is supported as a fallback. Original report text stays unchanged for users;
+	translations are stored separately and older reports are backfilled when
+	viewed. Configure `GEMINI_TRANSLATION_MODEL` (default `gemini-2.5-flash`) or
+	`OPENAI_TRANSLATION_MODEL` (default `gpt-4o-mini`) as applicable. Provider
+	usage may incur charges. Without a working key, admins see an explicit
+	translation-unavailable message instead of untranslated text.
 
 Uploads use Supabase Storage when configured. Without those variables, local
 development writes to `static/uploads`; Render's free filesystem is ephemeral.

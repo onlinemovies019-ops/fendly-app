@@ -6,6 +6,8 @@ from unittest.mock import Mock, patch
 
 import pytest
 from sqlalchemy import create_engine, inspect, text
+from sqlalchemy.dialects import sqlite
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 import main
@@ -44,7 +46,8 @@ async def test_non_english_report_translation_uses_openai_response(monkeypatch):
 
     import translation
 
-    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     calls = {}
 
     class FakeResponse:
@@ -53,14 +56,14 @@ async def test_non_english_report_translation_uses_openai_response(monkeypatch):
 
         def json(self):
             return {
-                "choices": [{
-                    "message": {
-                        "content": json.dumps({
+                "candidates": [{
+                    "content": {
+                        "parts": [{"text": json.dumps({
                             "title": "Blue bag",
                             "description": "A bag was lost at the bus station",
                             "report_location": "Central bus station",
                             "category": "bag",
-                        })
+                        })}]
                     }
                 }]
             }
@@ -78,6 +81,7 @@ async def test_non_english_report_translation_uses_openai_response(monkeypatch):
         async def post(self, endpoint, **kwargs):
             calls["endpoint"] = endpoint
             calls["payload"] = kwargs["json"]
+            calls["headers"] = kwargs["headers"]
             return FakeResponse()
 
     monkeypatch.setattr(translation.httpx, "AsyncClient", FakeAsyncClient)
@@ -95,12 +99,15 @@ async def test_non_english_report_translation_uses_openai_response(monkeypatch):
         "report_location": "Central bus station",
         "category": "bag",
     }
-    assert calls["payload"]["messages"][1]["content"].find('"source_language": "mr"') >= 0
+    assert calls["endpoint"].endswith("/models/gemini-2.5-flash:generateContent")
+    assert calls["headers"]["x-goog-api-key"] == "test-key"
+    assert json.loads(calls["payload"]["contents"][0]["parts"][0]["text"])["source_language"] == "mr"
 
 
 @pytest.mark.asyncio
 async def test_non_english_report_translation_returns_unavailable_without_key(monkeypatch):
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
 
     translated = await translate_report_fields("पिशवी", "हरवली", None, category="पिशवी", source_language="mr")
 
@@ -301,6 +308,66 @@ async def test_admin_alert_titles_and_reason_use_english_report_text():
     assert translated_alerts[0]["found_title"] == "Found bag"
     assert translated_alerts[0]["lost_title"] == "Lost bag"
     assert translated_alerts[0]["reason"] == "Found 'Found bag' may match lost report 'Lost bag'."
+
+
+def test_admin_report_search_requires_every_comma_filter_to_match_title_or_description():
+    conditions = admin_module._report_search_conditions(LostItem, ["bike", "green"])
+    statement = select(LostItem).where(*conditions)
+    compiled = statement.compile(dialect=sqlite.dialect())
+
+    assert str(compiled).count(" AND ") == 1
+    assert "lost_items.title" in str(compiled)
+    assert "lost_items.description" in str(compiled)
+    assert "lost_items.title_en" in str(compiled)
+    assert "lost_items.description_en" in str(compiled)
+    assert "%bike%" in compiled.params.values()
+    assert "%green%" in compiled.params.values()
+
+
+@pytest.mark.asyncio
+async def test_admin_report_search_returns_matching_lost_and_found_reports_in_english():
+    lost_report = LostItem(
+        id="lost-bike-1",
+        created_by="user-1",
+        title="Bike 1234",
+        description="Green bicycle",
+        title_en="Bike 1234",
+        description_en="Green bicycle",
+        report_location_en="",
+        category_en="Bicycle",
+        category="cycle",
+        lat=0,
+        lng=0,
+    )
+    found_report = FoundItem(
+        id="found-bike-1",
+        created_by="user-2",
+        title="Bike 1234 found",
+        description="Green cycle",
+        title_en="Bike 1234 found",
+        description_en="Green cycle",
+        report_location_en="",
+        category_en="Bicycle",
+        category="cycle",
+        lat=0,
+        lng=0,
+    )
+    session = Mock(spec=Session)
+    session.scalars.side_effect = [
+        SimpleNamespace(all=lambda: [lost_report]),
+        SimpleNamespace(all=lambda: [found_report]),
+    ]
+
+    results = await admin_module.search_admin_reports(q="bike, 1234", session=session, _="admin-1")
+
+    assert [item["id"] for item in results] == ["lost-bike-1", "found-bike-1"]
+    assert [item["title"] for item in results] == ["Bike 1234", "Bike 1234 found"]
+    assert all(item["translation_available"] for item in results)
+    assert len(session.scalars.call_args_list) == 2
+    for call in session.scalars.call_args_list:
+        compiled = call.args[0].compile(dialect=sqlite.dialect())
+        assert "%bike%" in compiled.params.values()
+        assert "%1234%" in compiled.params.values()
 
 
 def test_admin_uid_parser_accepts_json_and_newline_lists(monkeypatch):

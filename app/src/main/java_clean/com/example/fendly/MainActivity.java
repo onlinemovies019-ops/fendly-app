@@ -7586,8 +7586,8 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         overview.addView(foundCount, foundCountParams);
         root.addView(overview, contentParams(-1, dp(62), dp(16)));
 
-        root.addView(text("Find a user", 13, primaryTextColor(), Typeface.NORMAL), contentParams(-1, dp(20), dp(6)));
-        EditText search = field("Name, surname, mobile, username, or email");
+        root.addView(text("Find users or reports", 13, primaryTextColor(), Typeface.NORMAL), contentParams(-1, dp(20), dp(6)));
+        EditText search = field("Name, item, description, mobile, username, or email");
         root.addView(search, contentParams(-1, dp(52), dp(8)));
         TextView searchButton = actionButton("Search", true);
         root.addView(searchButton, contentParams(-1, dp(44), dp(12)));
@@ -7597,6 +7597,8 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         LinearLayout reports = new LinearLayout(this);
         reports.setOrientation(LinearLayout.VERTICAL);
         root.addView(reports, contentParams(-1, -2, 0));
+        String[] liveReportsResponse = {null};
+        boolean[] liveReportsLoaded = {false};
 
         TextView matchesHeading = text("Match review", 15, primaryTextColor(), Typeface.NORMAL);
         matchesHeading.setVisibility(View.GONE);
@@ -7605,12 +7607,43 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         matches.setOrientation(LinearLayout.VERTICAL);
         root.addView(matches, contentParams(-1, -2, 0));
 
-        searchButton.setOnClickListener(view -> searchAdminUsers(search.getText().toString().trim(), reports, searchButton));
+        Runnable restoreLiveReports = () -> {
+            if (liveReportsLoaded[0]) {
+                renderAdminReports(liveReportsResponse[0], reports, matchesHeading, matches, lostCount, foundCount);
+            }
+        };
+        search.addTextChangedListener(new TextWatcher() {
+            @Override public void beforeTextChanged(CharSequence value, int start, int count, int after) { }
+            @Override public void onTextChanged(CharSequence value, int start, int before, int count) { }
+            @Override public void afterTextChanged(Editable value) {
+                if (value.toString().trim().isEmpty()) {
+                    searchButton.setText("Search");
+                    searchButton.setEnabled(true);
+                    reportsHeading.setText("Live reports");
+                    restoreLiveReports.run();
+                }
+            }
+        });
+        searchButton.setOnClickListener(view -> {
+            String query = search.getText().toString().trim();
+            if (query.isEmpty()) {
+                restoreLiveReports.run();
+                return;
+            }
+            reportsHeading.setText("Search results");
+            searchAdminUsers(query, reports, searchButton, search, matchesHeading, matches);
+        });
         FirebaseUser adminUser = FirebaseAuth.getInstance().getCurrentUser();
         if (adminUser != null) {
             adminUser.getIdToken(false).addOnSuccessListener(token -> network.execute(() -> {
                 String response = fetchAdminItems(token.getToken());
-                runOnUiThread(() -> renderAdminReports(response, reports, matchesHeading, matches, lostCount, foundCount));
+                runOnUiThread(() -> {
+                    liveReportsResponse[0] = response;
+                    liveReportsLoaded[0] = true;
+                    if (search.getText().toString().trim().isEmpty()) {
+                        renderAdminReports(response, reports, matchesHeading, matches, lostCount, foundCount);
+                    }
+                });
             }));
             loadAdminAlerts(true);
         }
@@ -7919,7 +7952,14 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         return column;
     }
 
-    private void searchAdminUsers(String query, LinearLayout results, TextView button) {
+    private void searchAdminUsers(
+            String query,
+            LinearLayout results,
+            TextView button,
+            EditText queryField,
+            TextView matchesHeading,
+            LinearLayout matches
+    ) {
         if (query.length() < 2) {
             Toast.makeText(this, "Enter at least 2 characters", Toast.LENGTH_SHORT).show();
             return;
@@ -7927,43 +7967,73 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         button.setText("Searching...");
         button.setEnabled(false);
         FirebaseAuth.getInstance().getCurrentUser().getIdToken(false).addOnSuccessListener(token -> network.execute(() -> {
-            String response = fetchAdminSearch(query, token.getToken());
+            String userResponse = fetchAdminSearch(query, token.getToken());
+            String reportResponse = fetchAdminReportSearch(query, token.getToken());
             runOnUiThread(() -> {
                 button.setText("Search");
                 button.setEnabled(true);
+                if (!query.equals(queryField.getText().toString().trim())) return;
                 results.removeAllViews();
-                if (response == null) {
-                    addField(results, text("Search unavailable.", 14, secondaryTextColor(), Typeface.NORMAL));
-                    return;
-                }
-                try {
-                    JSONArray users = new JSONArray(response);
-                    if (users.length() == 0) {
-                        addField(results, text("No matching users.", 14, secondaryTextColor(), Typeface.NORMAL));
-                        return;
-                    }
-                    for (int index = 0; index < users.length(); index++) {
-                        JSONObject result = users.getJSONObject(index);
-                        JSONObject user = result.optJSONObject("user");
-                        String identity = user == null ? "User" : user.optString("full_name", "User") + " · " + user.optString("username", "") + " · " + user.optString("mobile", "");
-                        addField(results, text(identity, 14, primaryTextColor(), Typeface.NORMAL));
-                        JSONArray reports = result.optJSONArray("reports");
-                        if (reports == null || reports.length() == 0) {
-                            addField(results, text("No reports.", 12, secondaryTextColor(), Typeface.NORMAL));
-                        } else {
-                            for (int reportIndex = 0; reportIndex < reports.length(); reportIndex++) {
-                                JSONObject report = reports.getJSONObject(reportIndex);
-                                String imageState = report.optString("image_url", "").isEmpty() ? "No image" : "Image attached";
-                                String reportDetails = report.optString("type", "ITEM") + "  ·  " + report.optString("description", "")
-                                        + "  ·  " + report.optString("category", "other")
-                                        + "  ·  location: " + report.optDouble("lat", 0.0) + ", " + report.optDouble("lng", 0.0)
-                                        + "  ·  " + imageState;
-                                addField(results, reportRow(report.optString("title", "Untitled"), reportDetails));
+                java.util.HashSet<String> displayedReportIds = new java.util.HashSet<>();
+                boolean hasResults = false;
+
+                if (userResponse != null) {
+                    try {
+                        JSONArray users = new JSONArray(userResponse);
+                        if (users.length() > 0) {
+                            addField(results, text("Matching users", 13, primaryTextColor(), Typeface.BOLD));
+                            hasResults = true;
+                        }
+                        for (int index = 0; index < users.length(); index++) {
+                            JSONObject result = users.getJSONObject(index);
+                            JSONObject user = result.optJSONObject("user");
+                            String identity = user == null ? "User" : user.optString("full_name", "User") + " · " + user.optString("username", "") + " · " + user.optString("mobile", "");
+                            addField(results, text(identity, 14, primaryTextColor(), Typeface.NORMAL));
+                            JSONArray userReports = result.optJSONArray("reports");
+                            if (userReports == null || userReports.length() == 0) {
+                                addField(results, text("No reports.", 12, secondaryTextColor(), Typeface.NORMAL));
+                            } else {
+                                for (int reportIndex = 0; reportIndex < userReports.length(); reportIndex++) {
+                                    JSONObject report = userReports.getJSONObject(reportIndex);
+                                    String reportId = report.optString("id", "");
+                                    if (!reportId.isEmpty()) displayedReportIds.add(reportId);
+                                    String imageState = report.optString("image_url", "").isEmpty() ? "No image" : "Image attached";
+                                    String reportDetails = report.optString("type", "ITEM") + "  ·  " + report.optString("description", "")
+                                            + "  ·  " + report.optString("category", "other")
+                                            + "  ·  location: " + report.optDouble("lat", 0.0) + ", " + report.optDouble("lng", 0.0)
+                                            + "  ·  " + imageState;
+                                    addField(results, reportRow(report.optString("title", "Untitled"), reportDetails));
+                                }
                             }
                         }
+                    } catch (Exception ignored) {
                     }
-                } catch (Exception error) {
-                    addField(results, text("Search results could not be read.", 14, secondaryTextColor(), Typeface.NORMAL));
+                }
+
+                if (reportResponse != null) {
+                    try {
+                        JSONArray reportResults = new JSONArray(reportResponse);
+                        LinearLayout reportSection = adminReportSection("Matching reports", primaryTextColor());
+                        for (int index = 0; index < reportResults.length(); index++) {
+                            JSONObject report = reportResults.getJSONObject(index);
+                            String reportId = report.optString("id", "");
+                            if (!reportId.isEmpty() && !displayedReportIds.add(reportId)) continue;
+                            boolean isFound = "FOUND".equalsIgnoreCase(report.optString("type"));
+                            reportSection.addView(adminReportCard(report, isFound, matchesHeading, matches));
+                            hasResults = true;
+                        }
+                        if (reportSection.getChildCount() > 1) {
+                            results.addView(reportSection, contentParams(-1, -2, dp(8)));
+                        }
+                    } catch (Exception ignored) {
+                    }
+                }
+
+                if (!hasResults) {
+                    String message = userResponse == null && reportResponse == null
+                            ? "Search unavailable."
+                            : "No matching users or reports.";
+                    addField(results, text(message, 14, secondaryTextColor(), Typeface.NORMAL));
                 }
             });
         }));
@@ -7973,6 +8043,24 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         HttpURLConnection connection = null;
         try {
             connection = (HttpURLConnection) new URL(API_BASE + "/api/admin/search?q=" + URLEncoder.encode(query, StandardCharsets.UTF_8.name())).openConnection();
+            connection.setRequestMethod("GET");
+            connection.setConnectTimeout(15000);
+            connection.setReadTimeout(30000);
+            connection.setRequestProperty("Authorization", "Bearer " + idToken);
+            if (connection.getResponseCode() < 200 || connection.getResponseCode() >= 300) return null;
+            return readStream(connection.getInputStream());
+        } catch (Exception error) {
+            return null;
+        } finally {
+            if (connection != null) connection.disconnect();
+        }
+    }
+
+    private String fetchAdminReportSearch(String query, String idToken) {
+        HttpURLConnection connection = null;
+        try {
+            String encodedQuery = URLEncoder.encode(query, StandardCharsets.UTF_8.name());
+            connection = (HttpURLConnection) new URL(API_BASE + "/api/admin/reports/search?q=" + encodedQuery).openConnection();
             connection.setRequestMethod("GET");
             connection.setConnectTimeout(15000);
             connection.setReadTimeout(30000);

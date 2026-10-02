@@ -89,6 +89,20 @@ def _is_dummy_text(text: str | None) -> bool:
     return "dummy" in val or "test" in val or "sample" in val or val.startswith("test_")
 
 
+def _report_search_conditions(model: type[LostItem] | type[FoundItem], terms: list[str]):
+    conditions = []
+    for term in terms:
+        escaped = term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        pattern = f"%{escaped}%"
+        conditions.append(or_(
+            model.title.ilike(pattern, escape="\\"),
+            model.description.ilike(pattern, escape="\\"),
+            model.title_en.ilike(pattern, escape="\\"),
+            model.description_en.ilike(pattern, escape="\\"),
+        ))
+    return conditions
+
+
 async def _ensure_english_translations(items: list[LostItem | FoundItem], session: Session) -> None:
     pending = [
         item for item in items
@@ -296,6 +310,40 @@ async def search_users_and_reports(
             "reports": reports,
         })
     return results
+
+
+@router.get("/reports/search")
+async def search_admin_reports(
+    q: str,
+    session: Session = Depends(get_db),
+    _: str = Depends(require_admin),
+) -> list[dict[str, object]]:
+    terms = [term.strip() for term in q.split(",") if term.strip()]
+    if len(q.strip()) < 2 or not terms:
+        return []
+
+    lost = session.scalars(select(LostItem).where(*_report_search_conditions(LostItem, terms))).all()
+    found = session.scalars(select(FoundItem).where(*_report_search_conditions(FoundItem, terms))).all()
+    items = [
+        (item_type, item) for item_type, item in [("LOST", item) for item in lost] + [("FOUND", item) for item in found]
+        if not (_is_dummy_text(item.title) or _is_dummy_text(item.description) or _is_dummy_text(item.created_by))
+    ]
+    await _ensure_english_translations([item for _, item in items], session)
+    items.sort(key=lambda pair: pair[1].created_at.timestamp() if pair[1].created_at else 0, reverse=True)
+    return [
+        {
+            "id": item.id,
+            "type": item_type,
+            **_english_report_fields(item),
+            "lat": item.lat,
+            "lng": item.lng,
+            "report_date": item.report_date,
+            "image_url": item.image_url,
+            "created_by": item.created_by,
+            "created_at": item.created_at,
+        }
+        for item_type, item in items
+    ]
 
 
 @router.get("/matches/{found_item_id}")
