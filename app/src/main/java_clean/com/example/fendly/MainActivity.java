@@ -245,6 +245,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
     private EditText pendingPaymentDate;
     private TextView pendingPaymentButton;
     private EditText imeiScanTarget;
+    private EditText serialScanTarget;
     private boolean inRenewalPaymentFlow;
     private int currentPage;
     private static final int PAGE_AUTH = 0;
@@ -4593,6 +4594,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
 
     private void openImeiScanner(EditText imeiField) {
         imeiScanTarget = imeiField;
+        serialScanTarget = null;
         setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_PORTRAIT);
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
             ActivityCompat.requestPermissions(this, new String[]{Manifest.permission.CAMERA}, REQUEST_IMEI_SCAN);
@@ -4602,6 +4604,23 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         integrator.setCaptureActivity(PortraitCaptureActivity.class);
         integrator.setDesiredBarcodeFormats(IntentIntegrator.ALL_CODE_TYPES);
         integrator.setPrompt("Scan IMEI");
+        integrator.setBeepEnabled(true);
+        integrator.setOrientationLocked(true);
+        integrator.initiateScan();
+    }
+
+    private void openSerialScanner(EditText serialField) {
+        serialScanTarget = serialField;
+        imeiScanTarget = null;
+        setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_PORTRAIT);
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
+            ActivityCompat.requestPermissions(this, new String[]{Manifest.permission.CAMERA}, REQUEST_IMEI_SCAN);
+            return;
+        }
+        IntentIntegrator integrator = new IntentIntegrator(this);
+        integrator.setCaptureActivity(PortraitCaptureActivity.class);
+        integrator.setDesiredBarcodeFormats(IntentIntegrator.ALL_CODE_TYPES);
+        integrator.setPrompt("Scan mobile serial number");
         integrator.setBeepEnabled(true);
         integrator.setOrientationLocked(true);
         integrator.initiateScan();
@@ -6363,8 +6382,46 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         final LinearLayout advancedFields = new LinearLayout(this);
         advancedFields.setOrientation(LinearLayout.VERTICAL);
         advancedFields.setVisibility(View.GONE);
-        advancedFields.addView(labeledField("IMEI number", imeiNumberField), contentParams(-1, dp(76), dp(4)));
-        advancedFields.addView(labeledField("Mobile serial number", mobileSerialField), contentParams(-1, dp(76), dp(4)));
+
+        LinearLayout imeiFieldGroup = new LinearLayout(this);
+        imeiFieldGroup.setOrientation(LinearLayout.VERTICAL);
+        imeiFieldGroup.addView(fieldLabel("IMEI number"), new LinearLayout.LayoutParams(-1, dp(20)));
+        FrameLayout imeiFieldFrame = new FrameLayout(this);
+        imeiFieldFrame.setBackground(roundWithStroke(surfaceColor(), 10, fieldBorderColor()));
+        imeiNumberField.setBackgroundColor(Color.TRANSPARENT);
+        imeiNumberField.setPadding(dp(16), dp(8), dp(48), dp(8));
+        imeiFieldFrame.addView(imeiNumberField, new FrameLayout.LayoutParams(-1, dp(46)));
+        ImageView imeiCamera = new ImageView(this);
+        imeiCamera.setImageResource(R.drawable.ic_field_camera);
+        imeiCamera.setColorFilter(accentColor());
+        imeiCamera.setPadding(dp(11), dp(11), dp(11), dp(11));
+        imeiCamera.setContentDescription("Scan IMEI");
+        imeiCamera.setOnClickListener(view -> openImeiScanner(imeiNumberField));
+        FrameLayout.LayoutParams imeiIconParams = new FrameLayout.LayoutParams(dp(46), dp(46), Gravity.END | Gravity.CENTER_VERTICAL);
+        imeiFieldFrame.addView(imeiCamera, imeiIconParams);
+        imeiFieldFrame.setOnClickListener(view -> openImeiScanner(imeiNumberField));
+        imeiFieldGroup.addView(imeiFieldFrame, new LinearLayout.LayoutParams(-1, dp(46)));
+        advancedFields.addView(imeiFieldGroup, contentParams(-1, dp(76), dp(4)));
+
+        LinearLayout serialFieldGroup = new LinearLayout(this);
+        serialFieldGroup.setOrientation(LinearLayout.VERTICAL);
+        serialFieldGroup.addView(fieldLabel("Mobile serial number"), new LinearLayout.LayoutParams(-1, dp(20)));
+        FrameLayout serialFieldFrame = new FrameLayout(this);
+        serialFieldFrame.setBackground(roundWithStroke(surfaceColor(), 10, fieldBorderColor()));
+        mobileSerialField.setBackgroundColor(Color.TRANSPARENT);
+        mobileSerialField.setPadding(dp(16), dp(8), dp(48), dp(8));
+        serialFieldFrame.addView(mobileSerialField, new FrameLayout.LayoutParams(-1, dp(46)));
+        ImageView serialCamera = new ImageView(this);
+        serialCamera.setImageResource(R.drawable.ic_field_camera);
+        serialCamera.setColorFilter(accentColor());
+        serialCamera.setPadding(dp(11), dp(11), dp(11), dp(11));
+        serialCamera.setContentDescription("Scan mobile serial number");
+        serialCamera.setOnClickListener(view -> openSerialScanner(mobileSerialField));
+        FrameLayout.LayoutParams serialIconParams = new FrameLayout.LayoutParams(dp(46), dp(46), Gravity.END | Gravity.CENTER_VERTICAL);
+        serialFieldFrame.addView(serialCamera, serialIconParams);
+        serialFieldFrame.setOnClickListener(view -> openSerialScanner(mobileSerialField));
+        serialFieldGroup.addView(serialFieldFrame, new LinearLayout.LayoutParams(-1, dp(46)));
+        advancedFields.addView(serialFieldGroup, contentParams(-1, dp(76), dp(4)));
 
         LinearLayout advancedHeaderRow = new LinearLayout(this);
         advancedHeaderRow.setOrientation(LinearLayout.HORIZONTAL);
@@ -6380,7 +6437,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         TextView advancedSettingsArrow = text(">", 18, Color.BLACK, Typeface.BOLD);
         advancedSettingsArrow.setGravity(Gravity.CENTER_VERTICAL);
         advancedSettingsArrow.setIncludeFontPadding(false);
-        advancedSettingsArrow.setPadding(dp(6), dp(1), 0, 0);
+        advancedSettingsArrow.setPadding(dp(6), 0, 0, 0);
         advancedSettingsArrow.setLayoutParams(new LinearLayout.LayoutParams(-2, -2));
 
         advancedHeaderRow.addView(advancedSettingsTitle);
@@ -7483,8 +7540,12 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             openProfilePhotoCamera();
         }
         if (requestCode == REQUEST_IMEI_SCAN && grantResults.length > 0
-                && grantResults[0] == PackageManager.PERMISSION_GRANTED && imeiScanTarget != null) {
-            openImeiScanner(imeiScanTarget);
+                && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+            if (imeiScanTarget != null) {
+                openImeiScanner(imeiScanTarget);
+            } else if (serialScanTarget != null) {
+                openSerialScanner(serialScanTarget);
+            }
         }
     }
 
@@ -7602,20 +7663,32 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             IntentResult scanResult = IntentIntegrator.parseActivityResult(requestCode, resultCode, data);
             String normalized = "";
             if (scanResult != null && scanResult.getContents() != null) {
-                String scanned = scanResult.getContents().trim().replaceAll("\\D", "");
+                String scanned = scanResult.getContents().trim();
                 if (!scanned.isEmpty()) {
-                    normalized = scanned.length() > 15 ? scanned.substring(0, 15) : scanned;
+                    if (imeiScanTarget != null) {
+                        normalized = scanned.replaceAll("\\D", "");
+                        if (!normalized.isEmpty()) {
+                            normalized = normalized.length() > 15 ? normalized.substring(0, 15) : normalized;
+                        }
+                    } else if (serialScanTarget != null) {
+                        normalized = scanned.replaceAll("\\s+", " ").trim();
+                    }
                 }
             }
             if (!normalized.isEmpty()) {
-                draftImei = normalized;
                 if (imeiScanTarget != null) {
+                    draftImei = normalized;
                     imeiScanTarget.setText(normalized);
                     imeiScanTarget.setSelection(normalized.length());
                     imeiScanTarget.setError(null);
+                } else if (serialScanTarget != null) {
+                    serialScanTarget.setText(normalized);
+                    serialScanTarget.setSelection(normalized.length());
+                    serialScanTarget.setError(null);
                 }
             }
             imeiScanTarget = null;
+            serialScanTarget = null;
             if (currentReportType != null) {
                 showReport(currentReportType);
             }
