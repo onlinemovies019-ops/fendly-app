@@ -190,8 +190,12 @@ async def _translate_alert_titles(alerts: list[dict[str, object]], session: Sess
     for alert in alerts:
         found_item = linked_items.get(f"found:{alert.get('found_item_id')}")
         lost_item = linked_items.get(f"lost:{alert.get('lost_item_id')}")
-        alert["found_title"] = (found_item.title_en or found_item.title) if found_item else ENGLISH_UNAVAILABLE
-        alert["lost_title"] = (lost_item.title_en or lost_item.title) if lost_item else ENGLISH_UNAVAILABLE
+        alert["found_title"] = (
+            (found_item.title_en or found_item.title) if found_item else alert.get("found_title")
+        ) or ENGLISH_UNAVAILABLE
+        alert["lost_title"] = (
+            (lost_item.title_en or lost_item.title) if lost_item else alert.get("lost_title")
+        ) or ENGLISH_UNAVAILABLE
         alert["reason"] = f"Found '{alert['found_title']}' may match lost report '{alert['lost_title']}'."
     return alerts
 

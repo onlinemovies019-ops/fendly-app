@@ -524,6 +524,24 @@ async def test_admin_alert_titles_fall_back_to_original_when_translation_is_unav
     assert translated_alerts[0]["reason"] == "Found 'Green wallet' may match lost report 'Wallet'."
 
 
+@pytest.mark.asyncio
+async def test_admin_alert_preserves_stored_titles_when_linked_reports_are_not_in_sql():
+    session = Mock(spec=Session)
+    session.get.return_value = None
+    alerts = [{
+        "found_item_id": "firestore-found-1",
+        "lost_item_id": "firestore-lost-1",
+        "found_title": "Green wallet",
+        "lost_title": "Wallet",
+    }]
+
+    translated_alerts = await admin_module._translate_alert_titles(alerts, session)
+
+    assert translated_alerts[0]["found_title"] == "Green wallet"
+    assert translated_alerts[0]["lost_title"] == "Wallet"
+    assert translated_alerts[0]["reason"] == "Found 'Green wallet' may match lost report 'Wallet'."
+
+
 def test_admin_report_search_requires_every_comma_filter_to_match_title_or_description():
     conditions = admin_module._report_search_conditions(LostItem, ["bike", "green"])
     statement = select(LostItem).where(*conditions)
