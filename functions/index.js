@@ -2,10 +2,11 @@
 
 const {logger} = require("firebase-functions");
 const {onDocumentCreated} = require("firebase-functions/v2/firestore");
+const {onRequest} = require("firebase-functions/v2/https");
 const {defineSecret} = require("firebase-functions/params");
 const admin = require("firebase-admin");
 const {createClient} = require("@supabase/supabase-js");
-const {addItemWithImage, findMatchingItems} = require("./imageMatching");
+const {addItemWithImage, findMatchingItems, indexMissingReportImages, searchSimilarImages} = require("./imageMatching");
 
 admin.initializeApp();
 
@@ -22,6 +23,41 @@ const MATCH_SECRETS = [
   SENDER_EMAIL,
 ];
 const MATCH_THRESHOLD = 0.70;
+
+exports.matchReportImages = onRequest({
+  secrets: [SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY],
+  region: "us-central1",
+  memory: "1GiB",
+  timeoutSeconds: 300,
+  maxInstances: 3,
+  concurrency: 1,
+}, async (request, response) => {
+  if (request.method !== "POST") {
+    return response.status(405).json({error: "POST is required"});
+  }
+
+  const serviceRoleKey = SUPABASE_SERVICE_ROLE_KEY.value();
+  if (request.get("authorization") !== `Bearer ${serviceRoleKey}`) {
+    return response.status(401).json({error: "Unauthorized"});
+  }
+
+  const {imageUrl, targetType} = request.body || {};
+  if (typeof imageUrl !== "string" || !imageUrl.trim() || !["lost", "found"].includes(targetType)) {
+    return response.status(400).json({error: "imageUrl and targetType (lost|found) are required"});
+  }
+
+  try {
+    const client = createClient(SUPABASE_URL.value(), serviceRoleKey, {
+      auth: {persistSession: false, autoRefreshToken: false},
+    });
+    const indexedCount = await indexMissingReportImages(targetType, {client});
+    const matches = await searchSimilarImages(imageUrl, targetType, {client});
+    return response.status(200).json({matches, indexedCount});
+  } catch (error) {
+    logger.error("Cloudinary image matching failed", {targetType, error: error.message});
+    return response.status(502).json({error: "Image matching is temporarily unavailable"});
+  }
+});
 
 async function handleReportCreated(event, reportType) {
   const report = event.data && event.data.data();

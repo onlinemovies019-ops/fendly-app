@@ -136,6 +136,57 @@ async def notify_admin_of_match(
         print(f"[ERROR] Notification failed: {e}")
 
 
+async def _find_cloudinary_image_matches(
+    image_url: str,
+    target_type: str,
+    session: Session,
+) -> list[dict[str, object]]:
+    function_url = os.getenv(
+        "IMAGE_MATCHING_FUNCTION_URL",
+        "https://us-central1-fendly-6d746.cloudfunctions.net/matchReportImages",
+    )
+    service_role_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+    if not service_role_key:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "Image matching is not configured")
+
+    try:
+        async with httpx.AsyncClient(timeout=240) as client:
+            response = await client.post(
+                function_url,
+                json={"imageUrl": image_url, "targetType": target_type},
+                headers={"Authorization": f"Bearer {service_role_key}"},
+            )
+        response.raise_for_status()
+        matches = response.json().get("matches", [])
+    except (httpx.HTTPError, ValueError, TypeError) as error:
+        logger.exception("Cloudinary image matching request failed")
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, "Image matching is temporarily unavailable") from error
+
+    if not isinstance(matches, list):
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, "Image matcher returned an invalid response")
+
+    model = LostItem if target_type == "lost" else FoundItem
+    source_ids = [str(match.get("source_id")) for match in matches if isinstance(match, dict) and match.get("source_id")]
+    if not source_ids:
+        return []
+
+    records = session.scalars(select(model).where(model.id.in_(source_ids))).all()
+    records_by_id = {str(record.id): record for record in records}
+    results = []
+    for match in matches:
+        if not isinstance(match, dict):
+            continue
+        record = records_by_id.get(str(match.get("source_id", "")))
+        if record is None:
+            continue
+        results.append({
+            "item": record,
+            "score": max(0.0, min(1.0, float(match.get("similarity", 0.0)))),
+            "matchType": "IMAGE",
+        })
+    return results
+
+
 class ItemSubmission(BaseModel):
     title: str = Field(min_length=1, max_length=160)
     description: str = Field(min_length=1, max_length=5000)
@@ -557,10 +608,18 @@ async def match_items(
                 })
             if matched_records:
                 await notify_admin_of_match(session, clean_imei, matched_records, "EXACT_IMEI")
-            return results
+                return results
+            if not request.imageUrl:
+                return results
         except Exception as e:
             logger.error(f"IMEI match error: {e}")
             raise HTTPException(status_code=400, detail=str(e))
+
+    if request.imageUrl:
+        target_type = (request.targetType or "").strip().lower()
+        if target_type not in {"lost", "found"}:
+            raise HTTPException(400, "targetType must be lost or found for image matching")
+        return await _find_cloudinary_image_matches(request.imageUrl, target_type, session)
 
     # 2. Standard Item-ID Matching Fallback
     if bool(request.found_item_id) == bool(request.lost_item_id):

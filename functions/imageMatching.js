@@ -153,8 +153,61 @@ async function findMatchingItems(imageUrl, searchType, options = {}) {
   return data || [];
 }
 
+async function indexMissingReportImages(candidateType, options = {}) {
+  const normalizedType = String(candidateType || "").toLowerCase();
+  if (!["lost", "found"].includes(normalizedType)) {
+    throw new Error("Candidate type must be 'lost' or 'found'");
+  }
+
+  const client = options.client || getSupabaseClient();
+  const tableName = `${normalizedType}_items`;
+  const maxRows = Math.min(Math.max(Number(process.env.IMAGE_MATCH_MAX_INDEX_ROWS || 200), 1), 1000);
+  const [{data: reports, error: reportsError}, {data: indexedRows, error: indexedError}] = await Promise.all([
+    client.from(tableName)
+        .select("id, title, description, image_url, created_at")
+        .not("image_url", "is", null)
+        .order("created_at", {ascending: false})
+        .limit(maxRows),
+    client.from("items")
+        .select("source_id")
+        .eq("type", normalizedType)
+        .not("source_id", "is", null)
+        .limit(maxRows),
+  ]);
+  if (reportsError) throw new Error(`Could not load ${normalizedType} image reports: ${reportsError.message}`);
+  if (indexedError) throw new Error(`Could not load indexed image reports: ${indexedError.message}`);
+
+  const indexedIds = new Set((indexedRows || []).map((row) => String(row.source_id)));
+  const missing = (reports || []).filter((report) => !indexedIds.has(String(report.id)));
+  let indexedCount = 0;
+  for (let offset = 0; offset < missing.length; offset += 2) {
+    const batch = missing.slice(offset, offset + 2);
+    const indexed = await Promise.all(batch.map((report) => addItemWithImage({
+      id: report.id,
+      source_id: report.id,
+      title: report.title || "Untitled item",
+      description: report.description || "",
+      type: normalizedType,
+      created_at: report.created_at,
+    }, report.image_url, {client})));
+    indexedCount += indexed.length;
+  }
+  return indexedCount;
+}
+
+async function searchSimilarImages(imageUrl, candidateType, options = {}) {
+  const normalizedType = String(candidateType || "").toLowerCase();
+  if (!["lost", "found"].includes(normalizedType)) {
+    throw new Error("Candidate type must be 'lost' or 'found'");
+  }
+  const searchType = normalizedType === "lost" ? "found" : "lost";
+  return findMatchingItems(imageUrl, searchType, options);
+}
+
 module.exports = {
   addItemWithImage,
   findMatchingItems,
   generateImageEmbedding,
+  indexMissingReportImages,
+  searchSimilarImages,
 };

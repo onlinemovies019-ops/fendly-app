@@ -636,6 +636,59 @@ async def test_exact_imei_match_uses_sqlalchemy_session_and_masks_imei():
 
 
 @pytest.mark.asyncio
+async def test_cloudinary_image_match_uses_internal_function_and_returns_sql_report(monkeypatch):
+    candidate = LostItem(
+        id="lost-image-1",
+        created_by="user-1",
+        title="Blue wallet",
+        description="Lost near the bus stop",
+        category="other",
+        lat=0,
+        lng=0,
+    )
+    session = Mock(spec=Session)
+    session.scalars.return_value.all.return_value = [candidate]
+    monkeypatch.setenv("IMAGE_MATCHING_FUNCTION_URL", "https://functions.example/matchReportImages")
+    monkeypatch.setenv("SUPABASE_SERVICE_ROLE_KEY", "server-only-key")
+    calls = {}
+
+    class FakeResponse:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {"matches": [{"source_id": "lost-image-1", "similarity": 0.91}]}
+
+    class FakeAsyncClient:
+        def __init__(self, **kwargs):
+            calls["timeout"] = kwargs["timeout"]
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            pass
+
+        async def post(self, endpoint, **kwargs):
+            calls["endpoint"] = endpoint
+            calls["request"] = kwargs
+            return FakeResponse()
+
+    monkeypatch.setattr(items_module.httpx, "AsyncClient", FakeAsyncClient)
+    results = await items_module.match_items(
+        MatchRequest(imageUrl="https://res.cloudinary.com/fendly/image/upload/wallet.jpg", targetType="lost"),
+        session=session,
+        _="user-1",
+    )
+
+    assert calls["endpoint"] == "https://functions.example/matchReportImages"
+    assert calls["request"]["headers"]["Authorization"] == "Bearer server-only-key"
+    assert results[0]["item"].id == "lost-image-1"
+    assert results[0]["score"] == 0.91
+    assert results[0]["matchType"] == "IMAGE"
+
+
+@pytest.mark.asyncio
 async def test_notify_admin_of_match_persists_dashboard_alert(monkeypatch):
     monkeypatch.setenv("ADMIN_EMAIL", "admin@example.com")
     monkeypatch.setenv("BREVO_API_KEY", "brevo-key")

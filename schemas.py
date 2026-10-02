@@ -41,6 +41,7 @@ class ItemResponse(ItemCreate):
 class MatchRequest(BaseModel):
     imei: str | None = Field(default=None, max_length=32)
     targetType: str | None = Field(default=None, max_length=10)
+    imageUrl: str | None = Field(default=None, max_length=2000)
     found_item_id: str | None = Field(default=None, min_length=1)
     lost_item_id: str | None = Field(default=None, min_length=1)
     radius_degrees: float = Field(default=0.25, gt=0, le=10)

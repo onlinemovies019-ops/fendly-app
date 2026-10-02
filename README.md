@@ -24,6 +24,9 @@ Required environment variables:
 - `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, and `SUPABASE_STORAGE_BUCKET`:
 	configure these to store uploads permanently in a public Supabase Storage
 	bucket. The service-role key must remain server-side only.
+- `IMAGE_MATCHING_FUNCTION_URL` points the API to the authenticated Firebase
+  Cloud Function that indexes Cloudinary report images and performs CLIP visual
+  matching. Deploy it with `firebase deploy --only functions:matchReportImages`.
 - Matching is local and free: keyword similarity is combined with location
 	proximity. OpenAI is optional; if absent, the app falls back to a local
 	free sentence-transformers model.
