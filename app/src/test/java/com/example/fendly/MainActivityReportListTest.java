@@ -22,4 +22,10 @@ public class MainActivityReportListTest {
         assertEquals("Found earphones", reports.get(0).optString("title"));
         assertEquals("LOST", reports.get(1).optString("type"));
     }
+
+    @Test
+    public void buildSubmissionSuccessMessage_ignoresMatchSearchWarningsForFreeReports() {
+        String message = ReportSubmissionMessages.buildSubmissionSuccessMessage(false, "", "match service unavailable");
+        assertEquals("Report saved securely", message);
+    }
 }
