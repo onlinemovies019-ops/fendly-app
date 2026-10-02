@@ -260,6 +260,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
     private boolean adminAlertsAutoShownThisVisit;
     private boolean accountCreated;
     private boolean profileSetupVisible;
+    private boolean advancedSettingsExpanded;
     private boolean profileHydrationInFlight = false;
     private boolean profileHydrated = false;
     private boolean cloudProfileHydrationInFlight = false;
@@ -359,6 +360,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             draftState = savedInstanceState.getString("state_draft_state", "");
             draftCity = savedInstanceState.getString("state_draft_city", "");
             profileSetupVisible = savedInstanceState.getBoolean("state_profile_setup_visible", false);
+            advancedSettingsExpanded = savedInstanceState.getBoolean("state_advanced_settings_expanded", false);
             inRenewalPaymentFlow = savedInstanceState.getBoolean("state_in_renewal_payment_flow", false);
         }
         boolean languageSelected = getSharedPreferences("fendly_language", MODE_PRIVATE)
@@ -675,6 +677,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         outState.putString("state_draft_state", draftState);
         outState.putString("state_draft_city", draftCity);
         outState.putBoolean("state_profile_setup_visible", profileSetupVisible);
+        outState.putBoolean("state_advanced_settings_expanded", advancedSettingsExpanded);
         outState.putBoolean("state_in_renewal_payment_flow", inRenewalPaymentFlow);
     }
 
@@ -6381,7 +6384,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
 
         final LinearLayout advancedFields = new LinearLayout(this);
         advancedFields.setOrientation(LinearLayout.VERTICAL);
-        advancedFields.setVisibility(View.GONE);
+        advancedFields.setVisibility(advancedSettingsExpanded ? View.VISIBLE : View.GONE);
 
         LinearLayout imeiFieldGroup = new LinearLayout(this);
         imeiFieldGroup.setOrientation(LinearLayout.VERTICAL);
@@ -6435,6 +6438,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         advancedSettingsTitle.setLayoutParams(new LinearLayout.LayoutParams(-2, -2));
 
         TextView advancedSettingsArrow = text(">", 18, Color.BLACK, Typeface.BOLD);
+        advancedSettingsArrow.setText(advancedSettingsExpanded ? "⌃" : ">");
         advancedSettingsArrow.setGravity(Gravity.CENTER_VERTICAL);
         advancedSettingsArrow.setIncludeFontPadding(false);
         advancedSettingsArrow.setPadding(dp(6), 0, 0, 0);
@@ -6443,9 +6447,9 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         advancedHeaderRow.addView(advancedSettingsTitle);
         advancedHeaderRow.addView(advancedSettingsArrow);
         advancedHeaderRow.setOnClickListener(view -> {
-            boolean shouldExpand = advancedFields.getVisibility() == View.GONE;
-            advancedFields.setVisibility(shouldExpand ? View.VISIBLE : View.GONE);
-            advancedSettingsArrow.setText(shouldExpand ? "⌃" : ">");
+            advancedSettingsExpanded = !advancedSettingsExpanded;
+            advancedFields.setVisibility(advancedSettingsExpanded ? View.VISIBLE : View.GONE);
+            advancedSettingsArrow.setText(advancedSettingsExpanded ? "⌃" : ">");
         });
         root.addView(advancedHeaderRow, contentParams(-1, dp(48), dp(8)));
         root.addView(advancedFields, contentParams(-1, -2, dp(4)));
