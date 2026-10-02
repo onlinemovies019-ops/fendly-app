@@ -175,6 +175,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
     /** Re-renders the screen that is currently visible after a setting changes. */
     private Runnable screenRenderer;
     private LinearLayout activeContent;
+    private int profileScrollY;
     private Uri selectedImage;
     private Bitmap capturedImage;
     private final Uri[] reportImages = new Uri[3];
@@ -361,6 +362,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             draftCity = savedInstanceState.getString("state_draft_city", "");
             profileSetupVisible = savedInstanceState.getBoolean("state_profile_setup_visible", false);
             advancedSettingsExpanded = savedInstanceState.getBoolean("state_advanced_settings_expanded", false);
+            profileScrollY = savedInstanceState.getInt("state_profile_scroll_y", 0);
             inRenewalPaymentFlow = savedInstanceState.getBoolean("state_in_renewal_payment_flow", false);
         }
         boolean languageSelected = getSharedPreferences("fendly_language", MODE_PRIVATE)
@@ -678,6 +680,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         outState.putString("state_draft_city", draftCity);
         outState.putBoolean("state_profile_setup_visible", profileSetupVisible);
         outState.putBoolean("state_advanced_settings_expanded", advancedSettingsExpanded);
+        outState.putInt("state_profile_scroll_y", profileScrollY);
         outState.putBoolean("state_in_renewal_payment_flow", inRenewalPaymentFlow);
     }
 
@@ -6607,6 +6610,10 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         scroll.setFillViewport(true);
         scroll.setVerticalScrollBarEnabled(false);
         scroll.setHorizontalScrollBarEnabled(false);
+        if (currentPage == PAGE_PROFILE) {
+            scroll.setOnScrollChangeListener((View view, int scrollX, int scrollY, int oldScrollX, int oldScrollY) -> profileScrollY = scrollY);
+            scroll.post(() -> scroll.scrollTo(0, profileScrollY));
+        }
         activeContent = new LinearLayout(this);
         activeContent.setOrientation(LinearLayout.VERTICAL);
         activeContent.setPadding(0, dp(26), 0, 0);
