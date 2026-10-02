@@ -8593,6 +8593,14 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         return getAuthorized("/api/admin/items", idToken);
     }
 
+    private boolean isPendingAlert(JSONObject alert) {
+        if (alert == null) return false;
+        String reviewStatus = alert.optString("review_status", "").trim();
+        if (reviewStatus.isEmpty()) return true;
+        String normalized = reviewStatus.toLowerCase(Locale.US);
+        return !("confirmed".equals(normalized) || "rejected".equals(normalized));
+    }
+
     private void fetchPendingNotificationCount() {
         FirebaseUser adminUser = FirebaseAuth.getInstance().getCurrentUser();
         if (adminUser == null) return;
@@ -8605,7 +8613,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                 for (int index = 0; index < alerts.length(); index++) {
                     JSONObject alert = alerts.getJSONObject(index);
                     if (isDummyAlert(alert)) continue;
-                    if ("pending".equalsIgnoreCase(alert.optString("review_status", "pending"))) {
+                    if (isPendingAlert(alert)) {
                         pendingCount++;
                     }
                 }
@@ -8678,14 +8686,15 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                     for (int index = 0; index < alerts.length(); index++) {
                         JSONObject alert = alerts.getJSONObject(index);
                         if (isDummyAlert(alert)) continue;
-                        if ("pending".equalsIgnoreCase(alert.optString("review_status", "pending"))) {
+                        if (isPendingAlert(alert)) {
                             pendingCount++;
                         }
-                        if (!pendingOnly || "pending".equalsIgnoreCase(alert.optString("review_status", "pending"))) {
+                        if (!pendingOnly || isPendingAlert(alert)) {
                             visibleAlerts.put(alert);
                         }
                     }
                     pendingNotificationCount = pendingCount;
+                    if (screenRenderer != null) screenRenderer.run();
                     if (visibleAlerts.length() == 0) {
                         Toast.makeText(this, pendingOnly ? "No pending matches to review" : "No match notifications", Toast.LENGTH_SHORT).show();
                         return;
