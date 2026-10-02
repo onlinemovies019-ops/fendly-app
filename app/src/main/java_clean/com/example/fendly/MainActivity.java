@@ -260,6 +260,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
     private Handler adminPressHandler = new Handler();
     private boolean adminAlertsAutoShownThisVisit;
     private int pendingNotificationCount = 0;
+    private TextView pendingNotificationBadge;
     private boolean accountCreated;
     private boolean profileSetupVisible;
     private boolean advancedSettingsExpanded;
@@ -626,7 +627,6 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             hydrateProfileFromBackend(null);
             hydrateCloudProfile(null);
             checkAndReloadUserVerification();
-            fetchPendingNotificationCount();
         } else {
             // User is not logged in - ensure drafts are fresh
             selectedLanguage = getSharedPreferences("fendly_language", MODE_PRIVATE)
@@ -3245,13 +3245,10 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                     int code = submission.statusCode;
                     if ((code >= 200 && code < 300) || submission.firestoreSaved) {
                         boolean paidLostReport = paymentId != null && "LOST".equalsIgnoreCase(type);
-                        String message = ReportSubmissionMessages.buildSubmissionSuccessMessage(paidLostReport, submission.errorMessage, submission.matchError);
+                        String message = ReportSubmissionMessages.buildSubmissionSuccessMessage(paidLostReport, submission.errorMessage, null);
                         Toast.makeText(this, message, Toast.LENGTH_LONG).show();
                         clearReportDraftState();
                         showReports();
-                        if (submission.matches != null) {
-                            showReportMatchDialog(type, title, details, submission.matches);
-                        }
                     } else {
                         publish.setText("Retry submission");
                         String detail = submission.errorMessage == null || submission.errorMessage.trim().isEmpty()
@@ -3271,19 +3268,11 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
     private static final class ItemSubmissionResult {
         final int statusCode;
         final String errorMessage;
-        final String matchError;
-        final JSONArray matches;
         final boolean firestoreSaved;
 
-        ItemSubmissionResult(int statusCode, String errorMessage, String matchError, JSONArray matches) {
-            this(statusCode, errorMessage, matchError, matches, false);
-        }
-
-        ItemSubmissionResult(int statusCode, String errorMessage, String matchError, JSONArray matches, boolean firestoreSaved) {
+        ItemSubmissionResult(int statusCode, String errorMessage, boolean firestoreSaved) {
             this.statusCode = statusCode;
             this.errorMessage = errorMessage;
-            this.matchError = matchError;
-            this.matches = matches;
             this.firestoreSaved = firestoreSaved;
         }
     }
@@ -3349,28 +3338,13 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                     getTtsLocaleForSelectedLanguage().getLanguage(), idToken);
             if (!response.isSuccessful()) {
                 lastSubmissionError = "Could not save report (" + response.getStatusCode() + "): " + response.getErrorMessage();
-                return new ItemSubmissionResult(response.getStatusCode(), lastSubmissionError, null, null, firestoreSaved);
+                return new ItemSubmissionResult(response.getStatusCode(), lastSubmissionError, firestoreSaved);
             }
 
-            JSONArray matches = null;
-            String matchError = null;
-            if (imageUrl != null && !imageUrl.trim().isEmpty()) {
-                try {
-                    String targetType = "found".equalsIgnoreCase(type) ? "lost" : "found";
-                    AiMatchService.ApiResponse matchResponse = AiMatchService.findImageMatches(imageUrl, imeiValue, targetType, idToken);
-                    if (matchResponse.isSuccessful()) {
-                        matches = new JSONArray(matchResponse.getBody());
-                    } else {
-                        matchError = matchResponse.getErrorMessage();
-                    }
-                } catch (Exception matchException) {
-                    matchError = matchException.getClass().getSimpleName();
-                }
-            }
-            return new ItemSubmissionResult(response.getStatusCode(), lastSubmissionError, matchError, matches, firestoreSaved);
+            return new ItemSubmissionResult(response.getStatusCode(), lastSubmissionError, firestoreSaved);
         } catch (Exception error) {
             lastSubmissionError = "Could not save report: " + error.getClass().getSimpleName();
-            return new ItemSubmissionResult(-1, lastSubmissionError, null, null, firestoreSaved);
+            return new ItemSubmissionResult(-1, lastSubmissionError, firestoreSaved);
         }
     }
 
@@ -7935,7 +7909,6 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                     }
                 });
             }));
-            loadAdminAlerts(true);
         }
     }
 
@@ -8618,18 +8591,23 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                     }
                 }
                 int newCount = pendingCount;
-                runOnUiThread(() -> {
-                    if (pendingNotificationCount != newCount) {
-                        pendingNotificationCount = newCount;
-                        if (screenRenderer != null) screenRenderer.run();
-                    }
-                });
+                runOnUiThread(() -> updatePendingNotificationCount(newCount));
             } catch (Exception ignored) {}
         }));
     }
 
+    private void updatePendingNotificationCount(int count) {
+        pendingNotificationCount = Math.max(0, count);
+        if (pendingNotificationBadge == null) return;
+        pendingNotificationBadge.setText(pendingNotificationCount > 99 ? "99+" : String.valueOf(pendingNotificationCount));
+        pendingNotificationBadge.setVisibility(pendingNotificationCount > 0 ? View.VISIBLE : View.GONE);
+        pendingNotificationBadge.setContentDescription(pendingNotificationCount + " pending match notifications");
+    }
+
     private View createNotificationIconButton(int count, View.OnClickListener onClickListener) {
         FrameLayout frame = new FrameLayout(this);
+        frame.setClipChildren(false);
+        frame.setClipToPadding(false);
 
         TextView notificationButton = text("🔔", 16, secondaryTextColor(), Typeface.NORMAL);
         notificationButton.setGravity(Gravity.CENTER);
@@ -8643,25 +8621,27 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
 
         frame.addView(notificationButton, new FrameLayout.LayoutParams(dp(42), dp(42)));
 
-        if (count > 0) {
-            TextView badge = new TextView(this);
-            badge.setText(count > 99 ? "99+" : String.valueOf(count));
-            badge.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 9);
-            badge.setTypeface(Typeface.DEFAULT_BOLD);
-            badge.setTextColor(Color.WHITE);
-            badge.setGravity(Gravity.CENTER);
-            badge.setIncludeFontPadding(false);
+        TextView badge = new TextView(this);
+        badge.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 10);
+        badge.setTypeface(Typeface.DEFAULT_BOLD);
+        badge.setTextColor(Color.WHITE);
+        badge.setGravity(Gravity.CENTER);
+        badge.setIncludeFontPadding(false);
+        badge.setMinWidth(dp(22));
+        badge.setPadding(dp(5), 0, dp(5), 0);
 
-            GradientDrawable badgeBg = new GradientDrawable();
-            badgeBg.setShape(GradientDrawable.OVAL);
-            badgeBg.setColor(Color.rgb(220, 38, 38));
-            badge.setBackground(badgeBg);
+        GradientDrawable badgeBg = new GradientDrawable();
+        badgeBg.setShape(GradientDrawable.OVAL);
+        badgeBg.setColor(Color.rgb(220, 38, 38));
+        badgeBg.setStroke(dp(2), Color.WHITE);
+        badge.setBackground(badgeBg);
 
-            FrameLayout.LayoutParams badgeParams = new FrameLayout.LayoutParams(dp(16), dp(16));
-            badgeParams.gravity = Gravity.BOTTOM | Gravity.START;
-            badgeParams.setMargins(dp(2), 0, 0, dp(2));
-            frame.addView(badge, badgeParams);
-        }
+        FrameLayout.LayoutParams badgeParams = new FrameLayout.LayoutParams(-2, dp(22));
+        badgeParams.gravity = Gravity.TOP | Gravity.END;
+        badgeParams.setMargins(0, dp(1), dp(1), 0);
+        frame.addView(badge, badgeParams);
+        pendingNotificationBadge = badge;
+        updatePendingNotificationCount(count);
 
         return frame;
     }
@@ -8693,8 +8673,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                             visibleAlerts.put(alert);
                         }
                     }
-                    pendingNotificationCount = pendingCount;
-                    if (screenRenderer != null) screenRenderer.run();
+                    updatePendingNotificationCount(pendingCount);
                     if (visibleAlerts.length() == 0) {
                         Toast.makeText(this, pendingOnly ? "No pending matches to review" : "No match notifications", Toast.LENGTH_SHORT).show();
                         return;
