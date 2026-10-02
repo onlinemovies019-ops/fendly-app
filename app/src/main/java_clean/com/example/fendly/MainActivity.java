@@ -865,7 +865,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         emblem.setContentDescription("Fendly emblem");
         emblem.setOnTouchListener((view, event) -> {
             if (event.getAction() == MotionEvent.ACTION_DOWN) {
-                adminPressHandler.postDelayed(() -> showAdminLoginDialog(), 5000);
+                adminPressHandler.postDelayed(() -> showAdminLoginDialog(), 1000);
                 return true;
             }
             if (event.getAction() == MotionEvent.ACTION_UP || event.getAction() == MotionEvent.ACTION_CANCEL) {
