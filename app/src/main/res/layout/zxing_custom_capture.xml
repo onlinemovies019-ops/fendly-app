@@ -22,10 +22,11 @@
             android:background="@drawable/barcode_frame_background" />
 
         <TextView
+            android:id="@+id/scanner_instruction"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_marginTop="16dp"
-            android:text="Align IMEI barcode within horizontal frame"
+            android:text="@string/scanner_align_barcode"
             android:textColor="@android:color/white"
             android:textSize="14sp"
             android:textStyle="bold"

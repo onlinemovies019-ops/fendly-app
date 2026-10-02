@@ -49,6 +49,16 @@
     <string name="profile_city">నగరం</string>
     <string name="profile_email">ఈమెయిల్</string>
     <string name="profile_mobile">మొబైల్</string>
+    <string name="profile_advanced_settings">అధునాతన సెట్టింగ్‌లు</string>
+    <string name="profile_imei_hint">భవిష్యత్తులో ఈ పరికరం పోయినా లేదా దొంగిలించబడినా రక్షించండి</string>
+    <string name="profile_imei_label">IMEI నంబర్</string>
+    <string name="profile_mobile_serial_number">మొబైల్ సీరియల్ నంబర్</string>
+    <string name="scanner_prompt_imei">IMEI స్కాన్ చేయండి</string>
+    <string name="scanner_prompt_serial">మొబైల్ సీరియల్ నంబర్ స్కాన్ చేయండి</string>
+    <string name="scanner_align_barcode">బార్‌కోడ్‌ను ఫ్రేమ్‌లో ఉంచండి</string>
+    <string name="zxing_msg_default_status">స్కాన్ చేయడానికి బార్‌కోడ్‌ను వ్యూఫైండర్ చతురస్రం లోపల ఉంచండి.</string>
+    <string name="zxing_msg_camera_framework_bug">కెమెరాలో సమస్య ఏర్పడింది. మళ్లీ ప్రయత్నించండి.</string>
+    <string name="zxing_button_ok">సరే</string>
     <string name="profile_new_pin">కొత్త పిన్</string>
     <string name="profile_change_pin">పిన్‌ను మార్చండి</string>
     <string name="profile_save_changes">మార్పులను సేవ్ చేయండి</string>

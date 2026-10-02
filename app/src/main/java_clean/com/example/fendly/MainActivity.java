@@ -187,6 +187,14 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
     private double currentLng;
     private boolean hasLocation;
     private String activeLocationReportType;
+    private boolean lostReportHasLocation;
+    private double lostReportLat;
+    private double lostReportLng;
+    private boolean foundReportHasLocation;
+    private double foundReportLat;
+    private double foundReportLng;
+    private String locationRequestReportType;
+    private long locationRequestGeneration;
     private TextView locationStatus;
     private TextView locationToggleStatus;
     private LocationListener activeLocationListener;
@@ -261,6 +269,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
     private boolean adminAlertsAutoShownThisVisit;
     private int pendingNotificationCount = 0;
     private TextView pendingNotificationBadge;
+    private String adminReportFilter = "";
     private int unreadUserNotificationCount = 0;
     private TextView userNotificationBadge;
     private boolean accountCreated;
@@ -770,19 +779,19 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         dialog.requestWindowFeature(Window.FEATURE_NO_TITLE);
         LinearLayout content = themedDialogContent(
                 R.drawable.ic_field_lock,
-                translate("Log out"),
-                translate("Do you really want to log out of the app?")
+            LanguageManager.profileText(this, "logout"),
+            LanguageManager.profileText(this, "logout_confirm")
         );
         LinearLayout actions = new LinearLayout(this);
         actions.setOrientation(LinearLayout.HORIZONTAL);
         actions.setGravity(Gravity.CENTER);
 
-        TextView no = filledButton(translate("No"), LOST_GREEN, LOST_GREEN_ON);
+        TextView no = filledButton(LanguageManager.profileText(this, "no"), LOST_GREEN, LOST_GREEN_ON);
         no.setOnClickListener(view -> dialog.dismiss());
         LinearLayout.LayoutParams noParams = new LinearLayout.LayoutParams(0, dp(44), 1f);
         actions.addView(no, noParams);
 
-        TextView yes = filledButton(translate("Yes"), FOUND_GOLD, FOUND_GOLD_ON);
+        TextView yes = filledButton(LanguageManager.profileText(this, "yes"), FOUND_GOLD, FOUND_GOLD_ON);
         LinearLayout.LayoutParams yesParams = new LinearLayout.LayoutParams(0, dp(44), 1f);
         yesParams.setMargins(dp(12), 0, 0, 0);
         actions.addView(yes, yesParams);
@@ -2673,16 +2682,24 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         currentLat = 0.0;
         currentLng = 0.0;
         activeLocationReportType = null;
+        lostReportHasLocation = false;
+        lostReportLat = 0.0;
+        lostReportLng = 0.0;
+        foundReportHasLocation = false;
+        foundReportLat = 0.0;
+        foundReportLng = 0.0;
+        locationRequestGeneration++;
     }
 
     private void showHome() {
         currentPage = PAGE_HOME;
+        advancedSettingsExpanded = false;
         screenRenderer = this::showHome;
         LinearLayout root = screenBase("Home");
         addHeading("Find what matters.", "Lost or Found? We Connect the Dots.");
         LinearLayout choices = new LinearLayout(this);
         choices.setOrientation(LinearLayout.HORIZONTAL);
-        TextView lost = actionButton("LOST/THEFT", true);
+        TextView lost = actionButton(LanguageManager.profileText(this, "lost_theft_button"), true);
         lost.setBackground(round(Color.rgb(11, 93, 69), 18));
         lost.setTextColor(Color.WHITE);
         lost.setOnClickListener(view -> {
@@ -2716,13 +2733,14 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         currentPage = PAGE_REPORT;
         screenRenderer = () -> showReport(type);
         currentReportType = type;
+        restoreReportLocationState(type);
         LinearLayout root = screenBase("");
         TextView reportHeader = text("Click Lost/Found button to report", 15, primaryTextColor(), Typeface.NORMAL);
         reportHeader.setGravity(Gravity.CENTER);
         root.addView(reportHeader, contentParams(-1, dp(22), dp(14)));
         LinearLayout typeToggle = new LinearLayout(this);
         typeToggle.setOrientation(LinearLayout.HORIZONTAL);
-        TextView lostToggle = reportTypeToggle("LOST/THEFT", "LOST".equals(type), LOST_GREEN, LOST_GREEN_ON);
+        TextView lostToggle = reportTypeToggle(LanguageManager.profileText(this, "lost_theft_button"), "LOST".equals(type), LOST_GREEN, LOST_GREEN_ON);
         TextView foundToggle = reportTypeToggle("Found", "FOUND".equals(type), FOUND_GOLD, FOUND_GOLD_ON);
         lostToggle.setOnClickListener(view -> showReport("LOST"));
         foundToggle.setOnClickListener(view -> showReport("FOUND"));
@@ -2849,6 +2867,8 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         root.addView(addLocation, locationParams);
         addLocation.setOnClickListener(view -> {
             if (hasLocation && currentReportType != null && currentReportType.equalsIgnoreCase(activeLocationReportType)) {
+                setReportLocationState(currentReportType, false, 0.0, 0.0);
+                locationRequestGeneration++;
                 hasLocation = false;
                 activeLocationReportType = null;
                 currentLat = 0.0;
@@ -2860,9 +2880,6 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         });
         locationStatus = addLocation;
         locationToggleStatus = addLocation;
-        if (!hasLocation && ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) {
-            requestLocation(addLocation, addLocation);
-        }
 
         root.addView(imageSlots(), contentParams(-1, dp(104), dp(14)));
 
@@ -3083,7 +3100,8 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             account.edit().putBoolean("annual_subscription_active", false).remove("annual_subscription_payment_id").apply();
             return translate("Renew plan");
         }
-        SimpleDateFormat format = new SimpleDateFormat("dd MMM yyyy", Locale.US);
+        Locale dateLocale = Locale.forLanguageTag(LanguageManager.getSavedLanguage(this));
+        SimpleDateFormat format = new SimpleDateFormat("dd MMM yyyy", dateLocale);
         return translate("Active subscription until") + " " + format.format(new Date(expiresAt));
     }
 
@@ -3226,8 +3244,9 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         publish.setEnabled(false);
         Uri[] images = reportImages.clone();
         Bitmap[] cameraImages = reportCameraImages.clone();
-        double latitude = (hasLocation || currentLat != 0.0 || currentLng != 0.0) ? currentLat : 0.0;
-        double longitude = (hasLocation || currentLat != 0.0 || currentLng != 0.0) ? currentLng : 0.0;
+        boolean reportHasLocation = isReportLocationEnabled(type);
+        double latitude = reportHasLocation ? reportLocationLatitude(type) : 0.0;
+        double longitude = reportHasLocation ? reportLocationLongitude(type) : 0.0;
         if (FirebaseAuth.getInstance().getCurrentUser() == null) {
             publish.setText("Sign in to submit");
             publish.setEnabled(true);
@@ -4669,7 +4688,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         IntentIntegrator integrator = new IntentIntegrator(this);
         integrator.setCaptureActivity(PortraitCaptureActivity.class);
         integrator.setDesiredBarcodeFormats(IntentIntegrator.ALL_CODE_TYPES);
-        integrator.setPrompt("Scan IMEI");
+        integrator.setPrompt(LanguageManager.profileText(this, "scan_imei"));
         integrator.setBeepEnabled(true);
         integrator.setOrientationLocked(true);
         integrator.initiateScan();
@@ -4686,7 +4705,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         IntentIntegrator integrator = new IntentIntegrator(this);
         integrator.setCaptureActivity(PortraitCaptureActivity.class);
         integrator.setDesiredBarcodeFormats(IntentIntegrator.ALL_CODE_TYPES);
-        integrator.setPrompt("Scan mobile serial number");
+        integrator.setPrompt(LanguageManager.profileText(this, "scan_serial"));
         integrator.setBeepEnabled(true);
         integrator.setOrientationLocked(true);
         integrator.initiateScan();
@@ -6468,7 +6487,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
 
         EditText imeiNumberField = field("");
         imeiNumberField.setText(account.getString("imei_number", ""));
-        imeiNumberField.setHint("Protect this device against future loss or theft");
+        imeiNumberField.setHint(LanguageManager.profileText(this, "imei_hint"));
         imeiNumberField.setHintTextColor(Color.GRAY);
         imeiNumberField.setTextSize(responsiveTextSize(13));
         imeiNumberField.setSingleLine(false);
@@ -6488,7 +6507,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
 
         LinearLayout imeiFieldGroup = new LinearLayout(this);
         imeiFieldGroup.setOrientation(LinearLayout.VERTICAL);
-        imeiFieldGroup.addView(fieldLabel("IMEI number"), new LinearLayout.LayoutParams(-1, dp(20)));
+        imeiFieldGroup.addView(fieldLabel(LanguageManager.profileText(this, "imei_label")), new LinearLayout.LayoutParams(-1, dp(20)));
         FrameLayout imeiFieldFrame = new FrameLayout(this);
         imeiFieldFrame.setBackground(roundWithStroke(surfaceColor(), 10, fieldBorderColor()));
         imeiNumberField.setBackgroundColor(Color.TRANSPARENT);
@@ -6498,7 +6517,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         imeiCamera.setImageResource(R.drawable.ic_field_camera);
         imeiCamera.setColorFilter(accentColor());
         imeiCamera.setPadding(dp(11), dp(11), dp(11), dp(11));
-        imeiCamera.setContentDescription("Scan IMEI");
+        imeiCamera.setContentDescription(LanguageManager.profileText(this, "scan_imei"));
         imeiCamera.setOnClickListener(view -> openImeiScanner(imeiNumberField));
         FrameLayout.LayoutParams imeiIconParams = new FrameLayout.LayoutParams(dp(46), dp(46), Gravity.END | Gravity.CENTER_VERTICAL);
         imeiFieldFrame.addView(imeiCamera, imeiIconParams);
@@ -6508,7 +6527,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
 
         LinearLayout serialFieldGroup = new LinearLayout(this);
         serialFieldGroup.setOrientation(LinearLayout.VERTICAL);
-        serialFieldGroup.addView(fieldLabel("Mobile serial number"), new LinearLayout.LayoutParams(-1, dp(20)));
+        serialFieldGroup.addView(fieldLabel(LanguageManager.profileText(this, "serial_label")), new LinearLayout.LayoutParams(-1, dp(20)));
         FrameLayout serialFieldFrame = new FrameLayout(this);
         serialFieldFrame.setBackground(roundWithStroke(surfaceColor(), 10, fieldBorderColor()));
         mobileSerialField.setBackgroundColor(Color.TRANSPARENT);
@@ -6518,7 +6537,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         serialCamera.setImageResource(R.drawable.ic_field_camera);
         serialCamera.setColorFilter(accentColor());
         serialCamera.setPadding(dp(11), dp(11), dp(11), dp(11));
-        serialCamera.setContentDescription("Scan mobile serial number");
+        serialCamera.setContentDescription(LanguageManager.profileText(this, "scan_serial"));
         serialCamera.setOnClickListener(view -> openSerialScanner(mobileSerialField));
         FrameLayout.LayoutParams serialIconParams = new FrameLayout.LayoutParams(dp(46), dp(46), Gravity.END | Gravity.CENTER_VERTICAL);
         serialFieldFrame.addView(serialCamera, serialIconParams);
@@ -6532,12 +6551,12 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         advancedHeaderRow.setPadding(dp(12), dp(12), dp(12), dp(12));
         advancedHeaderRow.setBackgroundColor(Color.TRANSPARENT);
 
-        TextView advancedSettingsTitle = text("Advanced settings", 15, Color.BLACK, Typeface.BOLD);
+        TextView advancedSettingsTitle = text(LanguageManager.profileText(this, "advanced_settings"), 15, primaryTextColor(), Typeface.BOLD);
         advancedSettingsTitle.setGravity(Gravity.CENTER_VERTICAL);
         advancedSettingsTitle.setIncludeFontPadding(false);
         advancedSettingsTitle.setLayoutParams(new LinearLayout.LayoutParams(-2, -2));
 
-        TextView advancedSettingsArrow = text(">", 18, Color.BLACK, Typeface.BOLD);
+        TextView advancedSettingsArrow = text(">", 18, primaryTextColor(), Typeface.BOLD);
         advancedSettingsArrow.setText(advancedSettingsExpanded ? "⌃" : ">");
         advancedSettingsArrow.setGravity(Gravity.CENTER_VERTICAL);
         advancedSettingsArrow.setIncludeFontPadding(false);
@@ -7105,7 +7124,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         String clean = normalizeLocalizedDigits(value != null ? value : "").replaceAll("\\D+", "");
         for (int i = 0; i < cells.length; i++) {
             if (i < clean.length()) {
-                cells[i].setText(String.valueOf(clean.charAt(i)));
+                cells[i].setText(localizeDigits(String.valueOf(clean.charAt(i))));
             } else {
                 cells[i].setText("");
             }
@@ -7128,9 +7147,26 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         LinearLayout row = new LinearLayout(this);
         row.setOrientation(LinearLayout.HORIZONTAL);
         for (int index = 0; index < cells.length; index++) {
+            EditText cell = cells[index];
+            final boolean[] localizingDigit = {false};
+            cell.addTextChangedListener(new TextWatcher() {
+                @Override public void beforeTextChanged(CharSequence value, int start, int count, int after) { }
+                @Override public void onTextChanged(CharSequence value, int start, int before, int count) { }
+                @Override public void afterTextChanged(Editable value) {
+                    if (localizingDigit[0]) return;
+                    String localized = localizeDigits(normalizeLocalizedDigits(value.toString()));
+                    if (!localized.equals(value.toString())) {
+                        int selection = cell.getSelectionStart();
+                        localizingDigit[0] = true;
+                        cell.setText(localized);
+                        if (selection >= 0) cell.setSelection(Math.min(selection, localized.length()));
+                        localizingDigit[0] = false;
+                    }
+                }
+            });
             LinearLayout.LayoutParams cellParams = new LinearLayout.LayoutParams(0, dp(38), 1f);
             if (index > 0) cellParams.setMargins(dp(2), 0, 0, 0);
-            row.addView(cells[index], cellParams);
+            row.addView(cell, cellParams);
         }
         LinearLayout.LayoutParams rowParams = new LinearLayout.LayoutParams(-1, dp(42));
         rowParams.topMargin = dp(4);
@@ -7518,7 +7554,40 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         }
     }
 
+    private boolean isReportLocationEnabled(String reportType) {
+        return "LOST".equalsIgnoreCase(reportType) ? lostReportHasLocation : foundReportHasLocation;
+    }
+
+    private double reportLocationLatitude(String reportType) {
+        return "LOST".equalsIgnoreCase(reportType) ? lostReportLat : foundReportLat;
+    }
+
+    private double reportLocationLongitude(String reportType) {
+        return "LOST".equalsIgnoreCase(reportType) ? lostReportLng : foundReportLng;
+    }
+
+    private void setReportLocationState(String reportType, boolean enabled, double latitude, double longitude) {
+        if ("LOST".equalsIgnoreCase(reportType)) {
+            lostReportHasLocation = enabled;
+            lostReportLat = enabled ? latitude : 0.0;
+            lostReportLng = enabled ? longitude : 0.0;
+        } else if ("FOUND".equalsIgnoreCase(reportType)) {
+            foundReportHasLocation = enabled;
+            foundReportLat = enabled ? latitude : 0.0;
+            foundReportLng = enabled ? longitude : 0.0;
+        }
+    }
+
+    private void restoreReportLocationState(String reportType) {
+        hasLocation = isReportLocationEnabled(reportType);
+        currentLat = hasLocation ? reportLocationLatitude(reportType) : 0.0;
+        currentLng = hasLocation ? reportLocationLongitude(reportType) : 0.0;
+        activeLocationReportType = hasLocation ? reportType : null;
+    }
+
     private void requestLocation(TextView button, TextView toggle) {
+        locationRequestReportType = currentReportType;
+        long requestGeneration = ++locationRequestGeneration;
         locationStatus = button;
         locationToggleStatus = toggle;
         if (Build.VERSION.SDK_INT >= 23 && checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
@@ -7526,10 +7595,10 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             if (button != null) button.setText("Location permission requested");
             return;
         }
-        enableLocationServicesIfNeeded(button, toggle);
+        enableLocationServicesIfNeeded(button, toggle, locationRequestReportType, requestGeneration);
     }
 
-    private void enableLocationServicesIfNeeded(TextView button, TextView toggle) {
+    private void enableLocationServicesIfNeeded(TextView button, TextView toggle, String reportType, long requestGeneration) {
         try {
             LocationManager manager = (LocationManager) getSystemService(LOCATION_SERVICE);
             if (manager == null) {
@@ -7549,13 +7618,13 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                 startActivity(new Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS));
                 return;
             }
-            updateLocation(button, toggle);
+            updateLocation(button, toggle, reportType, requestGeneration);
         } catch (Exception error) {
             if (button != null) button.setText("Location unavailable");
         }
     }
 
-    private void updateLocation(TextView button, TextView toggle) {
+    private void updateLocation(TextView button, TextView toggle, String reportType, long requestGeneration) {
         try {
             LocationManager manager = (LocationManager) getSystemService(LOCATION_SERVICE);
             if (manager == null) {
@@ -7584,11 +7653,14 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             }
 
             if (best != null) {
-                currentLat = best.getLatitude();
-                currentLng = best.getLongitude();
-                hasLocation = true;
-                activeLocationReportType = currentReportType;
-                applyLocationToggleVisualState(button, toggle, true);
+                setReportLocationState(reportType, true, best.getLatitude(), best.getLongitude());
+                if (reportType != null && reportType.equalsIgnoreCase(currentReportType)) {
+                    currentLat = best.getLatitude();
+                    currentLng = best.getLongitude();
+                    hasLocation = true;
+                    activeLocationReportType = reportType;
+                    applyLocationToggleVisualState(button, toggle, true);
+                }
             } else if (toggle != null) {
                 toggle.setText("Locating...");
                 toggle.setTextColor(secondaryTextColor());
@@ -7603,12 +7675,21 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             activeLocationListener = new LocationListener() {
                 @Override
                 public void onLocationChanged(Location location) {
+                    if (requestGeneration != locationRequestGeneration) {
+                        try {
+                            manager.removeUpdates(this);
+                        } catch (Exception ignored) {}
+                        return;
+                    }
                     if (location != null && location.getLatitude() != 0.0 && location.getLongitude() != 0.0) {
-                        currentLat = location.getLatitude();
-                        currentLng = location.getLongitude();
-                        hasLocation = true;
-                        activeLocationReportType = currentReportType;
-                        runOnUiThread(() -> applyLocationToggleVisualState(button, toggle, true));
+                        setReportLocationState(reportType, true, location.getLatitude(), location.getLongitude());
+                        if (reportType != null && reportType.equalsIgnoreCase(currentReportType)) {
+                            currentLat = location.getLatitude();
+                            currentLng = location.getLongitude();
+                            hasLocation = true;
+                            activeLocationReportType = reportType;
+                            runOnUiThread(() -> applyLocationToggleVisualState(button, toggle, true));
+                        }
                         try {
                             manager.removeUpdates(this);
                         } catch (Exception ignored) {}
@@ -7637,7 +7718,8 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
         if (requestCode == 702 && locationStatus != null) {
             if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
-                enableLocationServicesIfNeeded(locationStatus, locationToggleStatus);
+                enableLocationServicesIfNeeded(locationStatus, locationToggleStatus,
+                        locationRequestReportType, locationRequestGeneration);
             } else {
                 locationStatus.setText("Location permission denied");
             }
@@ -7860,7 +7942,8 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         TextView searchButton = actionButton("Search", true);
         root.addView(searchButton, contentParams(-1, dp(44), dp(12)));
 
-        TextView reportsHeading = text("Live reports", 15, primaryTextColor(), Typeface.NORMAL);
+        String reportsHeadingText = adminReportFilter.isEmpty() ? "Live reports" : adminReportFilter + " reports";
+        TextView reportsHeading = text(reportsHeadingText, 15, primaryTextColor(), Typeface.NORMAL);
         root.addView(reportsHeading, contentParams(-1, dp(22), dp(8)));
         LinearLayout reports = new LinearLayout(this);
         reports.setOrientation(LinearLayout.VERTICAL);
@@ -7880,6 +7963,11 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                 renderAdminReports(liveReportsResponse[0], reports, matchesHeading, matches, lostCount, foundCount);
             }
         };
+        updateAdminReportFilterStyles(lostCount, foundCount);
+        lostCount.setOnClickListener(view -> selectAdminReportFilter(
+            "LOST", lostCount, foundCount, search, reportsHeading, restoreLiveReports));
+        foundCount.setOnClickListener(view -> selectAdminReportFilter(
+            "FOUND", lostCount, foundCount, search, reportsHeading, restoreLiveReports));
         search.addTextChangedListener(new TextWatcher() {
             @Override public void beforeTextChanged(CharSequence value, int start, int count, int after) { }
             @Override public void onTextChanged(CharSequence value, int start, int before, int count) { }
@@ -7921,10 +8009,30 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
 
     private TextView adminSummary(String label, int accent) {
         TextView summary = text(label + "  0", 12, accent, Typeface.NORMAL);
-        summary.setGravity(Gravity.CENTER_VERTICAL);
+        summary.setGravity(Gravity.CENTER);
         summary.setPadding(dp(14), 0, dp(14), 0);
         summary.setBackground(roundWithStroke(surfaceColor(), 14, borderColor()));
         return summary;
+    }
+
+    private void updateAdminReportFilterStyles(TextView lostCount, TextView foundCount) {
+        lostCount.setBackground(roundWithStroke(surfaceColor(), 14,
+                "LOST".equals(adminReportFilter) ? LOST_GREEN : borderColor()));
+        foundCount.setBackground(roundWithStroke(surfaceColor(), 14,
+                "FOUND".equals(adminReportFilter) ? FOUND_GOLD : borderColor()));
+    }
+
+    private void selectAdminReportFilter(String filter, TextView lostCount, TextView foundCount,
+                                         EditText search, TextView reportsHeading, Runnable restoreLiveReports) {
+        adminReportFilter = filter.equals(adminReportFilter) ? "" : filter;
+        updateAdminReportFilterStyles(lostCount, foundCount);
+        boolean hadSearch = !search.getText().toString().trim().isEmpty();
+        if (hadSearch) {
+            search.setText("");
+        } else {
+            restoreLiveReports.run();
+        }
+        reportsHeading.setText(adminReportFilter.isEmpty() ? "Live reports" : adminReportFilter + " reports");
     }
 
     private boolean isDummyAlert(JSONObject alert) {
@@ -7960,10 +8068,23 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             }
             lostCount.setText("LOST  " + lost);
             foundCount.setText("FOUND  " + found);
-            if (lost > 0) reports.addView(lostSection, contentParams(-1, -2, 0));
-            if (found > 0) reports.addView(foundSection, contentParams(-1, -2, dp(12)));
-            if (lost == 0 && found == 0) {
+            updateAdminReportFilterStyles(lostCount, foundCount);
+            if ("LOST".equals(adminReportFilter)) {
+                if (lost > 0) {
+                    reports.addView(lostSection, contentParams(-1, -2, 0));
+                } else {
+                    reports.addView(text("No LOST reports currently available.", 13, secondaryTextColor(), Typeface.NORMAL));
+                }
+            } else if ("FOUND".equals(adminReportFilter)) {
+                if (found > 0) {
+                    reports.addView(foundSection, contentParams(-1, -2, 0));
+                } else {
+                    reports.addView(text("No FOUND reports currently available.", 13, secondaryTextColor(), Typeface.NORMAL));
+                }
+            } else if (lost == 0 && found == 0) {
                 reports.addView(text("No live reports currently available.", 13, secondaryTextColor(), Typeface.NORMAL));
+            } else {
+                reports.addView(text("Select LOST or FOUND to view reports.", 13, secondaryTextColor(), Typeface.NORMAL));
             }
         } catch (Exception error) {
             reports.addView(text("Reports could not be read.", 13, secondaryTextColor(), Typeface.NORMAL));
@@ -8173,10 +8294,32 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
     private void loadAdminMatches(JSONObject foundItem, TextView heading, LinearLayout matches) {
         heading.setVisibility(View.VISIBLE);
         matches.removeAllViews();
-        matches.addView(text("Comparing against lost reports...", 12, secondaryTextColor(), Typeface.NORMAL));
+        matches.addView(text("Loading saved AI matches...", 12, secondaryTextColor(), Typeface.NORMAL));
         FirebaseUser adminUser = FirebaseAuth.getInstance().getCurrentUser();
         if (adminUser == null) return;
         adminUser.getIdToken(false).addOnSuccessListener(token -> network.execute(() -> {
+            String alertsResponse = getAuthorized("/api/admin/alerts", token.getToken());
+            if (alertsResponse != null) {
+                try {
+                    JSONArray alerts = new JSONArray(alertsResponse);
+                    JSONArray linkedAlerts = new JSONArray();
+                    for (int index = 0; index < alerts.length(); index++) {
+                        JSONObject alert = alerts.getJSONObject(index);
+                        if (alertMatchesFoundReport(alert, foundItem)) linkedAlerts.put(alert);
+                    }
+                    if (linkedAlerts.length() > 0) {
+                        runOnUiThread(() -> renderSavedAdminMatches(linkedAlerts, matches));
+                        return;
+                    }
+                } catch (Exception ignored) {
+                }
+            }
+
+            runOnUiThread(() -> {
+                matches.removeAllViews();
+                matches.addView(text("No saved AI alert linked. Searching other reports...", 12,
+                        secondaryTextColor(), Typeface.NORMAL));
+            });
             String response = null;
             try {
                 AiMatchService.ApiResponse matchResponse = AiMatchService.findMatches(
@@ -8189,10 +8332,66 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         }));
     }
 
+    private boolean alertMatchesFoundReport(JSONObject alert, JSONObject foundItem) {
+        String alertId = alert.optString("found_item_id", "").trim();
+        String reportId = foundItem.optString("id", "").trim();
+        if (!alertId.isEmpty() && alertId.equals(reportId)) return true;
+
+        String alertImage = alert.optString("found_image_url", "").trim();
+        String reportImage = foundItem.optString("image_url", foundItem.optString("imageUrl", "")).trim();
+        if (!alertImage.isEmpty() && !reportImage.isEmpty()) return alertImage.equals(reportImage);
+
+        String alertTitle = alert.optString("found_title", "").trim();
+        String originalTitle = foundItem.optString("original_title", "").trim();
+        String displayTitle = foundItem.optString("title", "").trim();
+        return !alertTitle.isEmpty() && (alertTitle.equalsIgnoreCase(originalTitle)
+                || alertTitle.equalsIgnoreCase(displayTitle));
+    }
+
+    private void renderSavedAdminMatches(JSONArray alerts, LinearLayout matches) {
+        matches.removeAllViews();
+        for (int index = 0; index < alerts.length(); index++) {
+            JSONObject alert = alerts.optJSONObject(index);
+            if (alert == null) continue;
+            LinearLayout card = new LinearLayout(this);
+            card.setOrientation(LinearLayout.VERTICAL);
+            card.setPadding(dp(12), dp(12), dp(12), dp(12));
+            card.setBackground(roundWithStroke(surfaceColor(), 14, borderColor()));
+
+            double confidence = alert.optDouble("confidence", 0.0);
+            TextView score = text(String.format(Locale.US, "SAVED AI MATCH  ·  %d%%", Math.round(confidence * 100)),
+                    11, GOLD_ON, Typeface.BOLD);
+            card.addView(score, new LinearLayout.LayoutParams(-1, dp(24)));
+
+            LinearLayout comparison = new LinearLayout(this);
+            comparison.setOrientation(LinearLayout.HORIZONTAL);
+            comparison.addView(adminAlertComparisonColumn(
+                    "FOUND", alert.optString("found_title", "Found item"),
+                    alert.optString("found_description", ""), alert.optString("found_image_url", ""), FOUND_GOLD),
+                    new LinearLayout.LayoutParams(0, -2, 1f));
+            LinearLayout.LayoutParams lostParams = new LinearLayout.LayoutParams(0, -2, 1f);
+            lostParams.setMargins(dp(8), 0, 0, 0);
+            comparison.addView(adminAlertComparisonColumn(
+                    "LOST", alert.optString("lost_title", "Lost report"),
+                    alert.optString("lost_description", ""), alert.optString("lost_image_url", ""), LOST_GREEN),
+                    lostParams);
+            card.addView(comparison, new LinearLayout.LayoutParams(-1, -2));
+            matches.addView(card, contentParams(-1, -2, dp(8)));
+        }
+        if (matches.getChildCount() == 0) {
+            matches.addView(text("No saved AI matches found for this report.", 12,
+                    secondaryTextColor(), Typeface.NORMAL));
+        }
+    }
+
     private void renderAdminMatches(JSONObject foundItem, String response, LinearLayout matches) {
         matches.removeAllViews();
+        if (response == null) {
+            matches.addView(text("Could not search matches. Try again.", 12, secondaryTextColor(), Typeface.NORMAL));
+            return;
+        }
         try {
-            JSONArray results = new JSONArray(response == null ? "[]" : response);
+            JSONArray results = new JSONArray(response);
             if (results.length() == 0) {
                 matches.addView(text("No possible matches found.", 12, secondaryTextColor(), Typeface.NORMAL));
                 return;
@@ -8555,6 +8754,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             if (adminViewModel.verifyAdminCredentials(adminUsername, adminPin)) {
                 dialog.dismiss();
                 adminAlertsAutoShownThisVisit = false;
+                adminReportFilter = "";
                 showAdminDashboard();
             } else {
                 Toast.makeText(this, "Invalid Admin Name or PIN", Toast.LENGTH_LONG).show();
@@ -8639,7 +8839,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                     int unreadCount = payload.optInt("unread_count", 0);
                     updateUserNotificationCount(unreadCount);
                     if (notifications.length() == 0) {
-                        Toast.makeText(this, "No user notifications", Toast.LENGTH_SHORT).show();
+                        Toast.makeText(this, LanguageManager.profileText(this, "no_notifications"), Toast.LENGTH_SHORT).show();
                     } else {
                         showUserNotificationsDialog(notifications);
                     }
@@ -8719,7 +8919,6 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         GradientDrawable badgeBg = new GradientDrawable();
         badgeBg.setShape(GradientDrawable.OVAL);
         badgeBg.setColor(Color.rgb(220, 38, 38));
-        badgeBg.setStroke(dp(2), Color.WHITE);
         badge.setBackground(badgeBg);
         badge.setElevation(dp(4));
 
@@ -9663,6 +9862,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
     private void applyLanguageSelection(int languageIndex, String languageCode) {
         selectedLanguage = languageIndex;
         LanguageManager.setAppLanguage(this, languageCode);
+        LanguageManager.restoreSavedLanguage(this);
         applySystemBarColors();
         if (screenRenderer != null) screenRenderer.run();
     }

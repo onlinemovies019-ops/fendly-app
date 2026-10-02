@@ -49,6 +49,16 @@
     <string name="profile_city">நகரம்</string>
     <string name="profile_email">மின்னஞ்சல்</string>
     <string name="profile_mobile">மொபைல்</string>
+    <string name="profile_advanced_settings">மேம்பட்ட அமைப்புகள்</string>
+    <string name="profile_imei_hint">எதிர்காலத்தில் இந்தச் சாதனம் தொலைந்தாலோ திருடப்பட்டாலோ பாதுகாக்கவும்</string>
+    <string name="profile_imei_label">IMEI எண்</string>
+    <string name="profile_mobile_serial_number">மொபைல் வரிசை எண்</string>
+    <string name="scanner_prompt_imei">IMEI-ஐ ஸ்கேன் செய்யவும்</string>
+    <string name="scanner_prompt_serial">மொபைல் வரிசை எண்ணை ஸ்கேன் செய்யவும்</string>
+    <string name="scanner_align_barcode">பார்கோடை சட்டகத்திற்குள் வைக்கவும்</string>
+    <string name="zxing_msg_default_status">ஸ்கேன் செய்ய பார்கோடை வ்யூஃபைண்டர் செவ்வகத்திற்குள் வைக்கவும்.</string>
+    <string name="zxing_msg_camera_framework_bug">கேமராவில் சிக்கல் ஏற்பட்டது. மீண்டும் முயற்சிக்கவும்.</string>
+    <string name="zxing_button_ok">சரி</string>
     <string name="profile_new_pin">புதிய பின்</string>
     <string name="profile_change_pin">பின்னை மாற்று</string>
     <string name="profile_save_changes">மாற்றங்களைச் சேமி</string>

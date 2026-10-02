@@ -49,6 +49,16 @@
     <string name="profile_city">શહેર</string>
     <string name="profile_email">ઈમેલ</string>
     <string name="profile_mobile">મોબાઇલ</string>
+    <string name="profile_advanced_settings">અદ્યતન સેટિંગ્સ</string>
+    <string name="profile_imei_hint">ભવિષ્યમાં આ ઉપકરણ ખોવાય કે ચોરાય તો તેને સુરક્ષિત રાખો</string>
+    <string name="profile_imei_label">IMEI નંબર</string>
+    <string name="profile_mobile_serial_number">મોબાઇલ સીરિયલ નંબર</string>
+    <string name="scanner_prompt_imei">IMEI સ્કેન કરો</string>
+    <string name="scanner_prompt_serial">મોબાઇલ સીરિયલ નંબર સ્કેન કરો</string>
+    <string name="scanner_align_barcode">બારકોડને ફ્રેમની અંદર ગોઠવો</string>
+    <string name="zxing_msg_default_status">સ્કેન કરવા માટે બારકોડને વ્યૂફાઇન્ડર ફ્રેમની અંદર મૂકો.</string>
+    <string name="zxing_msg_camera_framework_bug">કેમેરામાં સમસ્યા આવી. કૃપા કરીને ફરી પ્રયાસ કરો.</string>
+    <string name="zxing_button_ok">બરાબર</string>
     <string name="profile_new_pin">નવો પિન</string>
     <string name="profile_change_pin">પિન બદલો</string>
     <string name="profile_save_changes">ફેરફારો સાચવો</string>

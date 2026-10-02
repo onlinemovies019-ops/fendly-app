@@ -49,6 +49,16 @@
     <string name="profile_city">City</string>
     <string name="profile_email">Email</string>
     <string name="profile_mobile">Mobile</string>
+    <string name="profile_advanced_settings">Advanced settings</string>
+    <string name="profile_imei_hint">Protect this device against future loss or theft</string>
+    <string name="profile_imei_label">IMEI number</string>
+    <string name="profile_mobile_serial_number">Mobile serial number</string>
+    <string name="scanner_prompt_imei">Scan IMEI</string>
+    <string name="scanner_prompt_serial">Scan mobile serial number</string>
+    <string name="scanner_align_barcode">Align barcode within the frame</string>
+    <string name="zxing_msg_default_status">Place a barcode inside the viewfinder rectangle to scan it.</string>
+    <string name="zxing_msg_camera_framework_bug">The camera encountered a problem. Please try again.</string>
+    <string name="zxing_button_ok">OK</string>
     <string name="profile_new_pin">New PIN</string>
     <string name="profile_change_pin">Change PIN</string>
     <string name="profile_save_changes">Save changes</string>

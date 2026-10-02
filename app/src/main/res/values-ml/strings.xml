@@ -49,6 +49,16 @@
     <string name="profile_city">നഗരം</string>
     <string name="profile_email">ഇമെയിൽ</string>
     <string name="profile_mobile">മൊബൈൽ</string>
+    <string name="profile_advanced_settings">വിപുലമായ ക്രമീകരണങ്ങൾ</string>
+    <string name="profile_imei_hint">ഭാവിയിൽ ഈ ഉപകരണം നഷ്ടപ്പെടുകയോ മോഷണം പോകുകയോ ചെയ്താൽ സംരക്ഷിക്കുക</string>
+    <string name="profile_imei_label">IMEI നമ്പർ</string>
+    <string name="profile_mobile_serial_number">മൊബൈൽ സീരിയൽ നമ്പർ</string>
+    <string name="scanner_prompt_imei">IMEI സ്കാൻ ചെയ്യുക</string>
+    <string name="scanner_prompt_serial">മൊബൈൽ സീരിയൽ നമ്പർ സ്കാൻ ചെയ്യുക</string>
+    <string name="scanner_align_barcode">ബാർകോഡ് ഫ്രെയിമിനുള്ളിൽ വയ്ക്കുക</string>
+    <string name="zxing_msg_default_status">സ്കാൻ ചെയ്യാൻ ബാർകോഡ് വ്യൂഫൈൻഡർ ചതുരത്തിനുള്ളിൽ വയ്ക്കുക.</string>
+    <string name="zxing_msg_camera_framework_bug">ക്യാമറയിൽ പ്രശ്നമുണ്ടായി. വീണ്ടും ശ്രമിക്കുക.</string>
+    <string name="zxing_button_ok">ശരി</string>
     <string name="profile_new_pin">പുതിയ പിൻ</string>
     <string name="profile_change_pin">പിൻ മാറ്റുക</string>
     <string name="profile_save_changes">മാറ്റങ്ങൾ സംരക്ഷിക്കുക</string>

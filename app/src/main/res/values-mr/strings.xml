@@ -49,6 +49,16 @@
     <string name="profile_city">शहर</string>
     <string name="profile_email">ईमेल</string>
     <string name="profile_mobile">मोबाइल</string>
+    <string name="profile_advanced_settings">प्रगत सेटिंग्ज</string>
+    <string name="profile_imei_hint">भविष्यात हे डिव्हाइस हरवल्यास किंवा चोरीला गेल्यास सुरक्षित ठेवा</string>
+    <string name="profile_imei_label">IMEI क्रमांक</string>
+    <string name="profile_mobile_serial_number">मोबाइल अनुक्रमांक</string>
+    <string name="scanner_prompt_imei">IMEI स्कॅन करा</string>
+    <string name="scanner_prompt_serial">मोबाइल अनुक्रमांक स्कॅन करा</string>
+    <string name="scanner_align_barcode">बारकोड चौकटीच्या आत ठेवा</string>
+    <string name="zxing_msg_default_status">स्कॅन करण्यासाठी बारकोड दृश्यचौकटीच्या आत ठेवा.</string>
+    <string name="zxing_msg_camera_framework_bug">कॅमेऱ्यात समस्या आली. कृपया पुन्हा प्रयत्न करा.</string>
+    <string name="zxing_button_ok">ठीक आहे</string>
     <string name="profile_new_pin">नवीन पिन</string>
     <string name="profile_change_pin">पिन बदला</string>
     <string name="profile_save_changes">बदल जतन करा</string>
