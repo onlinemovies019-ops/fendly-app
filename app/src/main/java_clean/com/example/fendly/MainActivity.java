@@ -7949,19 +7949,19 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         addTranslatedReportDetail(details, "English description", report.optString("description", ""), description, adminView);
         addReportDetail(details, "Date", report.optString("report_date", ""));
         String location = report.optString("original_report_location", report.optString("report_location", report.optString("location", ""))).trim();
+        addReportDetail(details, "Location", location);
+        addTranslatedReportDetail(details, "English location", report.optString("report_location", ""), location, adminView);
         addReportDetail(details, "IMEI", report.optString("imei", report.optString("imei_number", "")));
         addReportDetail(details, "Status", report.optString("status", ""));
         double latitude = report.optDouble("lat", report.optDouble("latitude", 0.0));
         double longitude = report.optDouble("lng", report.optDouble("longitude", 0.0));
-        String locationDetails;
+        String preciseLocation;
         if (latitude != 0.0 || longitude != 0.0) {
-            locationDetails = String.format(Locale.US, "%.6f, %.6f", latitude, longitude);
-            if (!location.isEmpty()) locationDetails += " · " + location;
+            preciseLocation = String.format(Locale.US, "%.6f, %.6f", latitude, longitude);
         } else {
-            locationDetails = location.isEmpty() ? "No location shared" : location;
+            preciseLocation = "No location shared";
         }
-        addReportDetail(details, "Location", locationDetails);
-        addTranslatedReportDetail(details, "English location", report.optString("report_location", ""), location, adminView);
+        addReportDetail(details, "Precise location", preciseLocation);
         addReportDetail(details, "Posted", report.optString("created_at", ""));
         if (adminView) addReportDetail(details, "Reporter ID", report.optString("created_by", ""));
 
