@@ -141,6 +141,7 @@ async def lifespan(_: FastAPI):
             add_column_if_missing("found_items", "category_en", "text")
             add_column_if_missing("found_items", "source_language", "varchar(16)", not_null=True, default="'auto'")
             add_column_if_missing("found_items", "edit_count", "integer", not_null=True, default="0")
+            add_column_if_missing("admin_match_alerts", "review_status", "varchar(20)", not_null=True, default="'pending'")
     yield
 
 

@@ -60,6 +60,7 @@ class AdminMatchAlert(Base):
     confidence: Mapped[float] = mapped_column(Float)
     reason: Mapped[str] = mapped_column(Text)
     is_read: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    review_status: Mapped[str] = mapped_column(String(20), default="pending")
     email_sent: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 

@@ -542,6 +542,50 @@ async def test_admin_alert_preserves_stored_titles_when_linked_reports_are_not_i
     assert translated_alerts[0]["reason"] == "Found 'Green wallet' may match lost report 'Wallet'."
 
 
+@pytest.mark.asyncio
+async def test_admin_alert_includes_indexed_images_and_descriptions(monkeypatch):
+    session = Mock(spec=Session)
+    session.get.return_value = None
+    alerts = [{
+        "found_item_id": "found-1",
+        "lost_item_id": "lost-1",
+        "found_title": "Green wallet",
+        "lost_title": "Wallet",
+    }]
+    response = Mock()
+    response.json.return_value = [
+        {"source_id": "found-1", "title": "Green wallet", "description": "Green leather wallet", "image_url": "https://images.test/found.jpg"},
+        {"source_id": "lost-1", "title": "Wallet", "description": "Lost near station", "image_url": "https://images.test/lost.jpg"},
+    ]
+    monkeypatch.setattr(admin_module, "_supabase_admin_alert_request", Mock(return_value=response))
+
+    translated_alerts = await admin_module._translate_alert_titles(alerts, session)
+
+    assert translated_alerts[0]["found_description"] == "Green leather wallet"
+    assert translated_alerts[0]["lost_description"] == "Lost near station"
+    assert translated_alerts[0]["found_image_url"] == "https://images.test/found.jpg"
+    assert translated_alerts[0]["lost_image_url"] == "https://images.test/lost.jpg"
+
+
+def test_admin_alert_review_persists_decision_and_marks_alert_read(monkeypatch):
+    alert = SimpleNamespace(review_status="pending", is_read=False)
+    session = Mock(spec=Session)
+    session.get.return_value = alert
+    monkeypatch.setattr(admin_module, "_supabase_admin_alert_request", lambda *args, **kwargs: None)
+
+    result = admin_module.review_match_alert(
+        "alert-1",
+        admin_module.AlertReviewRequest(decision="confirmed"),
+        session,
+        "admin-1",
+    )
+
+    assert result == {"review_status": "confirmed"}
+    assert alert.review_status == "confirmed"
+    assert alert.is_read is True
+    session.commit.assert_called_once()
+
+
 def test_admin_report_search_requires_every_comma_filter_to_match_title_or_description():
     conditions = admin_module._report_search_conditions(LostItem, ["bike", "green"])
     statement = select(LostItem).where(*conditions)

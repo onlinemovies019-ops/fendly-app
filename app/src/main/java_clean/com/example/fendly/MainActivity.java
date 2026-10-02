@@ -8633,7 +8633,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         iconParams.gravity = Gravity.CENTER_HORIZONTAL;
         form.addView(bellIcon, iconParams);
 
-        TextView title = text("Match notifications", 18, primaryTextColor(), Typeface.BOLD);
+        TextView title = text("Review match alerts", 18, primaryTextColor(), Typeface.BOLD);
         title.setGravity(Gravity.CENTER);
         title.setPadding(0, dp(4), 0, dp(12));
         form.addView(title, new LinearLayout.LayoutParams(-1, -2));
@@ -8644,24 +8644,73 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
 
         for (int index = 0; index < alerts.length(); index++) {
             JSONObject alert = alerts.getJSONObject(index);
-            String details = alert.optString("found_title", "Found item") + " may match "
-                    + alert.optString("lost_title", "a lost report") + "\n"
-                    + Math.round(alert.optDouble("confidence", 0.0) * 100) + "% confidence";
-            TextView row = text(details, 13, primaryTextColor(), Typeface.NORMAL);
-            row.setPadding(dp(12), dp(10), dp(12), dp(10));
-            row.setBackground(roundWithStroke(surfaceColor(), 10, fieldBorderColor()));
+            LinearLayout row = new LinearLayout(this);
+            row.setOrientation(LinearLayout.VERTICAL);
+            row.setPadding(dp(12), dp(12), dp(12), dp(12));
+            row.setBackground(roundWithStroke(surfaceColor(), 12, fieldBorderColor()));
+
+            double confidence = alert.optDouble("confidence", 0.0);
+            String reviewStatus = alert.optString("review_status", "pending");
+            TextView matchLabel = text(
+                    String.format(Locale.US, "AI VISUAL SIMILARITY  ·  %d%%", Math.round(confidence * 100)),
+                11, GOLD_ON, Typeface.BOLD);
+            row.addView(matchLabel, new LinearLayout.LayoutParams(-1, dp(22)));
+
+            LinearLayout comparison = new LinearLayout(this);
+            comparison.setOrientation(LinearLayout.HORIZONTAL);
+            comparison.addView(adminAlertComparisonColumn(
+                "FOUND ITEM",
+                alert.optString("found_title", "Found item"),
+                alert.optString("found_description", ""),
+                alert.optString("found_image_url", ""),
+                FOUND_GOLD), new LinearLayout.LayoutParams(0, -2, 1f));
+            LinearLayout.LayoutParams lostColumnParams = new LinearLayout.LayoutParams(0, -2, 1f);
+            lostColumnParams.setMargins(dp(8), 0, 0, 0);
+            comparison.addView(adminAlertComparisonColumn(
+                "LOST REPORT",
+                alert.optString("lost_title", "Lost report"),
+                alert.optString("lost_description", ""),
+                alert.optString("lost_image_url", ""),
+                LOST_GREEN), lostColumnParams);
+            row.addView(comparison, new LinearLayout.LayoutParams(-1, -2));
+
+            boolean reviewed = "confirmed".equalsIgnoreCase(reviewStatus) || "rejected".equalsIgnoreCase(reviewStatus);
+            String statusLabel = "confirmed".equalsIgnoreCase(reviewStatus)
+                ? "Confirmed match" : "rejected".equalsIgnoreCase(reviewStatus) ? "Not a match" : "Needs review";
+            TextView status = text(statusLabel, 11,
+                reviewed ? secondaryTextColor() : GOLD_ON, Typeface.NORMAL);
+            status.setPadding(0, dp(8), 0, dp(4));
+            row.addView(status, new LinearLayout.LayoutParams(-1, -2));
+
+            String alertId = alert.optString("id", "");
+            if (!reviewed && !alertId.isEmpty()) {
+            LinearLayout actions = new LinearLayout(this);
+            actions.setOrientation(LinearLayout.HORIZONTAL);
+            TextView confirm = actionButton("Confirm match", true);
+            TextView reject = actionButton("Not a match", false);
+            actions.addView(confirm, new LinearLayout.LayoutParams(0, dp(42), 1f));
+            LinearLayout.LayoutParams rejectParams = new LinearLayout.LayoutParams(0, dp(42), 1f);
+            rejectParams.setMargins(dp(8), 0, 0, 0);
+            actions.addView(reject, rejectParams);
+            confirm.setOnClickListener(view -> saveAdminAlertReview(
+                alertId, "confirmed", idToken, status, actions));
+            reject.setOnClickListener(view -> saveAdminAlertReview(
+                alertId, "rejected", idToken, status, actions));
+            row.addView(actions, new LinearLayout.LayoutParams(-1, dp(42)));
+            }
+
             LinearLayout.LayoutParams rowParams = new LinearLayout.LayoutParams(-1, -2);
             rowParams.setMargins(0, 0, 0, dp(8));
             rows.addView(row, rowParams);
 
-            String alertId = alert.optString("id", "");
             if (!alert.optBoolean("is_read", false) && !alertId.isEmpty()) {
                 network.execute(() -> postAuthorized("/api/admin/alerts/" + alertId + "/read", idToken));
             }
         }
 
         scroll.addView(rows);
-        LinearLayout.LayoutParams scrollParams = new LinearLayout.LayoutParams(-1, Math.min(dp(260), dp(80) * alerts.length()));
+        int maxReviewHeight = Math.max(dp(220), getResources().getDisplayMetrics().heightPixels - dp(300));
+        LinearLayout.LayoutParams scrollParams = new LinearLayout.LayoutParams(-1, Math.min(dp(460), maxReviewHeight));
         scrollParams.setMargins(0, 0, 0, dp(16));
         form.addView(scroll, scrollParams);
 
@@ -8676,7 +8725,69 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         sizeThemedDialog(dialog);
     }
 
+    private LinearLayout adminAlertComparisonColumn(String label, String title, String description,
+                                                    String imageUrl, int accent) {
+        LinearLayout column = new LinearLayout(this);
+        column.setOrientation(LinearLayout.VERTICAL);
+
+        TextView heading = text(label, 10, accent, Typeface.BOLD);
+        column.addView(heading, new LinearLayout.LayoutParams(-1, dp(20)));
+
+        ImageView image = new ImageView(this);
+        image.setScaleType(ImageView.ScaleType.CENTER_CROP);
+        image.setBackground(roundWithStroke(backgroundColor(), 8, borderColor()));
+        image.setImageDrawable(new ColorDrawable(Color.argb(100, 190, 190, 190)));
+        column.addView(image, new LinearLayout.LayoutParams(-1, dp(112)));
+        if (!imageUrl.trim().isEmpty()) {
+            Glide.with(this)
+                    .load(imageUrl)
+                    .placeholder(new ColorDrawable(Color.argb(100, 190, 190, 190)))
+                    .error(new ColorDrawable(Color.argb(100, 190, 190, 190)))
+                    .into(image);
+        }
+
+        TextView itemTitle = text(title, 12, primaryTextColor(), Typeface.BOLD);
+        itemTitle.setMaxLines(2);
+        itemTitle.setPadding(0, dp(5), 0, 0);
+        column.addView(itemTitle, new LinearLayout.LayoutParams(-1, -2));
+
+        TextView itemDescription = text(description.isEmpty() ? "No description" : description,
+                10, secondaryTextColor(), Typeface.NORMAL);
+        itemDescription.setMaxLines(3);
+        column.addView(itemDescription, new LinearLayout.LayoutParams(-1, -2));
+        return column;
+    }
+
+    private void saveAdminAlertReview(String alertId, String decision, String idToken,
+                                      TextView status, LinearLayout actions) {
+        status.setText("Saving decision...");
+        actions.setEnabled(false);
+        for (int index = 0; index < actions.getChildCount(); index++) {
+            actions.getChildAt(index).setEnabled(false);
+        }
+        String body = "{\"decision\":\"" + decision + "\"}";
+        network.execute(() -> {
+            boolean saved = postAuthorized("/api/admin/alerts/" + alertId + "/review", idToken, body);
+            runOnUiThread(() -> {
+                if (saved) {
+                    status.setText("confirmed".equals(decision) ? "Confirmed match" : "Not a match");
+                    actions.setVisibility(View.GONE);
+                } else {
+                    status.setText("Could not save decision. Try again.");
+                    actions.setEnabled(true);
+                    for (int index = 0; index < actions.getChildCount(); index++) {
+                        actions.getChildAt(index).setEnabled(true);
+                    }
+                }
+            });
+        });
+    }
+
     private boolean postAuthorized(String path, String idToken) {
+        return postAuthorized(path, idToken, null);
+    }
+
+    private boolean postAuthorized(String path, String idToken, String body) {
         HttpURLConnection connection = null;
         try {
             connection = (HttpURLConnection) new URL(API_BASE + path).openConnection();
@@ -8684,6 +8795,13 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             connection.setConnectTimeout(15000);
             connection.setReadTimeout(30000);
             connection.setRequestProperty("Authorization", "Bearer " + idToken);
+            if (body != null) {
+                connection.setDoOutput(true);
+                connection.setRequestProperty("Content-Type", "application/json; charset=UTF-8");
+                try (OutputStream output = connection.getOutputStream()) {
+                    output.write(body.getBytes(StandardCharsets.UTF_8));
+                }
+            }
             return connection.getResponseCode() >= 200 && connection.getResponseCode() < 300;
         } catch (Exception error) {
             return false;

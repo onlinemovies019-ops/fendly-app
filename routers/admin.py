@@ -59,6 +59,10 @@ class NotifyRequest(BaseModel):
     score: float = Field(ge=0, le=1)
 
 
+class AlertReviewRequest(BaseModel):
+    decision: str = Field(pattern="^(confirmed|rejected)$")
+
+
 def _parse_admin_uids(raw_value: str | None) -> set[str]:
     if raw_value is None:
         return set()
@@ -187,15 +191,51 @@ async def _translate_alert_titles(alerts: list[dict[str, object]], session: Sess
                 linked_items[f"lost:{lost_id}"] = item
 
     await _ensure_english_translations(list(linked_items.values()), session)
+    source_ids = sorted({
+        str(alert[key])
+        for alert in alerts
+        for key in ("found_item_id", "lost_item_id")
+        if alert.get(key)
+    })
+    indexed_items: dict[str, dict[str, object]] = {}
+    if source_ids:
+        response = _supabase_admin_alert_request(
+            "GET",
+            "items",
+            params={
+                "select": "source_id,title,description,image_url,type",
+                "source_id": f"in.({','.join(json.dumps(source_id) for source_id in source_ids)})",
+            },
+        )
+        if response is not None and isinstance(response.json(), list):
+            indexed_items = {
+                str(item["source_id"]): item
+                for item in response.json()
+                if isinstance(item, dict) and item.get("source_id")
+            }
+
     for alert in alerts:
-        found_item = linked_items.get(f"found:{alert.get('found_item_id')}")
-        lost_item = linked_items.get(f"lost:{alert.get('lost_item_id')}")
+        found_id = str(alert.get("found_item_id", ""))
+        lost_id = str(alert.get("lost_item_id", ""))
+        found_item = linked_items.get(f"found:{found_id}")
+        lost_item = linked_items.get(f"lost:{lost_id}")
+        found_indexed = indexed_items.get(found_id, {})
+        lost_indexed = indexed_items.get(lost_id, {})
         alert["found_title"] = (
-            (found_item.title_en or found_item.title) if found_item else alert.get("found_title")
+            (found_item.title_en or found_item.title) if found_item else alert.get("found_title") or found_indexed.get("title")
         ) or ENGLISH_UNAVAILABLE
         alert["lost_title"] = (
-            (lost_item.title_en or lost_item.title) if lost_item else alert.get("lost_title")
+            (lost_item.title_en or lost_item.title) if lost_item else alert.get("lost_title") or lost_indexed.get("title")
         ) or ENGLISH_UNAVAILABLE
+        alert["found_description"] = (
+            (found_item.description_en or found_item.description) if found_item else found_indexed.get("description", "")
+        )
+        alert["lost_description"] = (
+            (lost_item.description_en or lost_item.description) if lost_item else lost_indexed.get("description", "")
+        )
+        alert["found_image_url"] = found_item.image_url if found_item else found_indexed.get("image_url", "")
+        alert["lost_image_url"] = lost_item.image_url if lost_item else lost_indexed.get("image_url", "")
+        alert.setdefault("review_status", "pending")
         alert["reason"] = f"Found '{alert['found_title']}' may match lost report '{alert['lost_title']}'."
     return alerts
 
@@ -266,6 +306,7 @@ async def list_match_alerts(
             "confidence": alert.confidence,
             "reason": alert.reason,
             "is_read": alert.is_read,
+            "review_status": alert.review_status,
             "email_sent": alert.email_sent,
             "created_at": alert.created_at.isoformat() if alert.created_at else None,
         }
@@ -298,6 +339,34 @@ def mark_match_alert_read(
         raise HTTPException(404, "Alert not found")
     alert.is_read = True
     session.commit()
+
+
+@router.post("/alerts/{alert_id}/review")
+def review_match_alert(
+    alert_id: str,
+    payload: AlertReviewRequest,
+    session: Session = Depends(get_db),
+    _: str = Depends(require_admin),
+) -> dict[str, str]:
+    response = _supabase_admin_alert_request(
+        "PATCH",
+        "admin_match_alerts",
+        params={"id": f"eq.{alert_id}"},
+        json={"review_status": payload.decision, "is_read": True},
+        headers={"Prefer": "return=representation"},
+    )
+    if response is not None:
+        if not response.json():
+            raise HTTPException(404, "Alert not found")
+        return {"review_status": payload.decision}
+
+    alert = session.get(AdminMatchAlert, alert_id)
+    if alert is None:
+        raise HTTPException(404, "Alert not found")
+    alert.review_status = payload.decision
+    alert.is_read = True
+    session.commit()
+    return {"review_status": payload.decision}
 
 
 @router.get("/search")
