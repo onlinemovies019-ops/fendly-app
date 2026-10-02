@@ -113,8 +113,8 @@ def persist_admin_match_alert(
     if existing is not None:
         return False
 
-    found_title = found_item.title_en or "English translation unavailable"
-    lost_title = lost_item.title_en or "English translation unavailable"
+    found_title = found_item.title_en or found_item.title
+    lost_title = lost_item.title_en or lost_item.title
     details = f"Found '{found_title}' may match lost report '{lost_title}'."
     alert = AdminMatchAlert(
         found_item_id=found_item.id,

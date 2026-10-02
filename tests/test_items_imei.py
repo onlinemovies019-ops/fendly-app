@@ -490,6 +490,40 @@ async def test_admin_alert_titles_and_reason_use_english_report_text():
     assert translated_alerts[0]["reason"] == "Found 'Found bag' may match lost report 'Lost bag'."
 
 
+@pytest.mark.asyncio
+async def test_admin_alert_titles_fall_back_to_original_when_translation_is_unavailable(monkeypatch):
+    found_item = FoundItem(
+        id="found-1",
+        created_by="user-1",
+        title="Green wallet",
+        description="A green wallet",
+        lat=0,
+        lng=0,
+    )
+    lost_item = LostItem(
+        id="lost-1",
+        created_by="user-2",
+        title="Wallet",
+        description="A wallet",
+        lat=0,
+        lng=0,
+    )
+    session = Mock(spec=Session)
+    session.get.side_effect = [found_item, lost_item]
+
+    async def skip_translation(items, session):
+        return None
+
+    monkeypatch.setattr(admin_module, "_ensure_english_translations", skip_translation)
+    alerts = [{"found_item_id": "found-1", "lost_item_id": "lost-1"}]
+
+    translated_alerts = await admin_module._translate_alert_titles(alerts, session)
+
+    assert translated_alerts[0]["found_title"] == "Green wallet"
+    assert translated_alerts[0]["lost_title"] == "Wallet"
+    assert translated_alerts[0]["reason"] == "Found 'Green wallet' may match lost report 'Wallet'."
+
+
 def test_admin_report_search_requires_every_comma_filter_to_match_title_or_description():
     conditions = admin_module._report_search_conditions(LostItem, ["bike", "green"])
     statement = select(LostItem).where(*conditions)
