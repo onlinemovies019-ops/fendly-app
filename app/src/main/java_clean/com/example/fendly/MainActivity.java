@@ -2651,6 +2651,22 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_HIDDEN);
     }
 
+    private void clearReportDraftState() {
+        draftItem = "";
+        draftDescription = "";
+        draftLocation = "";
+        draftDate = "";
+        draftImei = "";
+        selectedImage = null;
+        capturedImage = null;
+        Arrays.fill(reportImages, null);
+        Arrays.fill(reportCameraImages, null);
+        hasLocation = false;
+        currentLat = 0.0;
+        currentLng = 0.0;
+        activeLocationReportType = null;
+    }
+
     private void showHome() {
         currentPage = PAGE_HOME;
         screenRenderer = this::showHome;
@@ -2661,12 +2677,18 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         TextView lost = actionButton("LOST/THEFT", true);
         lost.setBackground(round(Color.rgb(11, 93, 69), 18));
         lost.setTextColor(Color.WHITE);
-        lost.setOnClickListener(view -> showReport("LOST"));
+        lost.setOnClickListener(view -> {
+            clearReportDraftState();
+            showReport("LOST");
+        });
         choices.addView(lost, new LinearLayout.LayoutParams(0, 72, 1));
         TextView found = actionButton("FOUND", false);
         found.setTextColor(Color.WHITE);
         found.setBackground(round(Color.rgb(201, 162, 76), 18));
-        found.setOnClickListener(view -> showReport("FOUND"));
+        found.setOnClickListener(view -> {
+            clearReportDraftState();
+            showReport("FOUND");
+        });
         choices.addView(found, new LinearLayout.LayoutParams(0, 72, 1));
         addField(root, choices);
         TextView reports = actionButton("My reports", false);
@@ -3163,22 +3185,12 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                     int code = submission.statusCode;
                     if ((code >= 200 && code < 300) || submission.firestoreSaved) {
                         boolean paidLostReport = paymentId != null && "LOST".equalsIgnoreCase(type);
-                        String message;
-                        if (paidLostReport && code >= 200 && code < 300) {
-                            message = "Payment Successful. Report submitted.";
-                        } else if (paidLostReport) {
-                            message = "Payment Successful. Report is saved in My Reports; server sync is unavailable.";
-                        } else {
-                            message = submission.errorMessage == null || submission.errorMessage.trim().isEmpty()
-                                    ? "Report saved securely"
-                                    : "Report saved without image: " + submission.errorMessage;
-                        }
+                        String message = ReportSubmissionMessages.buildSubmissionSuccessMessage(paidLostReport, submission.errorMessage, submission.matchError);
                         Toast.makeText(this, message, Toast.LENGTH_LONG).show();
+                        clearReportDraftState();
                         showReports();
                         if (submission.matches != null) {
                             showReportMatchDialog(type, title, details, submission.matches);
-                        } else if (submission.matchError != null) {
-                            Toast.makeText(this, "Report saved; match search is unavailable", Toast.LENGTH_LONG).show();
                         }
                     } else {
                         publish.setText("Retry submission");
@@ -4938,22 +4950,48 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
     }
 
     private void deleteReport(String reportId, String type) {
-        new AlertDialog.Builder(this)
-                .setTitle("Delete report?")
-                .setMessage("This report will be permanently removed.")
-                .setNegativeButton("Cancel", null)
-                .setPositiveButton("Delete", (dialog, which) -> FirebaseAuth.getInstance().getCurrentUser().getIdToken(false).addOnSuccessListener(token -> network.execute(() -> {
-                    int code = deleteItem(type, reportId, token.getToken());
-                    runOnUiThread(() -> {
-                        if (code >= 200 && code < 300) {
-                            Toast.makeText(this, "Report deleted", Toast.LENGTH_SHORT).show();
-                            showReports();
-                        } else {
-                            Toast.makeText(this, "Could not delete report (" + code + ")", Toast.LENGTH_LONG).show();
-                        }
-                    });
-                })))
-                .show();
+        Dialog dialog = new Dialog(this);
+        dialog.requestWindowFeature(Window.FEATURE_NO_TITLE);
+        LinearLayout content = themedDialogContent(
+                0,
+                "Delete report?",
+                "This report will be permanently removed."
+        );
+
+        LinearLayout actions = new LinearLayout(this);
+        actions.setGravity(Gravity.END | Gravity.CENTER_VERTICAL);
+
+        TextView cancel = text("Cancel", 12, secondaryTextColor(), Typeface.NORMAL);
+        cancel.setGravity(Gravity.CENTER);
+        cancel.setOnClickListener(view -> dialog.dismiss());
+        actions.addView(cancel, new LinearLayout.LayoutParams(dp(88), dp(44)));
+
+        TextView confirm = text("Delete", 12, GOLD_ON, Typeface.NORMAL);
+        confirm.setGravity(Gravity.CENTER);
+        confirm.setBackground(goldButton());
+        LinearLayout.LayoutParams confirmParams = new LinearLayout.LayoutParams(dp(100), dp(44));
+        confirmParams.setMargins(dp(8), 0, 0, 0);
+        confirm.setOnClickListener(view -> {
+            dialog.dismiss();
+            FirebaseAuth.getInstance().getCurrentUser().getIdToken(false).addOnSuccessListener(token -> network.execute(() -> {
+                int code = deleteItem(type, reportId, token.getToken());
+                runOnUiThread(() -> {
+                    if (code >= 200 && code < 300) {
+                        Toast.makeText(this, "Report deleted", Toast.LENGTH_SHORT).show();
+                        showReports();
+                    } else {
+                        Toast.makeText(this, "Could not delete report (" + code + ")", Toast.LENGTH_LONG).show();
+                    }
+                });
+            }));
+        });
+        actions.addView(confirm, confirmParams);
+        content.addView(actions, new LinearLayout.LayoutParams(-1, dp(44)));
+
+        dialog.setContentView(content);
+        dialog.setCanceledOnTouchOutside(true);
+        dialog.show();
+        sizeThemedDialog(dialog);
     }
 
     private int deleteItem(String type, String id, String idToken) {
