@@ -3137,8 +3137,8 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         }
         publish.setText("Submitting...");
         publish.setEnabled(false);
-        Uri image = selectedImage;
-        Bitmap cameraImage = capturedImage;
+        Uri[] images = reportImages.clone();
+        Bitmap[] cameraImages = reportCameraImages.clone();
         double latitude = (hasLocation || currentLat != 0.0 || currentLng != 0.0) ? currentLat : 0.0;
         double longitude = (hasLocation || currentLat != 0.0 || currentLng != 0.0) ? currentLng : 0.0;
         if (FirebaseAuth.getInstance().getCurrentUser() == null) {
@@ -3157,7 +3157,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                 ItemSubmissionResult submission = postItem(
                         type, title, details, location.getText().toString().trim(),
                         date.getText().toString().trim(), latitude, longitude,
-                        image, cameraImage, imeiValue, token.getToken(), paymentId);
+                        images, cameraImages, imeiValue, token.getToken(), paymentId);
                 runOnUiThread(() -> {
                     publish.setEnabled(true);
                     int code = submission.statusCode;
@@ -3216,17 +3216,21 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         }
     }
 
-    private ItemSubmissionResult postItem(String type, String title, String description, String location, String date, double latitude, double longitude, Uri image, Bitmap cameraImage, String imeiValue, String idToken, String paymentId) {
+    private ItemSubmissionResult postItem(String type, String title, String description, String location, String date, double latitude, double longitude, Uri[] images, Bitmap[] cameraImages, String imeiValue, String idToken, String paymentId) {
         lastSubmissionError = null;
         boolean firestoreSaved = false;
         try {
-            String imageUrl = null;
-            if (image != null || cameraImage != null) {
-                imageUrl = uploadImage(image, cameraImage, idToken);
-                if (imageUrl == null) {
-                    lastSubmissionError = "image storage unavailable";
+            List<String> imageUrls = new ArrayList<>();
+            for (int slot = 0; slot < Math.min(images.length, cameraImages.length); slot++) {
+                if (images[slot] == null && cameraImages[slot] == null) continue;
+                String uploadedUrl = uploadImage(images[slot], cameraImages[slot], idToken);
+                if (uploadedUrl == null || uploadedUrl.trim().isEmpty()) {
+                    lastSubmissionError = "one or more images could not be uploaded";
+                } else {
+                    imageUrls.add(uploadedUrl);
                 }
             }
+            String imageUrl = imageUrls.isEmpty() ? null : imageUrls.get(0);
 
             FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
             if (user != null) {
@@ -3243,7 +3247,9 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                 reportDoc.put("report_date", date);
                 reportDoc.put("latitude", latitude);
                 reportDoc.put("longitude", longitude);
+                reportDoc.put("category", AiMatchService.inferCategory(title, description));
                 reportDoc.put("image_url", imageUrl);
+                reportDoc.put("image_urls", imageUrls);
                 reportDoc.put("user_id", user.getUid());
                 reportDoc.put("created_by", user.getUid());
                 reportDoc.put("uid", user.getUid());
@@ -3266,7 +3272,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             }
 
             AiMatchService.ApiResponse response = AiMatchService.createItem(
-                    title, description, imageUrl, type, latitude, longitude,
+                    title, description, imageUrl, imageUrls, type, latitude, longitude,
                     location, date, paymentId, imeiValue,
                     getTtsLocaleForSelectedLanguage().getLanguage(), idToken);
             if (!response.isSuccessful()) {
@@ -3491,6 +3497,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             reportDoc.put("source_language", getTtsLocaleForSelectedLanguage().getLanguage());
             reportDoc.put("report_location", location);
             reportDoc.put("report_date", date);
+            reportDoc.put("category", AiMatchService.inferCategory(title, description));
             if (imageUrl != null) reportDoc.put("image_url", imageUrl);
             reportDoc.put("user_id", user.getUid());
             reportDoc.put("created_by", user.getUid());
@@ -3512,7 +3519,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             connection.setRequestProperty("Authorization", "Bearer " + idToken);
             connection.setRequestProperty("Content-Type", "application/json; charset=UTF-8");
             String imageJson = imageUrl == null || imageUrl.trim().isEmpty() ? "null" : "\"" + escapeJson(imageUrl) + "\"";
-            String body = "{\"title\":\"" + escapeJson(title) + "\",\"description\":\"" + escapeJson(description) + "\",\"source_language\":\"" + getTtsLocaleForSelectedLanguage().getLanguage() + "\",\"report_location\":\"" + escapeJson(location) + "\",\"report_date\":\"" + escapeJson(date) + "\",\"category\":\"other\",\"lat\":0.0,\"lng\":0.0,\"image_url\":" + imageJson + "}";
+            String body = "{\"title\":\"" + escapeJson(title) + "\",\"description\":\"" + escapeJson(description) + "\",\"source_language\":\"" + getTtsLocaleForSelectedLanguage().getLanguage() + "\",\"report_location\":\"" + escapeJson(location) + "\",\"report_date\":\"" + escapeJson(date) + "\",\"category\":\"" + escapeJson(AiMatchService.inferCategory(title, description)) + "\",\"lat\":0.0,\"lng\":0.0,\"image_url\":" + imageJson + "}";
             try (OutputStream output = connection.getOutputStream()) {
                 output.write(body.getBytes(StandardCharsets.UTF_8));
             }
@@ -4813,6 +4820,8 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                             obj.put("report_location", doc.getString("report_location") != null ? doc.getString("report_location") : "");
                             obj.put("report_date", doc.getString("report_date") != null ? doc.getString("report_date") : "");
                             obj.put("image_url", doc.getString("image_url"));
+                            Object foundImages = doc.get("image_urls");
+                            if (foundImages instanceof List) obj.put("image_urls", new JSONArray((List<?>) foundImages));
                             Long editCount = doc.getLong("edit_count");
                             obj.put("edit_count", editCount != null ? editCount.intValue() : 0);
                             Timestamp ts = doc.getTimestamp("created_at");
@@ -4828,6 +4837,8 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                             obj.put("report_location", doc.getString("report_location") != null ? doc.getString("report_location") : "");
                             obj.put("report_date", doc.getString("report_date") != null ? doc.getString("report_date") : "");
                             obj.put("image_url", doc.getString("image_url"));
+                            Object lostImages = doc.get("image_urls");
+                            if (lostImages instanceof List) obj.put("image_urls", new JSONArray((List<?>) lostImages));
                             Long editCount = doc.getLong("edit_count");
                             obj.put("edit_count", editCount != null ? editCount.intValue() : 0);
                             Timestamp ts = doc.getTimestamp("created_at");
@@ -7925,17 +7936,57 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         details.setOrientation(LinearLayout.VERTICAL);
         details.setPadding(0, dp(8), 0, dp(8));
 
-        String imageUrl = report.optString("image_url", report.optString("imageUrl", "")).trim();
-        if (!imageUrl.isEmpty()) {
+        List<String> imageUrls = reportImageUrls(report);
+        if (!imageUrls.isEmpty()) {
+            FrameLayout imageFrame = new FrameLayout(this);
+            imageFrame.setBackground(roundWithStroke(backgroundColor(), 10, borderColor()));
             ImageView image = new ImageView(this);
             image.setScaleType(ImageView.ScaleType.FIT_CENTER);
-            image.setBackground(roundWithStroke(backgroundColor(), 10, borderColor()));
             image.setImageDrawable(new ColorDrawable(Color.argb(100, 190, 190, 190)));
-            details.addView(image, new LinearLayout.LayoutParams(-1, dp(210)));
-            Glide.with(this).load(imageUrl)
+            imageFrame.addView(image, new FrameLayout.LayoutParams(-1, -1));
+            details.addView(imageFrame, new LinearLayout.LayoutParams(-1, dp(210)));
+
+            final int[] imageIndex = {0};
+            Runnable showSelectedImage = () -> Glide.with(this)
+                    .load(imageUrls.get(imageIndex[0]))
                     .placeholder(new ColorDrawable(Color.argb(100, 190, 190, 190)))
                     .error(new ColorDrawable(Color.argb(100, 190, 190, 190)))
                     .into(image);
+            showSelectedImage.run();
+
+            if (imageUrls.size() > 1) {
+                TextView previous = text("‹", 30, Color.WHITE, Typeface.NORMAL);
+                previous.setGravity(Gravity.CENTER);
+                previous.setBackground(roundWithStroke(Color.argb(190, 0, 0, 0), 22, Color.WHITE));
+                FrameLayout.LayoutParams previousParams = new FrameLayout.LayoutParams(dp(40), dp(48), Gravity.START | Gravity.CENTER_VERTICAL);
+                previousParams.setMargins(dp(8), 0, 0, 0);
+                imageFrame.addView(previous, previousParams);
+
+                TextView next = text("›", 30, Color.WHITE, Typeface.NORMAL);
+                next.setGravity(Gravity.CENTER);
+                next.setBackground(roundWithStroke(Color.argb(190, 0, 0, 0), 22, Color.WHITE));
+                FrameLayout.LayoutParams nextParams = new FrameLayout.LayoutParams(dp(40), dp(48), Gravity.END | Gravity.CENTER_VERTICAL);
+                nextParams.setMargins(0, 0, dp(8), 0);
+                imageFrame.addView(next, nextParams);
+
+                TextView imageCount = text("1 / " + imageUrls.size(), 11, Color.WHITE, Typeface.NORMAL);
+                imageCount.setGravity(Gravity.CENTER);
+                imageCount.setBackground(roundWithStroke(Color.argb(190, 0, 0, 0), 12, Color.WHITE));
+                FrameLayout.LayoutParams countParams = new FrameLayout.LayoutParams(dp(56), dp(28), Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL);
+                countParams.setMargins(0, 0, 0, dp(8));
+                imageFrame.addView(imageCount, countParams);
+                View.OnClickListener updateCount = view -> imageCount.setText((imageIndex[0] + 1) + " / " + imageUrls.size());
+                previous.setOnClickListener(view -> {
+                    imageIndex[0] = (imageIndex[0] - 1 + imageUrls.size()) % imageUrls.size();
+                    showSelectedImage.run();
+                    updateCount.onClick(view);
+                });
+                next.setOnClickListener(view -> {
+                    imageIndex[0] = (imageIndex[0] + 1) % imageUrls.size();
+                    showSelectedImage.run();
+                    updateCount.onClick(view);
+                });
+            }
         }
 
         addReportDetail(details, "Report type", type);
@@ -7979,6 +8030,20 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         dialog.setCanceledOnTouchOutside(true);
         dialog.show();
         sizeThemedDialog(dialog);
+    }
+
+    private List<String> reportImageUrls(JSONObject report) {
+        List<String> imageUrls = new ArrayList<>();
+        JSONArray images = report.optJSONArray("image_urls");
+        if (images != null) {
+            for (int index = 0; index < images.length(); index++) {
+                String imageUrl = images.optString(index, "").trim();
+                if (!imageUrl.isEmpty() && !imageUrls.contains(imageUrl)) imageUrls.add(imageUrl);
+            }
+        }
+        String primaryImageUrl = report.optString("image_url", report.optString("imageUrl", "")).trim();
+        if (!primaryImageUrl.isEmpty() && !imageUrls.contains(primaryImageUrl)) imageUrls.add(0, primaryImageUrl);
+        return imageUrls;
     }
 
     private void addTranslatedReportDetail(LinearLayout parent, String label, String value, String source, boolean adminView) {

@@ -192,6 +192,7 @@ class ItemSubmission(BaseModel):
     description: str = Field(min_length=1, max_length=5000)
     source_language: str = Field(default="auto", max_length=16)
     imageUrl: str | None = Field(default=None, max_length=1000)
+    imageUrls: list[str] = Field(default_factory=list, max_length=3)
     type: Literal["lost", "found"]
     imei: str | None = Field(default=None, max_length=32)
     lat: float = Field(default=0.0, ge=-90, le=90)
@@ -323,6 +324,7 @@ async def _save_item(payload: ItemCreate, session: Session, uid: str, model: typ
     # 4. Create and persist record
     item_values = payload.model_dump(exclude={"payment_id"})
     item_values["category"] = category
+    item_values["image_url"] = payload.image_url or (payload.image_urls[0] if payload.image_urls else None)
     item_values.update(
         title_en=translated_fields["title"] if translated_fields else None,
         description_en=translated_fields["description"] if translated_fields else None,
@@ -499,6 +501,7 @@ async def create_item_compat(
             description=request.description,
             source_language=request.source_language,
             image_url=request.imageUrl,
+            image_urls=request.imageUrls,
             imei=request.imei,
             lat=request.lat,
             lng=request.lng,
@@ -540,6 +543,7 @@ async def list_my_items(
             "report_date": item.report_date or _stored_report_field(item.description, "Date"),
             "report_location": item.report_location or _stored_report_field(item.description, "Location"),
             "image_url": item.image_url,
+            "image_urls": item.image_urls or ([item.image_url] if item.image_url else []),
             "edit_count": item.edit_count,
             "created_at": item.created_at,
             "status": "Active" if item_type == "LOST" else "Published",
@@ -595,7 +599,8 @@ async def update_item(
     record.lng = payload.lng
     record.report_date = payload.report_date
     record.report_location = payload.report_location
-    record.image_url = payload.image_url
+    record.image_urls = payload.image_urls or ([payload.image_url] if payload.image_url else record.image_urls)
+    record.image_url = payload.image_url or (record.image_urls[0] if record.image_urls else None)
     record.edit_count += 1
     # Save the user edit immediately. Matching lazily rebuilds missing embeddings.
     record.embedding = None

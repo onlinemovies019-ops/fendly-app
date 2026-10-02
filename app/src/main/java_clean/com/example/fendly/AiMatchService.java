@@ -1,6 +1,7 @@
 package com.example.fendly;
 
 import org.json.JSONException;
+import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.io.ByteArrayOutputStream;
@@ -9,6 +10,7 @@ import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
+import java.util.List;
 import java.util.Locale;
 
 public final class AiMatchService {
@@ -47,10 +49,37 @@ public final class AiMatchService {
         return sum % 10 == 0;
     }
 
+    public static String inferCategory(String title, String description) {
+        String searchableText = " " + ((title == null ? "" : title) + " " + (description == null ? "" : description))
+                .toLowerCase(Locale.US).replaceAll("[^a-z0-9]+", " ").trim() + " ";
+        String[][] categories = {
+                {"Electronics", "smartphone", "mobile phone", "cell phone", "phone", "mobile", "television", "computer mouse", "wireless mouse", "laptop", "computer", "tablet", "charger", "headphone", "earphone", "camera", "smartwatch", "refrigerator", "fridge", "washing machine", "microwave", "speaker", "remote", "router", "monitor", "printer", "keyboard", "tube light", "led light", "light bulb", "flashlight", "torch", "lamp", "tv", "fan", "bulb"},
+                {"Animals", "animal", "dog", "puppy", "cat", "kitten", "mouse", "mice", "cow", "goat", "sheep", "horse", "bird", "parrot", "rabbit", "pet", "fish", "snake"},
+                {"People", "missing person", "person", "people", "man", "men", "woman", "women", "male", "female", "boy", "boys", "girl", "girls", "kid", "kids", "child", "children", "toddler"},
+                {"Apparels and accessories", "wallet", "purse", "handbag", "backpack", "bag", "belt", "spectacles", "sunglasses", "goggles", "glasses", "eyeglasses", "spects", "specs", "clothing", "clothes", "apparel", "shirt", "trousers", "pants", "dress", "jacket", "coat", "shoes", "sandals", "footwear", "cap", "hat", "scarf", "gloves", "umbrella"},
+                {"Automobile", "auto rickshaw", "motorcycle", "motorbike", "bicycle", "scooter", "scooty", "moped", "vehicle", "tractor", "truck", "bus", "car", "bike", "cycle", "van", "auto"},
+                {"Documents", "identity card", "id card", "passport", "driver license", "driving license", "certificate", "document", "aadhaar", "pan card", "license", "paper"},
+                {"Jewelry", "necklace", "bracelet", "earring", "jewelry", "jewellery", "bangle", "ring", "gold chain"},
+                {"Keys", "keychain", "keys", "key"},
+                {"Household items", "furniture", "utensils", "cookware", "sofa", "chair", "table", "bed", "pillow", "blanket", "curtain", "mattress"},
+                {"Sports equipment", "cricket bat", "tennis racket", "football", "basketball", "volleyball", "racket", "bat", "ball"},
+                {"Toys", "stuffed toy", "teddy bear", "toy", "doll", "puzzle"},
+                {"Tools", "screwdriver", "wrench", "hammer", "drill", "toolbox", "tool"},
+                {"Medical items", "medicine", "medication", "medical device", "inhaler"}
+        };
+        for (String[] category : categories) {
+            for (int index = 1; index < category.length; index++) {
+                if (searchableText.contains(" " + category[index] + " ")) return category[0];
+            }
+        }
+        return "other";
+    }
+
     public static ApiResponse createItem(
             String title,
             String description,
             String imageUrl,
+            List<String> imageUrls,
             String type,
             double latitude,
             double longitude,
@@ -61,17 +90,24 @@ public final class AiMatchService {
             String sourceLanguage,
             String idToken
     ) throws Exception {
+        JSONArray images = new JSONArray();
+        if (imageUrls != null) {
+            for (String image : imageUrls) {
+                if (image != null && !image.trim().isEmpty()) images.put(image.trim());
+            }
+        }
         JSONObject payload = new JSONObject()
                 .put("title", title)
                 .put("description", description)
                 .put("source_language", sourceLanguage)
                 .put("imageUrl", imageUrl == null ? JSONObject.NULL : imageUrl)
+                .put("imageUrls", images)
                 .put("type", type == null ? "found" : type.toLowerCase(Locale.US))
                 .put("lat", latitude)
                 .put("lng", longitude)
                 .put("report_location", location == null ? JSONObject.NULL : location)
                 .put("report_date", date == null ? JSONObject.NULL : date)
-                .put("category", "other")
+                .put("category", inferCategory(title, description))
                 .put("payment_id", paymentId == null ? JSONObject.NULL : paymentId)
                 .put("imei", imei == null ? JSONObject.NULL : normalizeImei(imei));
         return post("/api/items", payload, idToken);

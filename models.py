@@ -2,7 +2,7 @@ from datetime import datetime
 from uuid import uuid4
 
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import Boolean, DateTime, Float, String, Text, UniqueConstraint, func
+from sqlalchemy import Boolean, DateTime, Float, JSON, String, Text, UniqueConstraint, func
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -80,6 +80,7 @@ class LostItem(Base):
     report_date: Mapped[str | None] = mapped_column(String(32))
     report_location: Mapped[str | None] = mapped_column(String(500))
     image_url: Mapped[str | None] = mapped_column(String(1000))
+    image_urls: Mapped[list[str] | None] = mapped_column(JSON)
     imei: Mapped[str | None] = mapped_column(String(32), index=True)
     edit_count: Mapped[int] = mapped_column(default=0)
     image_embedding: Mapped[list[float] | None] = mapped_column(Vector(512))
@@ -105,6 +106,7 @@ class FoundItem(Base):
     report_date: Mapped[str | None] = mapped_column(String(32))
     report_location: Mapped[str | None] = mapped_column(String(500))
     image_url: Mapped[str | None] = mapped_column(String(1000))
+    image_urls: Mapped[list[str] | None] = mapped_column(JSON)
     imei: Mapped[str | None] = mapped_column(String(32), index=True)
     edit_count: Mapped[int] = mapped_column(default=0)
     image_embedding: Mapped[list[float] | None] = mapped_column(Vector(512))

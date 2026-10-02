@@ -220,6 +220,7 @@ async def list_all_items(
             "report_date": item.report_date,
             "original_report_location": item.report_location,
             "image_url": item.image_url,
+            "image_urls": item.image_urls or ([item.image_url] if item.image_url else []),
             "imei": item.imei,
             "created_by": item.created_by,
             "created_at": item.created_at,
@@ -327,6 +328,7 @@ async def search_users_and_reports(
             "report_date": item.report_date,
             "original_report_location": item.report_location,
             "image_url": item.image_url,
+            "image_urls": item.image_urls or ([item.image_url] if item.image_url else []),
             "imei": item.imei,
             "created_at": item.created_at,
         } for item_type, item in report_items)
@@ -369,6 +371,7 @@ async def search_admin_reports(
             "report_date": item.report_date,
             "original_report_location": item.report_location,
             "image_url": item.image_url,
+            "image_urls": item.image_urls or ([item.image_url] if item.image_url else []),
             "imei": item.imei,
             "created_by": item.created_by,
             "created_at": item.created_at,

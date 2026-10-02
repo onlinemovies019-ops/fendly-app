@@ -262,6 +262,12 @@ async def test_report_creation_keeps_original_and_stores_english_fields(monkeypa
     payload = ItemCreate(
         title="निळी पिशवी",
         description="स्थानकावर पिशवी हरवली",
+        image_url="https://cdn.example/one.jpg",
+        image_urls=[
+            "https://cdn.example/one.jpg",
+            "https://cdn.example/two.jpg",
+            "https://cdn.example/three.jpg",
+        ],
         report_location="मध्यवर्ती स्थानक",
         category="पिशवी",
         source_language="mr",
@@ -275,6 +281,12 @@ async def test_report_creation_keeps_original_and_stores_english_fields(monkeypa
     assert record.description_en == "A bag lost at the station"
     assert record.report_location_en == "Central station"
     assert record.category_en == "Bag"
+    assert record.image_url == "https://cdn.example/one.jpg"
+    assert record.image_urls == [
+        "https://cdn.example/one.jpg",
+        "https://cdn.example/two.jpg",
+        "https://cdn.example/three.jpg",
+    ]
     session.add.assert_called_once_with(record)
 
 
@@ -328,6 +340,8 @@ async def test_admin_item_list_returns_english_and_lazily_translates_legacy_repo
         title="निळी पिशवी",
         description="स्थानकावर पिशवी हरवली",
         category="पिशवी",
+        image_url="https://cdn.example/one.jpg",
+        image_urls=["https://cdn.example/one.jpg", "https://cdn.example/two.jpg"],
         lat=0,
         lng=0,
     )
@@ -355,6 +369,7 @@ async def test_admin_item_list_returns_english_and_lazily_translates_legacy_repo
     assert results[0]["description"] == "A bag lost at the station"
     assert results[0]["category"] == "Bag"
     assert results[0]["translation_available"] is True
+    assert results[0]["image_urls"] == ["https://cdn.example/one.jpg", "https://cdn.example/two.jpg"]
     assert legacy_report.title == "निळी पिशवी"
     session.commit.assert_called_once()
 
