@@ -567,6 +567,29 @@ async def test_admin_alert_includes_indexed_images_and_descriptions(monkeypatch)
     assert translated_alerts[0]["lost_image_url"] == "https://images.test/lost.jpg"
 
 
+@pytest.mark.asyncio
+async def test_admin_alert_is_preserved_when_image_index_lookup_fails(monkeypatch):
+    session = Mock(spec=Session)
+    session.get.return_value = None
+    alerts = [{
+        "found_item_id": "found-1",
+        "lost_item_id": "lost-1",
+        "found_title": "Green wallet",
+        "lost_title": "Wallet",
+    }]
+    monkeypatch.setattr(
+        admin_module,
+        "_supabase_admin_alert_request",
+        Mock(side_effect=admin_module.HTTPException(503, "Image lookup failed")),
+    )
+
+    translated_alerts = await admin_module._translate_alert_titles(alerts, session)
+
+    assert translated_alerts[0]["found_title"] == "Green wallet"
+    assert translated_alerts[0]["lost_title"] == "Wallet"
+    assert translated_alerts[0]["found_image_url"] == ""
+
+
 def test_admin_alert_review_persists_decision_and_marks_alert_read(monkeypatch):
     alert = SimpleNamespace(review_status="pending", is_read=False)
     session = Mock(spec=Session)

@@ -7858,7 +7858,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         adminTitle.setTextAlignment(View.TEXT_ALIGNMENT_CENTER);
         root.addView(adminTitle, contentParams(-1, dp(28), dp(4)));
 
-        TextView adminSubtitle = text("Review reports and verify possible matches", 11, secondaryTextColor(), Typeface.NORMAL);
+        TextView adminSubtitle = text("AI suggests a match. Compare reports, then confirm or reject.", 11, secondaryTextColor(), Typeface.NORMAL);
         adminSubtitle.setGravity(Gravity.CENTER_HORIZONTAL);
         adminSubtitle.setTextAlignment(View.TEXT_ALIGNMENT_CENTER);
         root.addView(adminSubtitle, contentParams(-1, dp(22), dp(14)));
@@ -8590,29 +8590,37 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         return getAuthorized("/api/admin/items", idToken);
     }
 
-    private void loadAdminAlerts(boolean unreadOnly) {
-        if (unreadOnly && adminAlertsAutoShownThisVisit) return;
-        if (unreadOnly) adminAlertsAutoShownThisVisit = true;
+    private void loadAdminAlerts(boolean pendingOnly) {
+        if (pendingOnly && adminAlertsAutoShownThisVisit) return;
+        if (pendingOnly) adminAlertsAutoShownThisVisit = true;
         FirebaseUser adminUser = FirebaseAuth.getInstance().getCurrentUser();
         if (adminUser == null) return;
         adminUser.getIdToken(false).addOnSuccessListener(token -> network.execute(() -> {
             String response = getAuthorized("/api/admin/alerts", token.getToken());
             runOnUiThread(() -> {
+                if (response == null) {
+                    Toast.makeText(this, "Could not load match alerts. Check your connection and try again.", Toast.LENGTH_LONG).show();
+                    if (pendingOnly) adminAlertsAutoShownThisVisit = false;
+                    return;
+                }
                 try {
-                    JSONArray alerts = new JSONArray(response == null ? "[]" : response);
+                    JSONArray alerts = new JSONArray(response);
                     JSONArray visibleAlerts = new JSONArray();
                     for (int index = 0; index < alerts.length(); index++) {
                         JSONObject alert = alerts.getJSONObject(index);
                         if (isDummyAlert(alert)) continue;
-                        if (!unreadOnly || !alert.optBoolean("is_read", false)) visibleAlerts.put(alert);
+                        if (!pendingOnly || "pending".equalsIgnoreCase(alert.optString("review_status", "pending"))) {
+                            visibleAlerts.put(alert);
+                        }
                     }
                     if (visibleAlerts.length() == 0) {
-                        if (!unreadOnly) Toast.makeText(this, "No match notifications", Toast.LENGTH_SHORT).show();
+                        Toast.makeText(this, pendingOnly ? "No pending matches to review" : "No match notifications", Toast.LENGTH_SHORT).show();
                         return;
                     }
                     showAdminAlertsDialog(visibleAlerts, token.getToken());
                 } catch (Exception error) {
-                    Toast.makeText(this, "Match notifications are unavailable", Toast.LENGTH_SHORT).show();
+                    Toast.makeText(this, "Match alerts could not be read. Try again.", Toast.LENGTH_LONG).show();
+                    if (pendingOnly) adminAlertsAutoShownThisVisit = false;
                 }
             });
         }));
@@ -8637,6 +8645,11 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         title.setGravity(Gravity.CENTER);
         title.setPadding(0, dp(4), 0, dp(12));
         form.addView(title, new LinearLayout.LayoutParams(-1, -2));
+        TextView instructions = text("Compare both reports. Alerts stay pending until you confirm or reject.",
+            12, secondaryTextColor(), Typeface.NORMAL);
+        instructions.setGravity(Gravity.CENTER);
+        instructions.setPadding(0, 0, 0, dp(12));
+        form.addView(instructions, new LinearLayout.LayoutParams(-1, -2));
 
         ScrollView scroll = new ScrollView(this);
         LinearLayout rows = new LinearLayout(this);
@@ -8703,9 +8716,6 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             rowParams.setMargins(0, 0, 0, dp(8));
             rows.addView(row, rowParams);
 
-            if (!alert.optBoolean("is_read", false) && !alertId.isEmpty()) {
-                network.execute(() -> postAuthorized("/api/admin/alerts/" + alertId + "/read", idToken));
-            }
         }
 
         scroll.addView(rows);

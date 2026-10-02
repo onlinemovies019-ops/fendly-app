@@ -199,20 +199,23 @@ async def _translate_alert_titles(alerts: list[dict[str, object]], session: Sess
     })
     indexed_items: dict[str, dict[str, object]] = {}
     if source_ids:
-        response = _supabase_admin_alert_request(
-            "GET",
-            "items",
-            params={
-                "select": "source_id,title,description,image_url,type",
-                "source_id": f"in.({','.join(json.dumps(source_id) for source_id in source_ids)})",
-            },
-        )
-        if response is not None and isinstance(response.json(), list):
-            indexed_items = {
-                str(item["source_id"]): item
-                for item in response.json()
-                if isinstance(item, dict) and item.get("source_id")
-            }
+        try:
+            response = _supabase_admin_alert_request(
+                "GET",
+                "items",
+                params={
+                    "select": "source_id,title,description,image_url,type",
+                    "source_id": f"in.({','.join(json.dumps(source_id) for source_id in source_ids)})",
+                },
+            )
+            if response is not None and isinstance(response.json(), list):
+                indexed_items = {
+                    str(item["source_id"]): item
+                    for item in response.json()
+                    if isinstance(item, dict) and item.get("source_id")
+                }
+        except HTTPException:
+            indexed_items = {}
 
     for alert in alerts:
         found_id = str(alert.get("found_item_id", ""))
