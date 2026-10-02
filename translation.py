@@ -45,7 +45,7 @@ async def translate_report_fields(
     )
 
     if gemini_api_key:
-        model = os.getenv("GEMINI_TRANSLATION_MODEL", "gemini-2.5-flash").removeprefix("models/")
+        model = os.getenv("GEMINI_TRANSLATION_MODEL", "gemini-3.8-flash").removeprefix("models/")
         endpoint = os.getenv(
             "GEMINI_GENERATE_CONTENT_URL",
             f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",

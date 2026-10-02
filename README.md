@@ -31,7 +31,7 @@ Required environment variables:
 	admin views and is preferred when both provider keys are set. `OPENAI_API_KEY`
 	is supported as a fallback. Original report text stays unchanged for users;
 	translations are stored separately and older reports are backfilled when
-	viewed. Configure `GEMINI_TRANSLATION_MODEL` (default `gemini-2.5-flash`) or
+	viewed. Configure `GEMINI_TRANSLATION_MODEL` (default `gemini-3.8-flash`) or
 	`OPENAI_TRANSLATION_MODEL` (default `gpt-4o-mini`) as applicable. Provider
 	usage may incur charges. Without a working key, admins see an explicit
 	translation-unavailable message instead of untranslated text.

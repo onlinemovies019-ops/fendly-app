@@ -99,7 +99,7 @@ async def test_non_english_report_translation_uses_openai_response(monkeypatch):
         "report_location": "Central bus station",
         "category": "bag",
     }
-    assert calls["endpoint"].endswith("/models/gemini-2.5-flash:generateContent")
+    assert calls["endpoint"].endswith("/models/gemini-3.8-flash:generateContent")
     assert calls["headers"]["x-goog-api-key"] == "test-key"
     assert json.loads(calls["payload"]["contents"][0]["parts"][0]["text"])["source_language"] == "mr"
 
