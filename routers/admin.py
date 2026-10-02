@@ -186,10 +186,6 @@ async def list_all_items(
     lost = session.scalars(select(LostItem)).all()
     found = session.scalars(select(FoundItem)).all()
     items = [("LOST", item) for item in lost] + [("FOUND", item) for item in found]
-    items = [
-        (item_type, item) for item_type, item in items
-        if not (_is_dummy_text(item.title) or _is_dummy_text(item.description) or _is_dummy_text(item.created_by))
-    ]
     await _ensure_english_translations([item for _, item in items], session)
     items.sort(key=lambda pair: pair[1].created_at.timestamp() if pair[1].created_at else 0, reverse=True)
     return [
@@ -326,7 +322,6 @@ async def search_admin_reports(
     found = session.scalars(select(FoundItem).where(*_report_search_conditions(FoundItem, terms))).all()
     items = [
         (item_type, item) for item_type, item in [("LOST", item) for item in lost] + [("FOUND", item) for item in found]
-        if not (_is_dummy_text(item.title) or _is_dummy_text(item.description) or _is_dummy_text(item.created_by))
     ]
     await _ensure_english_translations([item for _, item in items], session)
     items.sort(key=lambda pair: pair[1].created_at.timestamp() if pair[1].created_at else 0, reverse=True)

@@ -7657,16 +7657,6 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         return summary;
     }
 
-    private boolean isDummyReport(JSONObject item) {
-        if (item == null) return true;
-        String title = item.optString("title", "").toLowerCase(Locale.US);
-        String desc = item.optString("description", "").toLowerCase(Locale.US);
-        String createdBy = item.optString("created_by", "").toLowerCase(Locale.US);
-        return title.contains("dummy") || title.contains("test") || title.contains("sample")
-                || desc.contains("dummy") || desc.contains("test") || desc.contains("sample")
-                || createdBy.contains("dummy") || createdBy.contains("test") || createdBy.startsWith("test_");
-    }
-
     private boolean isDummyAlert(JSONObject alert) {
         if (alert == null) return true;
         String foundTitle = alert.optString("found_title", "").toLowerCase(Locale.US);
@@ -7690,7 +7680,6 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             LinearLayout foundSection = adminReportSection("FOUND REPORTS", FOUND_GOLD);
             for (int index = 0; index < items.length(); index++) {
                 JSONObject item = items.getJSONObject(index);
-                if (isDummyReport(item)) continue;
                 if ("FOUND".equalsIgnoreCase(item.optString("type"))) {
                     found++;
                     foundSection.addView(adminReportCard(item, true, matchesHeading, matches));

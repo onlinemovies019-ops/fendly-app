@@ -370,6 +370,34 @@ async def test_admin_report_search_returns_matching_lost_and_found_reports_in_en
         assert "%1234%" in compiled.params.values()
 
 
+@pytest.mark.asyncio
+async def test_admin_live_report_list_keeps_reports_with_test_like_user_text():
+    report = LostItem(
+        id="lost-test-1",
+        created_by="contest-user-1",
+        title="Contest bicycle",
+        description="Testing the green lock before reporting",
+        title_en="Contest bicycle",
+        description_en="Testing the green lock before reporting",
+        report_location_en="",
+        category_en="Bicycle",
+        category="cycle",
+        lat=0,
+        lng=0,
+    )
+    session = Mock(spec=Session)
+    session.scalars.side_effect = [
+        SimpleNamespace(all=lambda: [report]),
+        SimpleNamespace(all=lambda: []),
+    ]
+
+    results = await admin_module.list_all_items(session=session, _="admin-1")
+
+    assert len(results) == 1
+    assert results[0]["id"] == "lost-test-1"
+    assert results[0]["title"] == "Contest bicycle"
+
+
 def test_admin_uid_parser_accepts_json_and_newline_lists(monkeypatch):
     monkeypatch.setenv("ADMIN_FIREBASE_UIDS", '["uid-1", "uid-2"]\nuid-3\n')
     parsed = admin_module._parse_admin_uids(os.getenv("ADMIN_FIREBASE_UIDS", ""))
