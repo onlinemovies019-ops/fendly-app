@@ -259,6 +259,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
     private static final int PAGE_ADMIN = 7;
     private Handler adminPressHandler = new Handler();
     private boolean adminAlertsAutoShownThisVisit;
+    private int pendingNotificationCount = 0;
     private boolean accountCreated;
     private boolean profileSetupVisible;
     private boolean advancedSettingsExpanded;
@@ -550,7 +551,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         String[] texts = {
                 "1. Reporting Lost Items:\n• Tap the green LOST/THEFT button on the home screen.\n• Enter item details, category, description, and photo.\n\n2. Reporting Found Items:\n• Tap the gold FOUND button on the home screen when you find an item.\n• Fill in the details of the found item.\n\n3. Tracking Your Reports:\n• Visit My Reports anytime to track your submitted lost or found items and view updates.",
                 "1. खोई हुई वस्तुएं रिपोर्ट करें:\n• होम स्क्रीन पर हरे LOST बटन पर टैप करें।\n• वस्तु का विवरण, श्रेणी, जानकारी और फोटो दर्ज करें।\n\n2. मिली हुई वस्तुएं रिपोर्ट करें:\n• वस्तु मिलने पर होम स्क्रीन पर सुनहरे FOUND बटन पर टैप करें।\n• मिली हुई वस्तु का विवरण भरें।\n\n3. अपनी रिपोर्ट ट्रैक करें:\n• अपनी जमा की गई रिपोर्ट और अपडेट देखने के लिए कभी भी My Reports पर जाएं।",
-                "1. हरवलेल्या वस्तूंची नोंद:\n• होम स्क्रीनवरील हिरव्या 'हरवले/चोरी' बटणावर टॅप करा.\n• वस्तूचे तपशील, वर्ग, वर्णन आणि फोटो प्रविष्ट करा.\n\n2. सापडलेल्या वस्तूंची नोंद:\n• वस्तू सापडल्यावर होम स्क्रीनवरील सोनेरी 'सापडले' बटणावर टॅप करा.\n• सापडलेल्या वस्तूचा तपशील भरा.\n\n3. अहवाल ट्रॅक करा:\n• तुमचे सादर केलेले अहवाल आणि अपडेट्स पाहण्यासाठी कधीही 'माझे अहवाल' ला भेट द्या.",
+                "1. हरवलेल्या वस्तूंची नोंद:\n• होम स्क्रीनवरील हिरव्या LOST बटणावर टॅप करा.\n• वस्तूचे तपशील, वर्ग, वर्णन आणि फोटो प्रविष्ट करा.\n\n2. सापडलेल्या वस्तूंची नोंद:\n• वस्तू सापडल्यावर होम स्क्रीनवरील सोनेरी FOUND बटणावर टॅप करा.\n• सापडलेल्या वस्तूचा तपशील भरा.\n\n3. अहवाल ट्रॅक करा:\n• तुमचे सादर केलेले अहवाल आणि अपडेट्स पाहण्यासाठी कधीही My Reports ला भेट द्या.",
                 "1. ખોવાયેલ વસ્તુઓની જાણ કરો:\n• હોમ સ્ક્રીન પર લીલા LOST બટન પર ટેપ કરો.\n• વસ્તુની વિગતો, શ્રેણી, વર્ણન અને ફોટો દાખલ કરો.\n\n2. મળેલ વસ્તુઓની જાણ કરો:\n• વસ્તુ મળે ત્યારે હોમ સ્ક્રીન પર સોનેરી FOUND બટન પર ટેપ કરો.\n• મળેલ વસ્તુની વિગતો ભરો.\n\n3. તમારા રિપોર્ટ ટ્રેક કરો:\n• તમારા સબમિટ કરેલા રિપોર્ટ અને અપડેટ્સ જોવા માટે ગમે ત્યારે My Reports ની મુલાકાત લો.",
                 "1. হারানো আইটেম রিপোর্ট করা:\n• হোম স্ক্রিনে সবুজ LOST বোতামে ট্যাপ করুন।\n• আইটেমের বিবরণ, বিভাগ, বর্ণনা এবং ছবি লিখুন।\n\n2. পাওয়া আইটেম রিপোর্ট করা:\n• কোনো আইটেম পেলে হোম স্ক্রিনে সোনালী FOUND বোতামে ট্যাপ করুন।\n• পাওয়া আইটেমের বিবরণ পূরণ করুন।\n\n3. আপনার রিপোর্ট ট্র্যাক করা:\n• আপনার জমা দেওয়া রিপোর্ট এবং আপডেট দেখতে যেকোনো সময় My Reports দেখুন।",
                 "1. தொலைந்த பொருட்களை அறிக்கையிடல்:\n• முகப்புத் திரையில் உள்ள பச்சை நிற LOST பொத்தானைத் தட்டவும்.\n• பொருளின் விவரங்கள், வகை, விளக்கம் மற்றும் புகைப்படத்தை உள்ளிடவும்.\n\n2. கிடைத்த பொருட்களை அறிக்கையிடல்:\n• ஒரு பொருள் கிடைக்கும்போது முகப்புத் திரையில் உள்ள தங்க நிற FOUND பொத்தானைத் தட்டவும்.\n• கிடைத்த பொருளின் விவரங்களை நிரப்பவும்.\n\n3. உங்கள் அறிக்கைகளைக் கண்காணித்தல்:\n• சமர்ப்பிக்கப்பட்ட அறிக்கைகள் மற்றும் புதுப்பிப்புகளைப் பார்க்க எப்போதும் My Reports பகுதிக்குச் செல்லவும்.",
@@ -599,7 +600,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         String[] texts = {
                 "1. View Submitted Reports:\n• Review all your active lost and found item submissions in one centralized list.\n\n2. Track Status & Matches:\n• Monitor report statuses and check for any potential item matches.\n\n3. Editing Reports:\n• Your uploaded report may only be edited once within 5 hours of creation; after that, it cannot be edited.",
                 "1. जमा की गई रिपोर्ट देखें:\n• अपनी सभी सक्रिय खोई और मिली हुई रिपोर्ट एक ही सूची में देखें।\n\n2. स्थिति और AI मिलान ट्रैक करें:\n• रिपोर्ट की स्थिति पर नज़र रखें और किसी भी संभावित AI मिलान की जांच करें।\n\n3. रिपोर्ट संपादित करें:\n• आपकी अपलोड की गई रिपोर्ट निर्माण के 5 घंटे के भीतर केवल एक बार संपादित की जा सकती है; उसके बाद इसे संपादित नहीं किया जा सकता।",
-                "1. सादर केलेले अहवाल पाहा:\n• तुमचे सर्व सक्रिय हरवलेले आणि सापडलेले अहवाल एकाच यादीत पाहा.\n\n2. स्थिती आणि AI जुळणी ट्रॅक करा:\n• अहवाल स्थितीवर लक्ष ठेवा आणि संभाव्य AI जुळण्या तपासा.\n\n3. अहवाल संपादित करा:\n• तुमचा अपलोड केलेला अहवाल तयार केल्यापासून ५ तासांच्या आत फक्त एकदाच संपादित केला जाऊ शकतो; त्यानंतर तो संपादित केला जाऊ शकत नाही.",
+                "1. सादर केलेले अहवाल पाहा:\n• तुमचे सर्व सक्रिय हरवलेले आणि सापडलेले अहवाल एकाच यादीत पाहा.\n\n2. स्थिती आणि जुळणी ट्रॅक करा:\n• अहवाल स्थितीवर लक्ष ठेवा आणि संभाव्य जुळण्या तपासा.\n\n3. अहवाल संपादित करा:\n• तुमचा अपलोड केलेला अहवाल तयार केल्यापासून ५ तासांच्या आत फक्त एकदाच संपादित केला जाऊ शकतो; त्यानंतर तो संपादित केला जाऊ शकत नाही.",
                 "1. સબમિટ કરેલા રિપોર્ટ જુઓ:\n• તમારા બધા સક્રિય ખોવાયેલ અને મળેલ રિપોર્ટ એક જ યાદીમાં જુઓ.\n\n2. સ્ટેટસ અને AI મેચ ટ્રેક કરો:\n• રિપોર્ટ સ્ટેટસ પર નજર રાખો અને સંભવિત AI મેચ તપાસો.\n\n3. રિપોર્ટ એડિટ કરો:\n• તમારો અપલોડ કરેલો રિપોર્ટ બનાવ્યાના 5 કલાકની અંદર માત્ર એક જ વાર એડિટ કરી શકાય છે; ત્યારબાદ તેને એડિટ કરી શકાશે નહીં.",
                 "1. জমা দেওয়া রিপোর্ট দেখুন:\n• একটি তালিকায় আপনার সমস্ত সক্রিয় হারানো এবং পাওয়া রিপোর্ট দেখুন।\n\n2. স্থিতি এবং AI ম্যাচ ট্র্যাক করুন:\n• রিপোর্টের স্থিতি ট্র্যাক করুন এবং যেকোনো সম্ভাব্য AI ম্যাচ দেখুন।\n\n3. রিপোর্ট সম্পাদনা করুন:\n• আপনার আপলোড করা রিপোর্ট তৈরির ৫ ঘণ্টার মধ্যে শুধুমাত্র একবার সম্পাদনা করা যেতে পারে; তারপরে এটি সম্পাদনা করা যাবে না।",
                 "1. சமர்ப்பிக்கப்பட்ட அறிக்கைகளைப் பார்க்கவும்:\n• உங்கள் செயலில் உள்ள அனைத்து அறிக்கைகளையும் ஒரே பட்டியலில் பார்க்கவும்.\n\n2. நிலை மற்றும் AI பொருத்தங்களைக் கண்காணிக்கவும்:\n• அறிக்கைகளின் நிலையைக் கண்காணித்து சாத்தியமான AI பொருத்தங்களைச் சரிபார்க்கவும்.\n\n3. அறிக்கைகளைத் திருத்துதல்:\n• நீங்கள் பதிவேற்றிய அறிக்கையை உருவாக்கிய 5 மணிநேரத்திற்குள் ஒரு முறை மட்டுமே திருத்த முடியும்; அதற்குப் பிறகு திருத்த முடியாது.",
@@ -608,7 +609,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                 "1. സമർപ്പിച്ച റിപ്പോർട്ടുകൾ കാണുക:\n• നിങ്ങളുടെ എല്ലാ റിപ്പോർട്ടുകളും ഒറ്റ ലിസ്റ്റിൽ കാണുക.\n\n2. സ്റ്റാറ്റസും AI മാച്ചുകളും ട്രാക്ക് ചെയ്യുക:\n• റിപ്പോർട്ട് സ്റ്റാറ്റസ് നിരീക്ഷിക്കുകയും സാധ്യമായ AI മാച്ചുകൾ പരിശോധിക്കുകയും ചെയ്യുക.\n\n3. റിപ്പോർട്ടുകൾ എഡിറ്റ് ചെയ്യൽ:\n• നിങ്ങൾ അപ്‌ലോഡ് ചെയ്ത റിപ്പോർട്ട് സൃഷ്ടിച്ച് 5 മണിക്കൂറിനുള്ളിൽ ഒരു തവണ മാത്രമേ എഡിറ്റ് ചെയ്യാൻ സാധിക്കൂ; അതിനുശേഷം എഡിറ്റ് ചെയ്യാൻ കഴിയില്ല."
         };
         int lang = Math.max(0, Math.min(selectedLanguage, texts.length - 1));
-        return lang == 0 ? texts[lang] : texts[lang].replace("AI ", "");
+        return texts[lang].replace("AI ", "").replace("AI", "");
     }
 
     @Override
@@ -625,6 +626,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             hydrateProfileFromBackend(null);
             hydrateCloudProfile(null);
             checkAndReloadUserVerification();
+            fetchPendingNotificationCount();
         } else {
             // User is not logged in - ensure drafts are fresh
             selectedLanguage = getSharedPreferences("fendly_language", MODE_PRIVATE)
@@ -7850,6 +7852,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
     private void showAdminDashboard() {
         currentPage = PAGE_ADMIN;
         screenRenderer = this::showAdminDashboard;
+        fetchPendingNotificationCount();
         LinearLayout root = screenBase("");
         root.setGravity(Gravity.CENTER_HORIZONTAL);
 
@@ -7858,7 +7861,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         adminTitle.setTextAlignment(View.TEXT_ALIGNMENT_CENTER);
         root.addView(adminTitle, contentParams(-1, dp(28), dp(4)));
 
-        TextView adminSubtitle = text("AI suggests a match. Compare reports, then confirm or reject.", 11, secondaryTextColor(), Typeface.NORMAL);
+        TextView adminSubtitle = text("System suggests a match. Compare reports, then confirm or reject.", 11, secondaryTextColor(), Typeface.NORMAL);
         adminSubtitle.setGravity(Gravity.CENTER_HORIZONTAL);
         adminSubtitle.setTextAlignment(View.TEXT_ALIGNMENT_CENTER);
         root.addView(adminSubtitle, contentParams(-1, dp(22), dp(14)));
@@ -8590,6 +8593,71 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         return getAuthorized("/api/admin/items", idToken);
     }
 
+    private void fetchPendingNotificationCount() {
+        FirebaseUser adminUser = FirebaseAuth.getInstance().getCurrentUser();
+        if (adminUser == null) return;
+        adminUser.getIdToken(false).addOnSuccessListener(token -> network.execute(() -> {
+            String response = getAuthorized("/api/admin/alerts", token.getToken());
+            if (response == null) return;
+            try {
+                JSONArray alerts = new JSONArray(response);
+                int pendingCount = 0;
+                for (int index = 0; index < alerts.length(); index++) {
+                    JSONObject alert = alerts.getJSONObject(index);
+                    if (isDummyAlert(alert)) continue;
+                    if ("pending".equalsIgnoreCase(alert.optString("review_status", "pending"))) {
+                        pendingCount++;
+                    }
+                }
+                int newCount = pendingCount;
+                runOnUiThread(() -> {
+                    if (pendingNotificationCount != newCount) {
+                        pendingNotificationCount = newCount;
+                        if (screenRenderer != null) screenRenderer.run();
+                    }
+                });
+            } catch (Exception ignored) {}
+        }));
+    }
+
+    private View createNotificationIconButton(int count, View.OnClickListener onClickListener) {
+        FrameLayout frame = new FrameLayout(this);
+
+        TextView notificationButton = text("🔔", 16, secondaryTextColor(), Typeface.NORMAL);
+        notificationButton.setGravity(Gravity.CENTER);
+        notificationButton.setBackground(roundWithStroke(surfaceColor(), 14, borderColor()));
+        notificationButton.setPadding(dp(8), dp(8), dp(8), dp(8));
+        notificationButton.setElevation(dp(2));
+        notificationButton.setContentDescription("Match notifications");
+        if (onClickListener != null) {
+            notificationButton.setOnClickListener(onClickListener);
+        }
+
+        frame.addView(notificationButton, new FrameLayout.LayoutParams(dp(42), dp(42)));
+
+        if (count > 0) {
+            TextView badge = new TextView(this);
+            badge.setText(count > 99 ? "99+" : String.valueOf(count));
+            badge.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 9);
+            badge.setTypeface(Typeface.DEFAULT_BOLD);
+            badge.setTextColor(Color.WHITE);
+            badge.setGravity(Gravity.CENTER);
+            badge.setIncludeFontPadding(false);
+
+            GradientDrawable badgeBg = new GradientDrawable();
+            badgeBg.setShape(GradientDrawable.OVAL);
+            badgeBg.setColor(Color.rgb(220, 38, 38));
+            badge.setBackground(badgeBg);
+
+            FrameLayout.LayoutParams badgeParams = new FrameLayout.LayoutParams(dp(16), dp(16));
+            badgeParams.gravity = Gravity.BOTTOM | Gravity.START;
+            badgeParams.setMargins(dp(2), 0, 0, dp(2));
+            frame.addView(badge, badgeParams);
+        }
+
+        return frame;
+    }
+
     private void loadAdminAlerts(boolean pendingOnly) {
         if (pendingOnly && adminAlertsAutoShownThisVisit) return;
         if (pendingOnly) adminAlertsAutoShownThisVisit = true;
@@ -8606,13 +8674,18 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                 try {
                     JSONArray alerts = new JSONArray(response);
                     JSONArray visibleAlerts = new JSONArray();
+                    int pendingCount = 0;
                     for (int index = 0; index < alerts.length(); index++) {
                         JSONObject alert = alerts.getJSONObject(index);
                         if (isDummyAlert(alert)) continue;
+                        if ("pending".equalsIgnoreCase(alert.optString("review_status", "pending"))) {
+                            pendingCount++;
+                        }
                         if (!pendingOnly || "pending".equalsIgnoreCase(alert.optString("review_status", "pending"))) {
                             visibleAlerts.put(alert);
                         }
                     }
+                    pendingNotificationCount = pendingCount;
                     if (visibleAlerts.length() == 0) {
                         Toast.makeText(this, pendingOnly ? "No pending matches to review" : "No match notifications", Toast.LENGTH_SHORT).show();
                         return;
@@ -9146,16 +9219,14 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             controls.addView(spacer, new LinearLayout.LayoutParams(0, 1, 1));
 
             // Top-right: Notification button for admin/owner match pings
-            TextView notificationButton = text("🔔", 16, secondaryTextColor(), Typeface.NORMAL);
-            notificationButton.setGravity(Gravity.CENTER);
-            notificationButton.setBackground(roundWithStroke(surfaceColor(), 14, borderColor()));
-            notificationButton.setPadding(dp(8), dp(8), dp(8), dp(8));
-            notificationButton.setElevation(dp(2));
-            notificationButton.setContentDescription("Notifications");
-            notificationButton.setOnClickListener(view -> {
-                Toast.makeText(MainActivity.this, "No new match notifications", Toast.LENGTH_SHORT).show();
+            View notificationIconButton = createNotificationIconButton(pendingNotificationCount, view -> {
+                if (pendingNotificationCount > 0) {
+                    loadAdminAlerts(false);
+                } else {
+                    Toast.makeText(MainActivity.this, "No new match notifications", Toast.LENGTH_SHORT).show();
+                }
             });
-            controls.addView(notificationButton, new LinearLayout.LayoutParams(dp(42), dp(42)));
+            controls.addView(notificationIconButton, new LinearLayout.LayoutParams(-2, dp(42)));
 
             parent.addView(controls, new LinearLayout.LayoutParams(-1, -2));
             return;
@@ -9340,14 +9411,8 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
 
             controls.addView(rightContainer, new LinearLayout.LayoutParams(-2, -2));
         } else if (currentPage == PAGE_ADMIN) {
-            TextView notificationButton = text("🔔", 16, secondaryTextColor(), Typeface.NORMAL);
-            notificationButton.setGravity(Gravity.CENTER);
-            notificationButton.setBackground(roundWithStroke(surfaceColor(), 14, borderColor()));
-            notificationButton.setPadding(dp(8), dp(8), dp(8), dp(8));
-            notificationButton.setElevation(dp(2));
-            notificationButton.setContentDescription("Match notifications");
-            notificationButton.setOnClickListener(view -> loadAdminAlerts(false));
-            controls.addView(notificationButton, new LinearLayout.LayoutParams(dp(42), dp(42)));
+            View notificationIconButton = createNotificationIconButton(pendingNotificationCount, view -> loadAdminAlerts(false));
+            controls.addView(notificationIconButton, new LinearLayout.LayoutParams(-2, dp(42)));
         } else if (currentPage == PAGE_REPORTS) {
             // Info "i" button for Reports page with instructions on how to use My Reports
             TextView infoButton = text("i", 16, secondaryTextColor(), Typeface.NORMAL);
