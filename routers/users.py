@@ -1,18 +1,69 @@
 import logging
 from typing import Any
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select
+from sqlalchemy import desc, func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from auth import get_current_user
 from database import get_db
-from models import User, UsernameReservation
+from models import User, UserNotification, UsernameReservation
 from schemas import ProfileUpdate, UsernameRequest
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/users", tags=["users"])
+
+
+@router.get("/notifications")
+def get_user_notifications(
+    session: Session = Depends(get_db),
+    uid: str = Depends(get_current_user),
+) -> dict[str, object]:
+    unread_count = session.scalar(
+        select(func.count(UserNotification.id)).where(
+            UserNotification.firebase_uid == uid,
+            UserNotification.is_read.is_(False),
+        )
+    ) or 0
+    notifications = session.scalars(
+        select(UserNotification)
+        .where(UserNotification.firebase_uid == uid)
+        .order_by(desc(UserNotification.created_at))
+        .limit(50)
+    ).all()
+    return {
+        "unread_count": unread_count,
+        "notifications": [
+            {
+                "id": notification.id,
+                "found_item_id": notification.found_item_id,
+                "title": notification.title,
+                "body": notification.body,
+                "score": notification.score,
+                "is_read": notification.is_read,
+                "created_at": notification.created_at.isoformat() if notification.created_at else None,
+            }
+            for notification in notifications
+        ],
+    }
+
+
+@router.post("/notifications/read")
+def mark_user_notifications_read(
+    session: Session = Depends(get_db),
+    uid: str = Depends(get_current_user),
+) -> dict[str, int]:
+    result = session.execute(
+        update(UserNotification)
+        .where(
+            UserNotification.firebase_uid == uid,
+            UserNotification.is_read.is_(False),
+        )
+        .values(is_read=True)
+    )
+    session.commit()
+    return {"updated": result.rowcount or 0}
 
 
 def normalize_username(value: str) -> str:

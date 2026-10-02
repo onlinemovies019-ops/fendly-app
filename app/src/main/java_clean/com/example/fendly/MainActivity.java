@@ -261,6 +261,8 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
     private boolean adminAlertsAutoShownThisVisit;
     private int pendingNotificationCount = 0;
     private TextView pendingNotificationBadge;
+    private int unreadUserNotificationCount = 0;
+    private TextView userNotificationBadge;
     private boolean accountCreated;
     private boolean profileSetupVisible;
     private boolean advancedSettingsExpanded;
@@ -1053,6 +1055,9 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         authCard.addView(createAccount, new LinearLayout.LayoutParams(-1, dp(58)));
 
         setContentView(root);
+        root.post(() -> {
+            if (currentPage == PAGE_AUTH) fetchUserNotificationCount();
+        });
         root.postDelayed(() -> {
             int authTextColor = authTextColor();
             username.setTextColor(authTextColor);
@@ -7826,7 +7831,6 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
     private void showAdminDashboard() {
         currentPage = PAGE_ADMIN;
         screenRenderer = this::showAdminDashboard;
-        fetchPendingNotificationCount();
         LinearLayout root = screenBase("");
         root.setGravity(Gravity.CENTER_HORIZONTAL);
 
@@ -7910,6 +7914,9 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                 });
             }));
         }
+        root.post(() -> {
+            if (currentPage == PAGE_ADMIN) fetchPendingNotificationCount();
+        });
     }
 
     private TextView adminSummary(String label, int accent) {
@@ -8596,15 +8603,94 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         }));
     }
 
-    private void updatePendingNotificationCount(int count) {
-        pendingNotificationCount = Math.max(0, count);
-        if (pendingNotificationBadge == null) return;
-        pendingNotificationBadge.setText(pendingNotificationCount > 99 ? "99+" : String.valueOf(pendingNotificationCount));
-        pendingNotificationBadge.setVisibility(pendingNotificationCount > 0 ? View.VISIBLE : View.GONE);
-        pendingNotificationBadge.setContentDescription(pendingNotificationCount + " pending match notifications");
+    private void fetchUserNotificationCount() {
+        FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
+        if (user == null) {
+            updateUserNotificationCount(0);
+            return;
+        }
+        user.getIdToken(false).addOnSuccessListener(token -> network.execute(() -> {
+            String response = getAuthorized("/api/users/notifications", token.getToken());
+            if (response == null) return;
+            try {
+                int unreadCount = new JSONObject(response).optInt("unread_count", 0);
+                runOnUiThread(() -> updateUserNotificationCount(unreadCount));
+            } catch (Exception ignored) {}
+        }));
     }
 
-    private View createNotificationIconButton(int count, View.OnClickListener onClickListener) {
+    private void loadUserNotifications() {
+        FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
+        if (user == null) {
+            Toast.makeText(this, "Sign in to view your notifications", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        user.getIdToken(false).addOnSuccessListener(token -> network.execute(() -> {
+            String response = getAuthorized("/api/users/notifications", token.getToken());
+            runOnUiThread(() -> {
+                if (response == null) {
+                    Toast.makeText(this, "Could not load your notifications", Toast.LENGTH_LONG).show();
+                    return;
+                }
+                try {
+                    JSONObject payload = new JSONObject(response);
+                    JSONArray notifications = payload.optJSONArray("notifications");
+                    if (notifications == null) notifications = new JSONArray();
+                    int unreadCount = payload.optInt("unread_count", 0);
+                    updateUserNotificationCount(unreadCount);
+                    if (notifications.length() == 0) {
+                        Toast.makeText(this, "No user notifications", Toast.LENGTH_SHORT).show();
+                    } else {
+                        showUserNotificationsDialog(notifications);
+                    }
+                    if (unreadCount > 0) {
+                        network.execute(() -> {
+                            if (postAuthorized("/api/users/notifications/read", token.getToken())) {
+                                runOnUiThread(() -> updateUserNotificationCount(0));
+                            }
+                        });
+                    }
+                } catch (Exception error) {
+                    Toast.makeText(this, "Your notifications could not be read", Toast.LENGTH_LONG).show();
+                }
+            });
+        }));
+    }
+
+    private void showUserNotificationsDialog(JSONArray notifications) throws Exception {
+        StringBuilder message = new StringBuilder();
+        for (int index = 0; index < notifications.length(); index++) {
+            JSONObject notification = notifications.getJSONObject(index);
+            if (message.length() > 0) message.append("\n\n");
+            message.append(notification.optString("title", "Fendly notification"));
+            String body = notification.optString("body", "");
+            if (!body.isEmpty()) message.append("\n").append(body);
+        }
+        new AlertDialog.Builder(this)
+                .setTitle("Your notifications")
+                .setMessage(message.toString())
+                .setPositiveButton("Close", null)
+                .show();
+    }
+
+    private void updatePendingNotificationCount(int count) {
+        pendingNotificationCount = Math.max(0, count);
+        updateNotificationBadge(pendingNotificationBadge, pendingNotificationCount);
+    }
+
+    private void updateUserNotificationCount(int count) {
+        unreadUserNotificationCount = Math.max(0, count);
+        updateNotificationBadge(userNotificationBadge, unreadUserNotificationCount);
+    }
+
+    private void updateNotificationBadge(TextView badge, int count) {
+        if (badge == null) return;
+        badge.setText(count > 99 ? "99+" : String.valueOf(count));
+        badge.setVisibility(count > 0 ? View.VISIBLE : View.GONE);
+        badge.setContentDescription(count + " notifications");
+    }
+
+    private View createNotificationIconButton(int count, boolean adminNotifications, View.OnClickListener onClickListener) {
         FrameLayout frame = new FrameLayout(this);
         frame.setClipChildren(false);
         frame.setClipToPadding(false);
@@ -8635,13 +8721,18 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         badgeBg.setColor(Color.rgb(220, 38, 38));
         badgeBg.setStroke(dp(2), Color.WHITE);
         badge.setBackground(badgeBg);
+        badge.setElevation(dp(4));
 
         FrameLayout.LayoutParams badgeParams = new FrameLayout.LayoutParams(-2, dp(22));
         badgeParams.gravity = Gravity.TOP | Gravity.END;
         badgeParams.setMargins(0, dp(1), dp(1), 0);
         frame.addView(badge, badgeParams);
-        pendingNotificationBadge = badge;
-        updatePendingNotificationCount(count);
+        if (adminNotifications) {
+            pendingNotificationBadge = badge;
+        } else {
+            userNotificationBadge = badge;
+        }
+        updateNotificationBadge(badge, count);
 
         return frame;
     }
@@ -9206,14 +9297,9 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             Space spacer = new Space(this);
             controls.addView(spacer, new LinearLayout.LayoutParams(0, 1, 1));
 
-            // Top-right: Notification button for admin/owner match pings
-            View notificationIconButton = createNotificationIconButton(pendingNotificationCount, view -> {
-                if (pendingNotificationCount > 0) {
-                    loadAdminAlerts(false);
-                } else {
-                    Toast.makeText(MainActivity.this, "No new match notifications", Toast.LENGTH_SHORT).show();
-                }
-            });
+            // Top-right: Notification button for user match pings
+            View notificationIconButton = createNotificationIconButton(
+                    unreadUserNotificationCount, false, view -> loadUserNotifications());
             controls.addView(notificationIconButton, new LinearLayout.LayoutParams(-2, dp(42)));
 
             parent.addView(controls, new LinearLayout.LayoutParams(-1, -2));
@@ -9399,7 +9485,8 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
 
             controls.addView(rightContainer, new LinearLayout.LayoutParams(-2, -2));
         } else if (currentPage == PAGE_ADMIN) {
-            View notificationIconButton = createNotificationIconButton(pendingNotificationCount, view -> loadAdminAlerts(false));
+                View notificationIconButton = createNotificationIconButton(
+                    pendingNotificationCount, true, view -> loadAdminAlerts(false));
             controls.addView(notificationIconButton, new LinearLayout.LayoutParams(-2, dp(42)));
         } else if (currentPage == PAGE_REPORTS) {
             // Info "i" button for Reports page with instructions on how to use My Reports

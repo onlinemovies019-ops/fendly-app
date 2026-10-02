@@ -9,7 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from models import AdminMatchAlert, DeviceToken, FoundItem, LostItem
+from models import AdminMatchAlert, DeviceToken, FoundItem, LostItem, UserNotification
 
 
 logger = logging.getLogger(__name__)
@@ -24,6 +24,22 @@ def send_match_notifications(
     if not recipient_uids:
         return 0
 
+    title = "Possible Fendly match"
+    body = f"A found item matches yours ({score:.0%} match)."
+    for recipient_uid in recipient_uids:
+        session.add(UserNotification(
+            firebase_uid=recipient_uid,
+            found_item_id=found_item_id,
+            title=title,
+            body=body,
+            score=score,
+        ))
+    try:
+        session.commit()
+    except Exception:
+        session.rollback()
+        logger.exception("Failed to persist user match notification")
+
     tokens = session.scalars(
         select(DeviceToken.token).where(DeviceToken.firebase_uid.in_(recipient_uids))
     ).all()
@@ -36,8 +52,8 @@ def send_match_notifications(
             messaging.MulticastMessage(
                 tokens=tokens,
                 notification=messaging.Notification(
-                    title="Possible Fendly match",
-                    body=f"A found item matches yours ({score:.0%} match).",
+                    title=title,
+                    body=body,
                 ),
                 data={"found_item_id": found_item_id, "score": f"{score:.4f}"},
             )

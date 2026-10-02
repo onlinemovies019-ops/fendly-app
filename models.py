@@ -48,6 +48,19 @@ class DeviceToken(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
 
+class UserNotification(Base):
+    __tablename__ = "user_notifications"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    firebase_uid: Mapped[str] = mapped_column(String(128), index=True)
+    found_item_id: Mapped[str] = mapped_column(String(36), index=True)
+    title: Mapped[str] = mapped_column(String(160))
+    body: Mapped[str] = mapped_column(Text)
+    score: Mapped[float] = mapped_column(Float)
+    is_read: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
 class AdminMatchAlert(Base):
     __tablename__ = "admin_match_alerts"
     __table_args__ = (UniqueConstraint("found_item_id", "lost_item_id", name="uq_admin_match_alert_pair"),)
