@@ -6351,6 +6351,8 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
 
         EditText imeiNumberField = field("");
         imeiNumberField.setText(account.getString("imei_number", ""));
+        imeiNumberField.setHint("This will help you find your lost mobile");
+        imeiNumberField.setHintTextColor(Color.GRAY);
         imeiNumberField.setInputType(InputType.TYPE_CLASS_NUMBER);
         imeiNumberField.setFilters(new InputFilter[]{new InputFilter.LengthFilter(15)});
 
@@ -6366,17 +6368,19 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
 
         LinearLayout advancedHeaderRow = new LinearLayout(this);
         advancedHeaderRow.setOrientation(LinearLayout.HORIZONTAL);
-        advancedHeaderRow.setGravity(Gravity.CENTER);
+        advancedHeaderRow.setGravity(Gravity.CENTER_VERTICAL | Gravity.CENTER_HORIZONTAL);
         advancedHeaderRow.setPadding(dp(12), dp(12), dp(12), dp(12));
         advancedHeaderRow.setBackgroundColor(Color.TRANSPARENT);
 
         TextView advancedSettingsTitle = text("Advanced settings", 15, Color.BLACK, Typeface.BOLD);
-        advancedSettingsTitle.setGravity(Gravity.CENTER);
+        advancedSettingsTitle.setGravity(Gravity.CENTER_VERTICAL);
+        advancedSettingsTitle.setIncludeFontPadding(false);
         advancedSettingsTitle.setLayoutParams(new LinearLayout.LayoutParams(-2, -2));
 
         TextView advancedSettingsArrow = text(">", 18, Color.BLACK, Typeface.BOLD);
-        advancedSettingsArrow.setGravity(Gravity.CENTER);
-        advancedSettingsArrow.setPadding(dp(6), 0, 0, 0);
+        advancedSettingsArrow.setGravity(Gravity.CENTER_VERTICAL);
+        advancedSettingsArrow.setIncludeFontPadding(false);
+        advancedSettingsArrow.setPadding(dp(6), dp(1), 0, 0);
         advancedSettingsArrow.setLayoutParams(new LinearLayout.LayoutParams(-2, -2));
 
         advancedHeaderRow.addView(advancedSettingsTitle);
