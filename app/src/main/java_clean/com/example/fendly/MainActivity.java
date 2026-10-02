@@ -5386,6 +5386,8 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         profile.put("profile_surname", sn);
         profile.put("email", email);
         profile.put("mobile", mobile);
+        profile.put("imei_number", account.getString("imei_number", ""));
+        profile.put("mobile_serial_number", account.getString("mobile_serial_number", ""));
         profile.put("state", state);
         profile.put("city", city);
         boolean emailVerified = account.getBoolean("email_verified", false);
@@ -5418,6 +5420,8 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                 .putString("full_name", fullName)
                 .putString("email", email)
                 .putString("mobile", mobile)
+                .putString("imei_number", account.getString("imei_number", ""))
+                .putString("mobile_serial_number", account.getString("mobile_serial_number", ""))
                 .putString("state", state)
                 .putString("city", city)
                 .apply();
@@ -6344,6 +6348,39 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
 
         addEditableProfileField(root, getString(R.string.profile_email), email, emailVerify);
         addLabeledMobileField(root, getString(R.string.profile_mobile), mobileCells, mobileVerify);
+
+        EditText imeiNumberField = field("");
+        imeiNumberField.setText(account.getString("imei_number", ""));
+        imeiNumberField.setInputType(InputType.TYPE_CLASS_NUMBER);
+        imeiNumberField.setFilters(new InputFilter[]{new InputFilter.LengthFilter(15)});
+
+        EditText mobileSerialField = field("");
+        mobileSerialField.setText(account.getString("mobile_serial_number", ""));
+        mobileSerialField.setInputType(InputType.TYPE_CLASS_TEXT);
+
+        final LinearLayout advancedFields = new LinearLayout(this);
+        advancedFields.setOrientation(LinearLayout.VERTICAL);
+        advancedFields.setVisibility(View.GONE);
+        advancedFields.addView(labeledField("IMEI number", imeiNumberField), contentParams(-1, dp(76), dp(4)));
+        advancedFields.addView(labeledField("Mobile serial number", mobileSerialField), contentParams(-1, dp(76), dp(4)));
+
+        LinearLayout advancedHeaderRow = new LinearLayout(this);
+        advancedHeaderRow.setOrientation(LinearLayout.HORIZONTAL);
+        advancedHeaderRow.setGravity(Gravity.CENTER_VERTICAL);
+        advancedHeaderRow.setPadding(dp(12), dp(12), dp(12), dp(12));
+        TextView advancedSettingsTitle = text("Advanced settings", 15, accentColor(), Typeface.BOLD);
+        advancedSettingsTitle.setLayoutParams(new LinearLayout.LayoutParams(0, -2, 1f));
+        TextView advancedSettingsArrow = text(">", 18, accentColor(), Typeface.BOLD);
+        advancedHeaderRow.addView(advancedSettingsTitle);
+        advancedHeaderRow.addView(advancedSettingsArrow);
+        advancedHeaderRow.setOnClickListener(view -> {
+            boolean shouldExpand = advancedFields.getVisibility() == View.GONE;
+            advancedFields.setVisibility(shouldExpand ? View.VISIBLE : View.GONE);
+            advancedSettingsArrow.setText(shouldExpand ? "⌃" : ">");
+        });
+        root.addView(advancedHeaderRow, contentParams(-1, dp(48), dp(8)));
+        root.addView(advancedFields, contentParams(-1, -2, dp(4)));
+
         EditText[] changePinCells = pinCells();
         LinearLayout pinGroup = new LinearLayout(this);
         pinGroup.setOrientation(LinearLayout.VERTICAL);
@@ -6412,6 +6449,8 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             String updatedFullName = (updatedFirstName + " " + updatedSurname).trim();
             String updatedEmail = email.getText().toString().trim();
             String updatedMobile = normalizeLocalizedDigits(mobileValue(mobileCells));
+            String updatedImeiNumber = imeiNumberField.getText().toString().trim();
+            String updatedMobileSerialNumber = mobileSerialField.getText().toString().trim();
             String selectedState = reverseLocalizedProfileValue("state", stateSearch.getText().toString().trim());
             String selectedCity = reverseLocalizedProfileValue("city", citySearch.getText().toString().trim());
             String originalState = String.valueOf(stateSearch.getTag() == null ? "" : stateSearch.getTag());
@@ -6463,6 +6502,8 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                     .putString("full_name", updatedFullName)
                     .putString("email", updatedEmail)
                     .putString("mobile", updatedMobile)
+                    .putString("imei_number", updatedImeiNumber)
+                    .putString("mobile_serial_number", updatedMobileSerialNumber)
                     .putBoolean("email_verified", verifiedEmailAddress)
                     .putBoolean("mobile_verified", verifiedMobileNumber)
                     .putString("state", selectedState)
