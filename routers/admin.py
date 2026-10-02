@@ -17,12 +17,16 @@ from image_matching import cosine_similarity, create_image_embedding
 from models import AdminMatchAlert, FoundItem, LostItem, User
 from notifications import persist_admin_match_alert, send_match_notifications
 from schemas import ItemResponse
-from translation import translate_report_fields
+from translation import translate_report_fields, translate_report_fields_batch
 
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 WORD_PATTERN = re.compile(r"[a-z0-9]+")
 ENGLISH_UNAVAILABLE = "English translation unavailable"
+TEST_REPORT_MARKER = re.compile(
+    r"^\s*(?:\[(?:test|dummy|sample)\]|(?:test|dummy|sample)(?:\s+(?:report|item|data)\b|[_:-]))",
+    re.IGNORECASE,
+)
 
 
 def _supabase_admin_alert_request(method: str, path: str, **kwargs):
@@ -89,6 +93,13 @@ def _is_dummy_text(text: str | None) -> bool:
     return "dummy" in val or "test" in val or "sample" in val or val.startswith("test_")
 
 
+def _is_test_report(item: LostItem | FoundItem) -> bool:
+    creator = (item.created_by or "").strip().lower()
+    if re.match(r"^(?:test|dummy|sample)(?:[_:-]|$)", creator):
+        return True
+    return bool(TEST_REPORT_MARKER.match(item.title or "") or TEST_REPORT_MARKER.match(item.description or ""))
+
+
 def _report_search_conditions(model: type[LostItem] | type[FoundItem], terms: list[str]):
     conditions = []
     for term in terms:
@@ -114,28 +125,35 @@ async def _ensure_english_translations(items: list[LostItem | FoundItem], sessio
     if not pending:
         return
 
-    semaphore = asyncio.Semaphore(4)
+    batches = [pending[index:index + 10] for index in range(0, len(pending), 10)]
 
-    async def translate_item(item: LostItem | FoundItem) -> dict[str, str] | None:
-        async with semaphore:
-            return await translate_report_fields(
-                item.title,
-                item.description,
-                item.report_location,
-                category=item.category,
-                source_language=item.source_language,
-            )
+    async def translate_batch(batch: list[LostItem | FoundItem]) -> dict[str, dict[str, str]] | None:
+        return await translate_report_fields_batch([
+            {
+                "id": f"{item.__tablename__}:{item.id}",
+                "source_language": item.source_language or "auto",
+                "title": item.title,
+                "description": item.description,
+                "report_location": item.report_location or "",
+                "category": item.category,
+            }
+            for item in batch
+        ])
 
-    translations = await asyncio.gather(*(translate_item(item) for item in pending))
+    translations = await asyncio.gather(*(translate_batch(batch) for batch in batches))
     updated = False
-    for item, translated in zip(pending, translations):
-        if translated is None:
+    for batch, batch_translations in zip(batches, translations):
+        if batch_translations is None:
             continue
-        item.title_en = translated["title"]
-        item.description_en = translated["description"]
-        item.report_location_en = translated["report_location"]
-        item.category_en = translated["category"]
-        updated = True
+        for item in batch:
+            translated = batch_translations.get(f"{item.__tablename__}:{item.id}")
+            if translated is None:
+                continue
+            item.title_en = translated["title"]
+            item.description_en = translated["description"]
+            item.report_location_en = translated["report_location"]
+            item.category_en = translated["category"]
+            updated = True
     if updated:
         session.commit()
 
@@ -185,7 +203,8 @@ async def list_all_items(
 ) -> list[dict[str, object]]:
     lost = session.scalars(select(LostItem)).all()
     found = session.scalars(select(FoundItem)).all()
-    items = [("LOST", item) for item in lost] + [("FOUND", item) for item in found]
+    items = [("LOST", item) for item in lost if not _is_test_report(item)]
+    items.extend(("FOUND", item) for item in found if not _is_test_report(item))
     await _ensure_english_translations([item for _, item in items], session)
     items.sort(key=lambda pair: pair[1].created_at.timestamp() if pair[1].created_at else 0, reverse=True)
     return [
@@ -289,7 +308,7 @@ async def search_users_and_reports(
         report_items: list[tuple[str, LostItem | FoundItem]] = []
         for item_type, model in (("LOST", LostItem), ("FOUND", FoundItem)):
             items = session.scalars(select(model).where(model.created_by == user.firebase_uid)).all()
-            report_items.extend((item_type, item) for item in items)
+            report_items.extend((item_type, item) for item in items if not _is_test_report(item))
         await _ensure_english_translations([item for _, item in report_items], session)
         reports.extend({
             "id": item.id,
@@ -322,6 +341,7 @@ async def search_admin_reports(
     found = session.scalars(select(FoundItem).where(*_report_search_conditions(FoundItem, terms))).all()
     items = [
         (item_type, item) for item_type, item in [("LOST", item) for item in lost] + [("FOUND", item) for item in found]
+        if not _is_test_report(item)
     ]
     await _ensure_english_translations([item for _, item in items], session)
     items.sort(key=lambda pair: pair[1].created_at.timestamp() if pair[1].created_at else 0, reverse=True)
@@ -348,9 +368,9 @@ async def find_matches(
     _: str = Depends(require_admin),
 ) -> list[dict[str, object]]:
     found_item = session.get(FoundItem, found_item_id)
-    if found_item is None:
+    if found_item is None or _is_test_report(found_item):
         raise HTTPException(404, "Found item not found")
-    lost_items = session.scalars(select(LostItem)).all()
+    lost_items = [item for item in session.scalars(select(LostItem)).all() if not _is_test_report(item)]
     await _ensure_english_translations([found_item, *lost_items], session)
     found_words = set(WORD_PATTERN.findall(f"{found_item.title} {found_item.description}".lower()))
     found_embedding = found_item.embedding or await create_embedding(

@@ -16,7 +16,7 @@ from routers import admin as admin_module
 from routers import items as items_module
 from routers.items import match_items
 from schemas import ItemCreate, ItemUpdate, MatchRequest
-from translation import translate_report_fields
+from translation import translate_report_fields, translate_report_fields_batch
 
 
 @pytest.mark.asyncio
@@ -51,6 +51,8 @@ async def test_non_english_report_translation_uses_openai_response(monkeypatch):
     calls = {}
 
     class FakeResponse:
+        status_code = 200
+
         def raise_for_status(self):
             pass
 
@@ -105,6 +107,59 @@ async def test_non_english_report_translation_uses_openai_response(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_gemini_translation_retries_with_fallback_when_primary_is_overloaded(monkeypatch):
+    import json
+
+    import httpx
+    import translation
+
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    monkeypatch.setenv("GEMINI_TRANSLATION_MODEL", "gemini-3.8-flash")
+    monkeypatch.setenv("GEMINI_TRANSLATION_FALLBACK_MODEL", "gemini-3.1-flash-lite")
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    requested_endpoints = []
+
+    class FakeResponse:
+        def __init__(self, status_code):
+            self.status_code = status_code
+
+        def raise_for_status(self):
+            if self.status_code >= 400:
+                request = httpx.Request("POST", "https://example.test")
+                response = httpx.Response(self.status_code, request=request)
+                raise httpx.HTTPStatusError("model overloaded", request=request, response=response)
+
+        def json(self):
+            return {"candidates": [{"content": {"parts": [{"text": json.dumps({
+                "title": "Blue bag",
+                "description": "Lost at the station",
+                "report_location": "Central station",
+                "category": "Bag",
+            })}]}}]}
+
+    class FakeAsyncClient:
+        def __init__(self, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            pass
+
+        async def post(self, endpoint, **kwargs):
+            requested_endpoints.append(endpoint)
+            return FakeResponse(503 if len(requested_endpoints) == 1 else 200)
+
+    monkeypatch.setattr(translation.httpx, "AsyncClient", FakeAsyncClient)
+    translated = await translate_report_fields("निळी पिशवी", "हरवली", "मध्यवर्ती स्थानक", "पिशवी", "mr")
+
+    assert translated["title"] == "Blue bag"
+    assert requested_endpoints[0].endswith("/models/gemini-3.8-flash:generateContent")
+    assert requested_endpoints[1].endswith("/models/gemini-3.1-flash-lite:generateContent")
+
+
+@pytest.mark.asyncio
 async def test_non_english_report_translation_returns_unavailable_without_key(monkeypatch):
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     monkeypatch.delenv("GEMINI_API_KEY", raising=False)
@@ -112,6 +167,51 @@ async def test_non_english_report_translation_returns_unavailable_without_key(mo
     translated = await translate_report_fields("पिशवी", "हरवली", None, category="पिशवी", source_language="mr")
 
     assert translated is None
+
+
+@pytest.mark.asyncio
+async def test_batch_translation_preserves_report_ids_and_passes_english_through(monkeypatch):
+    import json
+
+    import translation
+
+    request_payload = {}
+
+    async def fake_generate(user_content):
+        request_payload.update(json.loads(user_content))
+        return {
+            "reports": [{
+                "id": "lost_items:mr-1",
+                "title": "Blue bag",
+                "description": "Lost at the station",
+                "report_location": "Central station",
+                "category": "Bag",
+            }]
+        }
+
+    monkeypatch.setattr(translation, "_generate_json_translation", fake_generate)
+    translated = await translate_report_fields_batch([
+        {
+            "id": "lost_items:mr-1",
+            "source_language": "mr",
+            "title": "निळी पिशवी",
+            "description": "स्थानकावर हरवली",
+            "report_location": "मध्यवर्ती स्थानक",
+            "category": "पिशवी",
+        },
+        {
+            "id": "found_items:en-1",
+            "source_language": "en",
+            "title": "Wallet",
+            "description": "Found near the gate",
+            "report_location": "",
+            "category": "other",
+        },
+    ])
+
+    assert request_payload["reports"][0]["id"] == "lost_items:mr-1"
+    assert translated["lost_items:mr-1"]["title"] == "Blue bag"
+    assert translated["found_items:en-1"]["title"] == "Wallet"
 
 
 @pytest.mark.asyncio
@@ -175,15 +275,18 @@ async def test_admin_item_list_returns_english_and_lazily_translates_legacy_repo
         SimpleNamespace(all=lambda: []),
     ]
 
-    async def translated_fields(title, description, report_location, category="other", source_language=None):
+    async def translated_batch(reports):
         return {
-            "title": "Blue bag",
-            "description": "A bag lost at the station",
-            "report_location": "",
-            "category": "Bag",
+            report["id"]: {
+                "title": "Blue bag",
+                "description": "A bag lost at the station",
+                "report_location": "",
+                "category": "Bag",
+            }
+            for report in reports
         }
 
-    monkeypatch.setattr(admin_module, "translate_report_fields", translated_fields)
+    monkeypatch.setattr(admin_module, "translate_report_fields_batch", translated_batch)
     results = await admin_module.list_all_items(session=session, _="admin-1")
 
     assert results[0]["title"] == "Blue bag"
@@ -324,6 +427,30 @@ def test_admin_report_search_requires_every_comma_filter_to_match_title_or_descr
     assert "%green%" in compiled.params.values()
 
 
+def test_admin_test_report_filter_uses_explicit_markers_not_common_words():
+    test_report = LostItem(
+        id="test-report-1",
+        created_by="ordinary-user",
+        title="Test report: generated fixture",
+        description="Sample data only",
+        category="other",
+        lat=0,
+        lng=0,
+    )
+    real_report = LostItem(
+        id="lost-1",
+        created_by="contest-user-1",
+        title="Contest bicycle",
+        description="Testing the green lock before reporting",
+        category="cycle",
+        lat=0,
+        lng=0,
+    )
+
+    assert admin_module._is_test_report(test_report) is True
+    assert admin_module._is_test_report(real_report) is False
+
+
 @pytest.mark.asyncio
 async def test_admin_report_search_returns_matching_lost_and_found_reports_in_english():
     lost_report = LostItem(
@@ -396,6 +523,83 @@ async def test_admin_live_report_list_keeps_reports_with_test_like_user_text():
     assert len(results) == 1
     assert results[0]["id"] == "lost-test-1"
     assert results[0]["title"] == "Contest bicycle"
+
+
+@pytest.mark.asyncio
+async def test_admin_live_report_list_hides_explicit_test_report():
+    test_report = LostItem(
+        id="test-report-1",
+        created_by="ordinary-user",
+        title="Test report: generated fixture",
+        description="Sample data only",
+        title_en="Test report: generated fixture",
+        description_en="Sample data only",
+        report_location_en="",
+        category_en="Other",
+        category="other",
+        lat=0,
+        lng=0,
+    )
+    real_report = LostItem(
+        id="lost-1",
+        created_by="contest-user-1",
+        title="Contest bicycle",
+        description="Testing the green lock before reporting",
+        title_en="Contest bicycle",
+        description_en="Testing the green lock before reporting",
+        report_location_en="",
+        category_en="Cycle",
+        category="cycle",
+        lat=0,
+        lng=0,
+    )
+    session = Mock(spec=Session)
+    session.scalars.side_effect = [
+        SimpleNamespace(all=lambda: [test_report, real_report]),
+        SimpleNamespace(all=lambda: []),
+    ]
+
+    results = await admin_module.list_all_items(session=session, _="admin-1")
+
+    assert [item["id"] for item in results] == ["lost-1"]
+
+
+@pytest.mark.asyncio
+async def test_legacy_translation_batches_27_reports_into_three_provider_calls(monkeypatch):
+    reports = [
+        LostItem(
+            id=f"lost-{index}",
+            created_by="ordinary-user",
+            title=f"हरवलेली वस्तू {index}",
+            description="बस स्थानकाजवळ हरवली",
+            category="other",
+            lat=0,
+            lng=0,
+        )
+        for index in range(27)
+    ]
+    batch_sizes = []
+
+    async def translated_batch(batch):
+        batch_sizes.append(len(batch))
+        return {
+            report["id"]: {
+                "title": f"Lost item {index}",
+                "description": "Lost near the bus station",
+                "report_location": "",
+                "category": "Other",
+            }
+            for index, report in enumerate(batch)
+        }
+
+    monkeypatch.setattr(admin_module, "translate_report_fields_batch", translated_batch)
+    session = Mock(spec=Session)
+
+    await admin_module._ensure_english_translations(reports, session)
+
+    assert sorted(batch_sizes) == [7, 10, 10]
+    assert all(report.title_en is not None for report in reports)
+    session.commit.assert_called_once()
 
 
 def test_admin_uid_parser_accepts_json_and_newline_lists(monkeypatch):
