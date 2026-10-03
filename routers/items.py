@@ -22,6 +22,7 @@ from ai_matching import create_embedding, item_text
 from auth import get_current_user
 from database import SessionLocal, get_db
 from image_matching import cosine_similarity, create_image_embedding
+from imei_security import imei_digest, validate_imei
 from moderation import moderate_content
 from models import FoundItem, LostItem
 from notifications import persist_admin_match_alert, send_admin_match_email, send_match_notifications
@@ -186,6 +187,7 @@ class ItemSubmission(BaseModel):
     report_location: str | None = Field(default=None, max_length=500)
     category: str = Field(default="other", min_length=1, max_length=80)
     payment_id: str | None = Field(default=None, max_length=128)
+    imei_number: str | None = Field(default=None, exclude=True)
 
 
 def _require_db_session(session: Session | None) -> Session:
@@ -269,6 +271,11 @@ def resolve_item_category(category: str | None, title: str, description: str) ->
 
 
 async def _save_item(payload: ItemCreate, session: Session, uid: str, model: type[LostItem] | type[FoundItem]):
+    if payload.imei_number is not None:
+        if model is not LostItem:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "IMEI can only be attached to a lost-item report")
+        validate_imei(payload.imei_number)
+
     category = resolve_item_category(payload.category, payload.title, payload.description)
     if model is LostItem:
         if payload.payment_id in ["test_bypass", "test_payment_123"] or (payload.payment_id and payload.payment_id.startswith("pay_test_")):
@@ -303,9 +310,12 @@ async def _save_item(payload: ItemCreate, session: Session, uid: str, model: typ
             translated_fields["category"] = category
 
     # 4. Create and persist record
-    item_values = payload.model_dump(exclude={"payment_id"})
+    item_values = payload.model_dump(exclude={"payment_id", "imei_number"})
     item_values["category"] = category
     item_values["image_url"] = payload.image_url or (payload.image_urls[0] if payload.image_urls else None)
+    if model is LostItem:
+        item_values["status"] = "LOST"
+        item_values["imei_hash"] = imei_digest(payload.imei_number) if payload.imei_number else None
     item_values.update(
         title_en=translated_fields["title"] if translated_fields else None,
         description_en=translated_fields["description"] if translated_fields else None,
@@ -489,6 +499,7 @@ async def create_item_compat(
             report_location=request.report_location,
             category=request.category,
             payment_id=request.payment_id,
+            imei_number=request.imei_number,
         )
         model = LostItem if request.type == "lost" else FoundItem
         record = await _save_item(payload, session, uid, model)

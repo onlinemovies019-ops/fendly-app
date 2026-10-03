@@ -2,7 +2,7 @@ from datetime import datetime
 from uuid import uuid4
 
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import BigInteger, Boolean, DateTime, Float, JSON, String, Text, UniqueConstraint, func
+from sqlalchemy import BigInteger, Boolean, DateTime, Float, Index, JSON, String, Text, UniqueConstraint, func
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -81,6 +81,14 @@ class SmsOTPChallenge(Base):
     attempts: Mapped[int] = mapped_column(default=0)
 
 
+class PublicImeiLookupRateLimit(Base):
+    __tablename__ = "public_imei_lookup_rate_limits"
+
+    quota_key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    window_started: Mapped[int] = mapped_column(BigInteger)
+    request_count: Mapped[int] = mapped_column(default=0)
+
+
 class UserNotification(Base):
     __tablename__ = "user_notifications"
 
@@ -113,9 +121,14 @@ class AdminMatchAlert(Base):
 
 class LostItem(Base):
     __tablename__ = "lost_items"
+    __table_args__ = (
+        Index("lost_items_status_imei_hash_idx", "status", "imei_hash"),
+    )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
     created_by: Mapped[str] = mapped_column(String(128), index=True)
+    status: Mapped[str] = mapped_column(String(16), default="LOST", index=True)
+    imei_hash: Mapped[str | None] = mapped_column(String(64))
     title: Mapped[str] = mapped_column(String(160))
     description: Mapped[str] = mapped_column(Text)
     title_en: Mapped[str | None] = mapped_column(Text)

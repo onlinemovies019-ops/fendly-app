@@ -17,7 +17,7 @@
 <body>
   <main>
     <h1>Fendly Privacy Policy</h1>
-    <p class="updated">Effective date: October 3, 2026</p>
+    <p class="updated">Effective date: October 4, 2026</p>
     <p>Fendly is operated by the developer of the Fendly app. Questions or
       privacy requests can be sent to
       <a href="mailto:info.fendly@gmail.com">info.fendly@gmail.com</a>.</p>
@@ -33,6 +33,11 @@
         authorized administrators, and identify possible matches. A limited
         preview (title, category, date, and report photo) may be shown to the
         owners of reports that the system identifies as a potential match.</li>
+      <li><strong>Optional device IMEI:</strong> when submitting a lost-device
+        report, you may provide its 15-digit IMEI to support SafeTrade checks.
+        Fendly stores a keyed cryptographic hash of that number, not the raw
+        IMEI, and does not use it to associate devices with accounts. The hash
+        is used to compare the report with a buyer-initiated SafeTrade check.</li>
       <li><strong>Location:</strong> with permission, the app can use foreground
         device location to help add a location to a report. Fendly does not
         request background-location permission or continuously track location.</li>
@@ -66,13 +71,20 @@
       process report images locally or through the configured matching
       service, which may include Cloudinary. These providers process information
       under their own terms and privacy notices.</p>
-    <p>Fendly does not use IMEI or serial numbers to associate devices with
-      accounts. The app does not use background location tracking.</p>
+    <p>SafeTrade's public IMEI verification endpoint returns only whether an
+      exact IMEI has an active lost-device report; it does not disclose who
+      filed the report or other report details. Lookups are rate-limited.
+      Fendly does not collect serial numbers for this feature and does not use
+      IMEIs to associate devices with accounts. The app does not use background
+      location tracking.</p>
 
     <h2>Retention</h2>
     <p>SMS and email verification challenges expire after 10 minutes. Temporary
       verification rate-limit records use keyed digests rather than raw phone
       numbers or IP addresses and are cleaned up after their limit window.
+      SafeTrade retains the keyed IMEI digest only while its lost report is
+      retained; deleting the report removes its digest. The server-side key
+      needed to create and compare these digests is not sent to the app.
       Service-provider backups may retain deleted data until their normal
       backup-retention cycle expires. Push notifications already delivered to
       a device cannot be recalled.</p>

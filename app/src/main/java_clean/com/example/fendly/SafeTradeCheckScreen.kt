@@ -1,0 +1,424 @@
+package com.example.fendly
+
+import android.Manifest
+import android.content.pm.PackageManager
+import android.util.Size
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.camera.core.CameraSelector
+import androidx.camera.core.ImageAnalysis
+import androidx.camera.core.Preview
+import androidx.camera.lifecycle.ProcessCameraProvider
+import androidx.camera.view.PreviewView
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material3.Button
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.unit.dp
+import androidx.core.content.ContextCompat
+import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.compose.ui.viewinterop.AndroidView
+import com.google.mlkit.vision.barcode.BarcodeScanner
+import com.google.mlkit.vision.barcode.BarcodeScannerOptions
+import com.google.mlkit.vision.barcode.BarcodeScanning
+import com.google.mlkit.vision.barcode.common.Barcode
+import com.google.mlkit.vision.common.InputImage
+import retrofit2.Call
+import retrofit2.Callback
+import retrofit2.Response
+import retrofit2.Retrofit
+import retrofit2.converter.gson.GsonConverterFactory
+import retrofit2.http.GET
+import retrofit2.http.Path
+import java.util.concurrent.ExecutorService
+import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicBoolean
+
+private const val IMEI_DISCLAIMER =
+    "SafeTrade checks device IMEIs against reported lost/stolen databases to protect buyers. By searching, you agree to our terms."
+
+data class ImeiVerificationResponse(
+    val status: String,
+    val message: String,
+    val is_flagged: Boolean,
+)
+
+private interface SafeTradeApi {
+    @GET("api/v1/imei/verify/{imei_number}")
+    fun verifyImei(@Path("imei_number") imeiNumber: String): Call<ImeiVerificationResponse>
+}
+
+private object SafeTradeApiClient {
+    val api: SafeTradeApi by lazy {
+        Retrofit.Builder()
+            .baseUrl("${BuildConfig.API_BASE_URL.trimEnd('/')}/")
+            .addConverterFactory(GsonConverterFactory.create())
+            .build()
+            .create(SafeTradeApi::class.java)
+    }
+}
+
+private enum class VerificationState {
+    IDLE,
+    LOADING,
+    CLEAN,
+    FLAGGED,
+    ERROR,
+}
+
+@Composable
+fun SafeTradeCheckScreen(onBack: () -> Unit) {
+    var imei by remember { mutableStateOf("") }
+    var state by remember { mutableStateOf(VerificationState.IDLE) }
+    var responseMessage by remember { mutableStateOf("") }
+    var scanning by remember { mutableStateOf(false) }
+    var cameraPermissionDenied by remember { mutableStateOf(false) }
+    val context = LocalContext.current
+    val hasCameraPermission = remember {
+        ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) ==
+            PackageManager.PERMISSION_GRANTED
+    }
+    var cameraGranted by remember { mutableStateOf(hasCameraPermission) }
+    val cameraPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { granted ->
+        cameraGranted = granted
+        cameraPermissionDenied = !granted
+        scanning = granted
+    }
+
+    if (scanning && cameraGranted) {
+        ImeiCameraScanner(
+            onImeiDetected = { detected ->
+                imei = detected
+                state = VerificationState.IDLE
+                responseMessage = ""
+                scanning = false
+            },
+            onClose = { scanning = false },
+            onScannerError = {
+                scanning = false
+                state = VerificationState.ERROR
+                responseMessage = "The barcode scanner could not start. Enter the IMEI manually."
+            },
+        )
+        return
+    }
+
+    Surface(
+        modifier = Modifier.fillMaxSize(),
+        color = Color(0xFFF7F3EE),
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(horizontal = 22.dp, vertical = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                TextButton(onClick = onBack) { Text("Back") }
+                Text(
+                    text = "SafeTrade IMEI check",
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.SemiBold,
+                )
+            }
+
+            Text(
+                text = "Check before you buy",
+                style = MaterialTheme.typography.headlineSmall,
+                fontWeight = FontWeight.Bold,
+            )
+            Text(
+                text = "Enter the 15-digit IMEI shown on the device or its box.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = Color(0xFF53565C),
+            )
+
+            OutlinedTextField(
+                value = imei,
+                onValueChange = { value ->
+                    imei = value.filter { it in '0'..'9' }.take(15)
+                    state = VerificationState.IDLE
+                    responseMessage = ""
+                },
+                modifier = Modifier.fillMaxWidth(),
+                label = { Text("15-digit IMEI") },
+                placeholder = { Text("Enter IMEI") },
+                supportingText = { Text("${imei.length}/15 digits") },
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                singleLine = true,
+            )
+
+            Text(
+                text = IMEI_DISCLAIMER,
+                style = MaterialTheme.typography.bodySmall,
+                color = Color(0xFF45474D),
+            )
+
+            Button(
+                onClick = {
+                    if (cameraGranted) {
+                        scanning = true
+                    } else {
+                        cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
+                    }
+                },
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text("Scan IMEI barcode")
+            }
+
+            if (cameraPermissionDenied) {
+                Text(
+                    text = "Camera access was denied. You can still enter the IMEI manually.",
+                    color = Color(0xFF8A4B00),
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
+
+            Button(
+                onClick = {
+                    state = VerificationState.LOADING
+                    responseMessage = ""
+                    SafeTradeApiClient.api.verifyImei(imei).enqueue(
+                        object : Callback<ImeiVerificationResponse> {
+                            override fun onResponse(
+                                call: Call<ImeiVerificationResponse>,
+                                response: Response<ImeiVerificationResponse>,
+                            ) {
+                                val result = response.body()
+                                if (response.isSuccessful && result != null) {
+                                    state = when {
+                                        result.is_flagged -> VerificationState.FLAGGED
+                                        result.status == "CLEAN" -> VerificationState.CLEAN
+                                        else -> VerificationState.ERROR
+                                    }
+                                    responseMessage = if (state == VerificationState.ERROR) {
+                                        "The verification service returned an unexpected result."
+                                    } else {
+                                        result.message
+                                    }
+                                } else {
+                                    state = VerificationState.ERROR
+                                    responseMessage = when (response.code()) {
+                                        429 -> "Too many checks. Please wait a moment and try again."
+                                        400 -> "Enter a valid 15-digit IMEI."
+                                        else -> "Could not verify this IMEI right now. Please try again."
+                                    }
+                                }
+                            }
+
+                            override fun onFailure(call: Call<ImeiVerificationResponse>, error: Throwable) {
+                                state = VerificationState.ERROR
+                                responseMessage = "Could not connect to SafeTrade. Check your connection and try again."
+                            }
+                        },
+                    )
+                },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(52.dp),
+                enabled = imei.length == 15 && state != VerificationState.LOADING,
+            ) {
+                if (state == VerificationState.LOADING) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(22.dp),
+                        color = MaterialTheme.colorScheme.onPrimary,
+                        strokeWidth = 2.dp,
+                    )
+                } else {
+                    Text("Verify IMEI")
+                }
+            }
+
+            when (state) {
+                VerificationState.CLEAN -> VerificationBanner(
+                    message = responseMessage.ifBlank {
+                        "No active loss reports were found for this device."
+                    },
+                    background = Color(0xFFE3F4E8),
+                    foreground = Color(0xFF14532D),
+                )
+                VerificationState.FLAGGED -> VerificationBanner(
+                    message = "This device is currently reported missing. Do not complete purchase.",
+                    background = Color(0xFFFFE8E6),
+                    foreground = Color(0xFF8B1E18),
+                )
+                VerificationState.ERROR -> VerificationBanner(
+                    message = responseMessage,
+                    background = Color(0xFFFFF1D6),
+                    foreground = Color(0xFF6D4600),
+                )
+                VerificationState.IDLE,
+                VerificationState.LOADING -> Unit
+            }
+        }
+    }
+}
+
+@Composable
+private fun VerificationBanner(
+    message: String,
+    background: Color,
+    foreground: Color,
+) {
+    Text(
+        text = message,
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(background, RoundedCornerShape(12.dp))
+            .padding(16.dp),
+        color = foreground,
+        fontWeight = FontWeight.SemiBold,
+        style = MaterialTheme.typography.bodyMedium,
+    )
+}
+
+@Composable
+private fun ImeiCameraScanner(
+    onImeiDetected: (String) -> Unit,
+    onClose: () -> Unit,
+    onScannerError: () -> Unit,
+) {
+    val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
+    val scannerOptions = remember {
+        BarcodeScannerOptions.Builder()
+            .setBarcodeFormats(Barcode.FORMAT_ALL_FORMATS)
+            .build()
+    }
+    val barcodeScanner = remember(scannerOptions) { BarcodeScanning.getClient(scannerOptions) }
+    val cameraExecutor: ExecutorService = remember { Executors.newSingleThreadExecutor() }
+    var previewView by remember { mutableStateOf<PreviewView?>(null) }
+    val detected = remember { AtomicBoolean(false) }
+
+    DisposableEffect(previewView, lifecycleOwner, barcodeScanner) {
+        val view = previewView
+        if (view == null) {
+            onDispose { }
+        } else {
+            val providerFuture = ProcessCameraProvider.getInstance(context)
+            providerFuture.addListener(
+                {
+                    try {
+                        val cameraProvider = providerFuture.get()
+                        val preview = Preview.Builder().build().also {
+                            it.setSurfaceProvider(view.surfaceProvider)
+                        }
+                        val analysis = ImageAnalysis.Builder()
+                            .setTargetResolution(Size(1280, 720))
+                            .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+                            .build()
+                        analysis.setAnalyzer(cameraExecutor) { imageProxy ->
+                            val mediaImage = imageProxy.image
+                            if (mediaImage == null || detected.get()) {
+                                imageProxy.close()
+                            } else {
+                                barcodeScanner.process(
+                                    InputImage.fromMediaImage(
+                                        mediaImage,
+                                        imageProxy.imageInfo.rotationDegrees,
+                                    ),
+                                ).addOnSuccessListener { barcodes ->
+                                    if (detected.compareAndSet(false, true)) {
+                                        val candidate = barcodes
+                                            .asSequence()
+                                            .mapNotNull { it.rawValue }
+                                            .mapNotNull { Regex("[0-9]{15}").find(it)?.value }
+                                            .firstOrNull()
+                                        if (candidate != null) {
+                                            onImeiDetected(candidate)
+                                        } else {
+                                            detected.set(false)
+                                        }
+                                    }
+                                }.addOnFailureListener {
+                                    detected.set(false)
+                                }.addOnCompleteListener {
+                                    imageProxy.close()
+                                }
+                            }
+                        }
+                        cameraProvider.unbindAll()
+                        cameraProvider.bindToLifecycle(
+                            lifecycleOwner,
+                            CameraSelector.DEFAULT_BACK_CAMERA,
+                            preview,
+                            analysis,
+                        )
+                    } catch (_: Exception) {
+                        onScannerError()
+                    }
+                },
+                ContextCompat.getMainExecutor(context),
+            )
+
+            onDispose {
+                if (providerFuture.isDone) {
+                    runCatching { providerFuture.get().unbindAll() }
+                }
+                barcodeScanner.close()
+                cameraExecutor.shutdown()
+            }
+        }
+    }
+
+    Surface(modifier = Modifier.fillMaxSize(), color = Color.Black) {
+        Box(modifier = Modifier.fillMaxSize()) {
+            AndroidView(
+                modifier = Modifier.fillMaxSize(),
+                factory = { viewContext ->
+                    PreviewView(viewContext).also { view ->
+                        view.scaleType = PreviewView.ScaleType.FILL_CENTER
+                        previewView = view
+                    }
+                },
+            )
+            Column(
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .fillMaxWidth()
+                    .background(Color(0x99000000))
+                    .padding(18.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                Text("Scan device IMEI", color = Color.White, fontWeight = FontWeight.Bold)
+                Spacer(modifier = Modifier.height(4.dp))
+                Text("Hold a 15-digit barcode inside the camera view.", color = Color.White)
+                TextButton(onClick = onClose) { Text("Cancel", color = Color.White) }
+            }
+        }
+    }
+}

@@ -59,7 +59,8 @@ public final class AiMatchService {
             String date,
             String paymentId,
             String sourceLanguage,
-            String idToken
+            String idToken,
+            String imeiNumber
     ) throws Exception {
         JSONArray images = new JSONArray();
         if (imageUrls != null) {
@@ -80,6 +81,9 @@ public final class AiMatchService {
                 .put("report_date", date == null ? JSONObject.NULL : date)
                 .put("category", inferCategory(title, description))
                 .put("payment_id", paymentId == null ? JSONObject.NULL : paymentId);
+        if ("lost".equalsIgnoreCase(type) && imeiNumber != null && !imeiNumber.isEmpty()) {
+            payload.put("imei_number", imeiNumber);
+        }
         return post("/api/items", payload, idToken);
     }
 

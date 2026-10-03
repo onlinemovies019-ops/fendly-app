@@ -10,7 +10,7 @@ service.
 python3.11 -m venv .venv
 ./.venv/bin/python -m pip install -r requirements.txt
 ./.venv/bin/python -c "import email_validator; print('email-validator is installed')"
-./.venv/bin/python -m uvicorn main:app --reload
+./.venv/bin/python -m uvicorn main:app --reload --no-access-log
 ```
 
 Required environment variables:
@@ -20,7 +20,9 @@ Required environment variables:
 - `FIREBASE_SERVICE_ACCOUNT_JSON`, or `GOOGLE_APPLICATION_CREDENTIALS`: Firebase
 	Admin credentials used to verify Android ID tokens.
 - `APP_SECRET_KEY`: a private value of at least 32 characters used to protect
-	verification challenges and rate-limit identifiers.
+	verification challenges, rate-limit identifiers, and SafeTrade IMEI hashes.
+	Keep this value stable: changing it makes existing SafeTrade IMEI hashes
+	impossible to compare with new lookups.
 - `PUBLIC_BASE_URL`: Public API URL used in uploaded image URLs.
 - `CORS_ORIGINS`: Comma-separated browser origins allowed to call the API.
   Defaults to the production API origin; wildcard entries are ignored in
@@ -61,6 +63,12 @@ development writes to `static/uploads`; Render's free filesystem is ephemeral.
 - `POST /api/upload`
 - `POST /api/items/lost`
 - `POST /api/items/found`
+- Optional `imei_number` on a lost-device report: enables SafeTrade matching.
+  The API accepts exactly 15 digits and stores only a keyed HMAC digest; it
+  never returns or logs the raw IMEI.
+- `GET /api/v1/imei/verify/{imei_number}` (public; limited to 10 lookups per
+  client IP per minute; returns only CLEAN/FLAGGED and a generic message).
+  Access logging is disabled because the IMEI is part of the URL path.
 - `GET /api/items/mine`
 - `POST /api/items/match` (report owners can match their own reports; ordinary
   accounts receive a limited potential-match preview, while explicitly listed
@@ -81,6 +89,10 @@ protected by persistent rate limits and short-lived challenges. Admin access
 requires an explicit Firebase UID in `ADMIN_FIREBASE_UIDS`; wildcard
 configuration is not accepted. Set `OPENAI_API_KEY` to enable provider-backed
 moderation; without it, the backend uses its local safety blocklist.
+
+Apply `supabase/migrations/20261004090000_safetrade_imei_verification.sql`
+before deploying SafeTrade. It adds a status and keyed-IMEI-hash index for
+lost reports and the persistent public lookup rate-limit table.
 
 ## Purge reports retained for previously deleted accounts
 

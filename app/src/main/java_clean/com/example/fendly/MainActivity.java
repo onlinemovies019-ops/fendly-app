@@ -67,6 +67,7 @@ import android.webkit.WebViewClient;
 import android.speech.tts.TextToSpeech;
 import android.text.Editable;
 import android.text.InputType;
+import android.text.method.DigitsKeyListener;
 import android.text.SpannableString;
 import android.text.Spanned;
 import android.text.TextWatcher;
@@ -252,6 +253,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
     private String draftDescription = "";
     private String draftLocation = "";
     private String draftDate = "";
+    private String draftImei = "";
     private String localEmailOtp = "";
     private String draftFullName = "";
     private String draftEmail = "";
@@ -2801,6 +2803,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         draftDescription = "";
         draftLocation = "";
         draftDate = "";
+        draftImei = "";
         selectedImage = null;
         capturedImage = null;
         Arrays.fill(reportImages, null);
@@ -2850,6 +2853,9 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         TextView profile = actionButton("My profile", false);
         profile.setOnClickListener(view -> showProfile());
         addField(root, profile);
+        TextView safeTrade = actionButton("SafeTrade IMEI check", false);
+        safeTrade.setOnClickListener(view -> startActivity(new Intent(this, SafeTradeCheckActivity.class)));
+        addField(root, safeTrade);
         String username = getSharedPreferences("fendly_account", MODE_PRIVATE).getString("username", "your account");
         TextView signedInText = text(translate("Signed in as") + " " + localizeProfileName(username), 14, secondaryTextColor(), Typeface.NORMAL);
         signedInText.setGravity(Gravity.CENTER);
@@ -2882,10 +2888,15 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         EditText description = field("");
         EditText location = field("");
         EditText date = field("");
+        EditText imei = field("");
+        imei.setInputType(InputType.TYPE_CLASS_NUMBER);
+        imei.setKeyListener(DigitsKeyListener.getInstance("0123456789"));
+        imei.setFilters(new InputFilter[] {new InputFilter.LengthFilter(15)});
         item.setText(draftItem);
         description.setText(draftDescription);
         location.setText(draftLocation);
         date.setText(draftDate);
+        imei.setText(draftImei);
         item.addTextChangedListener(draftWatcher(value -> {
             draftItem = value;
         }));
@@ -2894,11 +2905,20 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         }));
         location.addTextChangedListener(draftWatcher(value -> draftLocation = value));
         date.addTextChangedListener(draftWatcher(value -> draftDate = value));
+        imei.addTextChangedListener(draftWatcher(value -> draftImei = value));
         configureDateField(date);
         addLabeledField(root, "Item name", item);
         addLabeledField(root, "Description", description);
         addLabeledDateField(root, translate("FOUND".equals(type) ? "Date found" : "Date lost"), date);
         addLabeledField(root, translate("FOUND".equals(type) ? "Place found" : "Last seen at"), location);
+        if ("LOST".equals(type) && editingReportId == null) {
+            addLabeledField(root, "Optional IMEI for SafeTrade checks", imei);
+            TextView imeiDisclosure = text(
+                    "If provided, the IMEI is stored as a keyed hash, not as the original number, to check this lost report.",
+                    12, secondaryTextColor(), Typeface.NORMAL);
+            imeiDisclosure.setPadding(dp(2), 0, dp(2), dp(10));
+            root.addView(imeiDisclosure, contentParams(-1, -2, 0));
+        }
 
         boolean locationVisibleOnThisScreen = hasLocation && currentReportType != null && currentReportType.equalsIgnoreCase(activeLocationReportType);
         TextView addLocation = text(locationVisibleOnThisScreen
@@ -3274,6 +3294,11 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             date.setError("Use a valid date in DD/MM/YYYY format");
             return;
         }
+        if ("LOST".equalsIgnoreCase(type) && !draftImei.isEmpty()
+                && !draftImei.matches("[0-9]{15}")) {
+            Toast.makeText(this, "IMEI must contain exactly 15 digits", Toast.LENGTH_LONG).show();
+            return;
+        }
         if (editingReportId != null && type.equalsIgnoreCase(editingReportType)) {
             updateItem(type, item, description, location, date, publish);
             return;
@@ -3300,7 +3325,8 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                 ItemSubmissionResult submission = postItem(
                         type, title, details, location.getText().toString().trim(),
                         date.getText().toString().trim(), latitude, longitude,
-                        images, cameraImages, token.getToken(), paymentId);
+                        images, cameraImages, token.getToken(), paymentId,
+                        "LOST".equalsIgnoreCase(type) ? draftImei : "");
                 runOnUiThread(() -> {
                     publish.setEnabled(true);
                     int code = submission.statusCode;
@@ -3336,7 +3362,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         }
     }
 
-    private ItemSubmissionResult postItem(String type, String title, String description, String location, String date, double latitude, double longitude, Uri[] images, Bitmap[] cameraImages, String idToken, String paymentId) {
+    private ItemSubmissionResult postItem(String type, String title, String description, String location, String date, double latitude, double longitude, Uri[] images, Bitmap[] cameraImages, String idToken, String paymentId, String imeiNumber) {
         lastSubmissionError = null;
         try {
             List<String> imageUrls = new ArrayList<>();
@@ -3354,7 +3380,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             AiMatchService.ApiResponse response = AiMatchService.createItem(
                     title, description, imageUrl, imageUrls, type, latitude, longitude,
                     location, date, paymentId,
-                    getTtsLocaleForSelectedLanguage().getLanguage(), idToken);
+                    getTtsLocaleForSelectedLanguage().getLanguage(), idToken, imeiNumber);
             if (!response.isSuccessful()) {
                 lastSubmissionError = "Could not save report (" + response.getStatusCode() + "): " + response.getErrorMessage();
                 return new ItemSubmissionResult(response.getStatusCode(), lastSubmissionError);

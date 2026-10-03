@@ -16,12 +16,13 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 from auth import router as auth_router, get_current_user
 from database import engine, get_db
-from models import Base, EmailOTPChallenge, SmsOTPChallenge, SmsOTPRateLimit, User
+from models import Base, EmailOTPChallenge, PublicImeiLookupRateLimit, SmsOTPChallenge, SmsOTPRateLimit, User
 from routers.items import create_item_compat, match_items, router as items_router
 from routers.notifications import router as notifications_router
 from routers.users import router as users_router
 from routers.admin import router as admin_router
 from routers.payments import router as payments_router
+from routers.imei import router as imei_router
 from schemas import ItemResponse, MatchResponse
 
 logger = logging.getLogger(__name__)
@@ -63,6 +64,9 @@ async def lifespan(_: FastAPI):
                 )
                 connection.execute(
                     text("ALTER TABLE public.sms_otp_rate_limits ENABLE ROW LEVEL SECURITY")
+                )
+                connection.execute(
+                    text("ALTER TABLE public.public_imei_lookup_rate_limits ENABLE ROW LEVEL SECURITY")
                 )
             now = int(time.time())
             connection.execute(
@@ -153,6 +157,8 @@ async def lifespan(_: FastAPI):
             add_column_if_missing("lost_items", "category_en", "text")
             add_column_if_missing("lost_items", "source_language", "varchar(16)", not_null=True, default="'auto'")
             add_column_if_missing("lost_items", "edit_count", "integer", not_null=True, default="0")
+            add_column_if_missing("lost_items", "status", "varchar(16)", not_null=True, default="'LOST'")
+            add_column_if_missing("lost_items", "imei_hash", "varchar(64)")
             add_column_if_missing("found_items", "report_date", "varchar(32)")
             add_column_if_missing("found_items", "report_location", "varchar(500)")
             add_column_if_missing("found_items", "image_urls", "json")
@@ -163,6 +169,12 @@ async def lifespan(_: FastAPI):
             add_column_if_missing("found_items", "source_language", "varchar(16)", not_null=True, default="'auto'")
             add_column_if_missing("found_items", "edit_count", "integer", not_null=True, default="0")
             add_column_if_missing("admin_match_alerts", "review_status", "varchar(20)", not_null=True, default="'pending'")
+            connection.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS lost_items_status_imei_hash_idx "
+                    "ON lost_items (status, imei_hash)"
+                )
+            )
     cleanup_task = asyncio.create_task(_cleanup_expired_otp_challenges())
     try:
         yield
@@ -191,6 +203,11 @@ async def _cleanup_expired_otp_challenges() -> None:
                 session.execute(
                     delete(SmsOTPRateLimit).where(
                         SmsOTPRateLimit.sent_at <= now - 86400
+                    )
+                )
+                session.execute(
+                    delete(PublicImeiLookupRateLimit).where(
+                        PublicImeiLookupRateLimit.window_started <= now - 86400
                     )
                 )
                 session.commit()
@@ -250,6 +267,7 @@ app.include_router(notifications_router)
 app.include_router(users_router)
 app.include_router(admin_router)
 app.include_router(payments_router)
+app.include_router(imei_router)
 
 
 @app.get("/health")
