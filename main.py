@@ -212,6 +212,11 @@ def _cors_allowed_origins() -> list[str]:
         for origin in configured.split(",")
         if origin.strip()
     ]
+    if "*" in origins and os.getenv("ENVIRONMENT", "").lower() == "production":
+        logger.warning(
+            "Ignoring wildcard CORS origin in production; configure explicit origins"
+        )
+        origins = [origin for origin in origins if origin != "*"]
     return origins or ["https://fendly-api.onrender.com"]
 
 
