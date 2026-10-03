@@ -26,6 +26,9 @@ Required environment variables:
 - `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, and `SUPABASE_STORAGE_BUCKET`:
 	configure these to store uploads permanently in a public Supabase Storage
 	bucket. The service-role key must remain server-side only.
+- `CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_API_KEY`, and `CLOUDINARY_API_SECRET`
+	enable deletion of Fendly-managed Cloudinary images during account/report
+	cleanup. Keep the API secret server-side only.
 - `IMAGE_MATCHING_FUNCTION_URL` points the API to the authenticated Firebase
   Cloud Function that indexes Cloudinary report images and performs CLIP visual
   matching. Deploy it with `firebase deploy --only functions:matchReportImages`.
@@ -74,3 +77,20 @@ protected by persistent rate limits and short-lived challenges. Admin access
 requires an explicit Firebase UID in `ADMIN_FIREBASE_UIDS`; wildcard
 configuration is not accepted. Set `OPENAI_API_KEY` to enable provider-backed
 moderation; without it, the backend uses its local safety blocklist.
+
+## Purge reports retained for previously deleted accounts
+
+After deploying, run the following from the production Render Shell. The first
+command only reports counts. The second permanently removes legacy reports
+marked `account-deleted`, linked SQL/Supabase match data and notifications,
+Firestore report copies, and unshared images stored by configured providers:
+
+```bash
+python -m scripts.purge_account_deleted_reports
+python -m scripts.purge_account_deleted_reports --apply
+```
+
+The purge requires production database, Firebase, and Supabase credentials. If
+any report image is hosted in Cloudinary, configure its cloud name, API key,
+and API secret in Render before running `--apply`; the script refuses to start
+the purge when those Cloudinary credentials are missing.

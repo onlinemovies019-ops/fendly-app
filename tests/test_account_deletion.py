@@ -99,6 +99,34 @@ def test_account_deletion_removes_owned_supabase_profile_photo(monkeypatch):
     assert requested["headers"]["Authorization"] == "Bearer test-service-key"
 
 
+def test_account_deletion_removes_supabase_visual_index_and_alerts(monkeypatch):
+    requests = []
+
+    class FakeResponse:
+        def raise_for_status(self):
+            return None
+
+    def fake_delete(url, params, headers, timeout):
+        requests.append((url, params, headers, timeout))
+        return FakeResponse()
+
+    monkeypatch.setenv("SUPABASE_URL", "https://storage.example.test")
+    monkeypatch.setenv("SUPABASE_SERVICE_ROLE_KEY", "test-service-key")
+    monkeypatch.setattr(users.httpx, "delete", fake_delete)
+
+    users._delete_supabase_account_matching_data({"report-1", "report-2"})
+
+    assert [request[0] for request in requests] == [
+        "https://storage.example.test/rest/v1/items",
+        "https://storage.example.test/rest/v1/admin_match_alerts",
+    ]
+    assert requests[0][1] == {"source_id": 'in.("report-1","report-2")'}
+    assert requests[1][1]["or"] == (
+        '(found_item_id.in.("report-1","report-2"),'
+        'lost_item_id.in.("report-1","report-2"))'
+    )
+
+
 def test_account_deletion_removes_owned_cloudinary_profile_photo(monkeypatch):
     requested = {}
 
@@ -194,7 +222,7 @@ def test_delete_account_removes_reports_and_related_data(
     monkeypatch.setattr(users, "_firebase_app", lambda: object())
     monkeypatch.setattr(users, "_delete_firestore_account_copies", lambda *args: None)
     monkeypatch.setattr(users, "_delete_profile_photo_asset", lambda _: None)
-    monkeypatch.setattr(users, "_delete_supabase_account_alerts", lambda _: None)
+    monkeypatch.setattr(users, "_delete_supabase_account_matching_data", lambda _: None)
     auth_deleted_after_database_commit = []
 
     def delete_firebase_user(target_uid, app):

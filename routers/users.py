@@ -190,28 +190,36 @@ def _delete_firestore_account_copies(app, uid: str, email: str | None) -> None:
             collection.document(report_id).delete()
 
 
-def _delete_supabase_account_alerts(report_ids: set[str]) -> None:
+def _delete_supabase_account_matching_data(report_ids: set[str]) -> None:
     supabase_url = os.getenv("SUPABASE_URL", "").rstrip("/")
     service_role_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "")
     if not supabase_url or not service_role_key or not report_ids:
         return
 
     encoded_ids = ",".join(f'"{report_id}"' for report_id in sorted(report_ids))
-    response = httpx.delete(
-        f"{supabase_url}/rest/v1/admin_match_alerts",
-        params={
-            "or": (
-                f"(found_item_id.in.({encoded_ids}),"
-                f"lost_item_id.in.({encoded_ids}))"
-            )
-        },
-        headers={
-            "apikey": service_role_key,
-            "Authorization": f"******",
-        },
-        timeout=15.0,
-    )
-    response.raise_for_status()
+    headers = {
+        "apikey": service_role_key,
+        "Authorization": f"******",
+    }
+    for table, params in (
+        ("items", {"source_id": f"in.({encoded_ids})"}),
+        (
+            "admin_match_alerts",
+            {
+                "or": (
+                    f"(found_item_id.in.({encoded_ids}),"
+                    f"lost_item_id.in.({encoded_ids}))"
+                )
+            },
+        ),
+    ):
+        response = httpx.delete(
+            f"{supabase_url}/rest/v1/{table}",
+            params=params,
+            headers=headers,
+            timeout=15.0,
+        )
+        response.raise_for_status()
 
 
 @router.delete("/account", status_code=status.HTTP_204_NO_CONTENT)
@@ -248,7 +256,7 @@ def delete_account(
 
         app = _firebase_app()
         _delete_firestore_account_copies(app, uid, email)
-        _delete_supabase_account_alerts(report_ids)
+        _delete_supabase_account_matching_data(report_ids)
         if report_ids:
             session.execute(
                 delete(AdminMatchAlert).where(

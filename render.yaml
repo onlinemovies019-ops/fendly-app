@@ -19,6 +19,12 @@ services:
         value: https://us-central1-fendly-6d746.cloudfunctions.net/matchReportImages
       - key: SUPABASE_STORAGE_BUCKET
         value: uploads
+      - key: CLOUDINARY_CLOUD_NAME
+        sync: false
+      - key: CLOUDINARY_API_KEY
+        sync: false
+      - key: CLOUDINARY_API_SECRET
+        sync: false
       - key: CORS_ORIGINS
         value: "*"
       - key: ADMIN_FIREBASE_UIDS
