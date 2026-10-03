@@ -22,7 +22,9 @@ Required environment variables:
 - `APP_SECRET_KEY`: a private value of at least 32 characters used to protect
 	verification challenges and rate-limit identifiers.
 - `PUBLIC_BASE_URL`: Public API URL used in uploaded image URLs.
-- `CORS_ORIGINS`: Comma-separated allowed origins. Defaults to `*`.
+- `CORS_ORIGINS`: Comma-separated browser origins allowed to call the API.
+  Defaults to the production API origin; wildcard origins are rejected in
+  production. Bearer-token authentication is used instead of cookies.
 - `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, and `SUPABASE_STORAGE_BUCKET`:
 	configure these to store uploads permanently in a public Supabase Storage
 	bucket and clean up matching-index data when deleting reports. The

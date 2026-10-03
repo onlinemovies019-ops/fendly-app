@@ -201,10 +201,26 @@ async def _cleanup_expired_otp_challenges() -> None:
 
 app = FastAPI(title="Fendly API", lifespan=lifespan)
 
+
+def _cors_allowed_origins() -> list[str]:
+    configured = os.getenv(
+        "CORS_ORIGINS",
+        "https://fendly-api.onrender.com",
+    )
+    origins = [
+        origin.strip().rstrip("/")
+        for origin in configured.split(",")
+        if origin.strip()
+    ]
+    if os.getenv("ENVIRONMENT", "").lower() == "production" and "*" in origins:
+        raise RuntimeError("Wildcard CORS origins are not allowed in production")
+    return origins
+
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=os.getenv("CORS_ORIGINS", "*").split(","),
-    allow_credentials=True,
+    allow_origins=_cors_allowed_origins(),
+    allow_credentials=False,
     allow_methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type", "Accept", "Origin"],
 )
