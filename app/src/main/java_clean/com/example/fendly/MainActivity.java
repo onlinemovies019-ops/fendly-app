@@ -10,6 +10,7 @@ import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.graphics.Canvas;
 import android.graphics.Color;
+import android.graphics.Matrix;
 import android.graphics.Paint;
 import android.graphics.Typeface;
 import android.graphics.drawable.ColorDrawable;
@@ -101,7 +102,9 @@ import com.google.zxing.integration.android.IntentResult;
 import android.graphics.drawable.GradientDrawable;
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
+import androidx.core.content.FileProvider;
 import androidx.core.content.res.ResourcesCompat;
+import androidx.exifinterface.media.ExifInterface;
 import android.app.AlertDialog;
 import android.content.SharedPreferences;
 import com.example.fendly.notifications.FcmRegistration;
@@ -225,6 +228,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         return localizeDigits(normalizedPhoneNumber);
     }
     private Uri selectedProfileImage;
+    private Uri pendingProfileCameraUri;
     private Bitmap capturedProfileImage;
     private boolean profileImageExplicitlyRemoved = false;
     private String profilePhotoCacheDownloadUrl = "";
@@ -3783,6 +3787,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             update.put("imageUrl", "");
             update.put("profile_image_url", "");
             update.put("profile_photo_url", "");
+            update.put("profile_image_removed", true);
             FirebaseFirestore db = FirebaseFirestore.getInstance();
             String docKey = getProfileDocumentKey();
             db.collection("users").document(docKey).set(update, SetOptions.merge());
@@ -3905,6 +3910,13 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         boolean hasCustomPhoto = false;
         String savedProfileUri = account.getString("profile_image_uri", null);
         String cloudImageUrl = account.getString("profile_image_url", "").trim();
+        if ((savedProfileUri == null || savedProfileUri.trim().isEmpty()) && !profileImageExplicitlyRemoved) {
+            File cachedPhoto = new File(getFilesDir(), "profile_photo_cache.jpg");
+            if (cachedPhoto.isFile()) {
+                savedProfileUri = cachedPhoto.getAbsolutePath();
+                account.edit().putString("profile_image_uri", savedProfileUri).apply();
+            }
+        }
 
         if (selectedProfileImage != null) {
             if (setImageFromUri(avatar, selectedProfileImage)) {
@@ -3918,6 +3930,11 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             Uri uri = savedProfileUri.startsWith("/") ? Uri.fromFile(new File(savedProfileUri)) : Uri.parse(savedProfileUri);
             if (setImageFromUri(avatar, uri)) {
                 hasCustomPhoto = true;
+                String cachedImageUrl = account.getString("profile_image_cache_url", "").trim();
+                if (savedProfileUri.endsWith("profile_photo_cache.jpg") && !cloudImageUrl.isEmpty()
+                        && !cloudImageUrl.equals(cachedImageUrl)) {
+                    cacheProfilePhotoFromCloud(cloudImageUrl);
+                }
             }
         }
         if (!hasCustomPhoto && !cloudImageUrl.isEmpty()) {
@@ -3956,8 +3973,95 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             ActivityCompat.requestPermissions(this, new String[]{Manifest.permission.CAMERA}, REQUEST_PROFILE_CAMERA);
             return;
         }
-        Intent intent = new Intent(MediaStore.ACTION_IMAGE_CAPTURE);
-        startActivityForResult(intent, REQUEST_PROFILE_CAMERA);
+        try {
+            File imageDir = new File(getFilesDir(), "profile_photos");
+            if (!imageDir.exists() && !imageDir.mkdirs()) {
+                Toast.makeText(this, "Could not prepare camera capture", Toast.LENGTH_SHORT).show();
+                return;
+            }
+            File imageFile = new File(imageDir, "profile_capture_" + System.currentTimeMillis() + ".jpg");
+            pendingProfileCameraUri = FileProvider.getUriForFile(this, getPackageName() + ".fileprovider", imageFile);
+            Intent intent = new Intent(MediaStore.ACTION_IMAGE_CAPTURE);
+            intent.putExtra(MediaStore.EXTRA_OUTPUT, pendingProfileCameraUri);
+            intent.addFlags(Intent.FLAG_GRANT_WRITE_URI_PERMISSION | Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            startActivityForResult(intent, REQUEST_PROFILE_CAMERA);
+        } catch (Exception e) {
+            Toast.makeText(this, "Could not open camera", Toast.LENGTH_SHORT).show();
+        }
+    }
+
+    private Bitmap decodeProfileCameraBitmap(Uri uri, int maxDimension) {
+        if (uri == null) return null;
+        try {
+            BitmapFactory.Options bounds = new BitmapFactory.Options();
+            bounds.inJustDecodeBounds = true;
+            try (InputStream input = getContentResolver().openInputStream(uri)) {
+                if (input == null) return null;
+                BitmapFactory.decodeStream(input, null, bounds);
+            }
+            if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null;
+            int sample = 1;
+            while ((bounds.outWidth / sample) > maxDimension || (bounds.outHeight / sample) > maxDimension) {
+                sample *= 2;
+            }
+            BitmapFactory.Options decodeOptions = new BitmapFactory.Options();
+            decodeOptions.inSampleSize = sample;
+            decodeOptions.inPreferredConfig = Bitmap.Config.ARGB_8888;
+            Bitmap decoded;
+            try (InputStream input = getContentResolver().openInputStream(uri)) {
+                if (input == null) return null;
+                decoded = BitmapFactory.decodeStream(input, null, decodeOptions);
+            }
+            if (decoded == null) return null;
+
+            int orientation = ExifInterface.ORIENTATION_NORMAL;
+            try (InputStream input = getContentResolver().openInputStream(uri)) {
+                if (input != null) {
+                    ExifInterface exif = new ExifInterface(input);
+                    orientation = exif.getAttributeInt(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL);
+                }
+            }
+            return rotateBitmapToExifOrientation(decoded, orientation);
+        } catch (Exception ignored) {
+            return null;
+        }
+    }
+
+    private Bitmap rotateBitmapToExifOrientation(Bitmap bitmap, int orientation) {
+        if (bitmap == null) return null;
+        Matrix matrix = new Matrix();
+        switch (orientation) {
+            case ExifInterface.ORIENTATION_ROTATE_90:
+                matrix.postRotate(90);
+                break;
+            case ExifInterface.ORIENTATION_ROTATE_180:
+                matrix.postRotate(180);
+                break;
+            case ExifInterface.ORIENTATION_ROTATE_270:
+                matrix.postRotate(270);
+                break;
+            case ExifInterface.ORIENTATION_FLIP_HORIZONTAL:
+                matrix.postScale(-1, 1);
+                break;
+            case ExifInterface.ORIENTATION_FLIP_VERTICAL:
+                matrix.postScale(1, -1);
+                break;
+            case ExifInterface.ORIENTATION_TRANSPOSE:
+                matrix.postRotate(90);
+                matrix.postScale(-1, 1);
+                break;
+            case ExifInterface.ORIENTATION_TRANSVERSE:
+                matrix.postRotate(270);
+                matrix.postScale(-1, 1);
+                break;
+            default:
+                return bitmap;
+        }
+        try {
+            return Bitmap.createBitmap(bitmap, 0, 0, bitmap.getWidth(), bitmap.getHeight(), matrix, true);
+        } catch (Exception e) {
+            return bitmap;
+        }
     }
 
     private void refreshEmailVerificationState(EditText email, TextView verifyButton) {
@@ -5245,8 +5349,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                         putIfPresent(editor, "city", document.getString("city"));
                         String cloudImage = syncProfileImageFromDocument(editor, account, document,
                                 "imageUrl", "profile_image_url");
-                        boolean cloudImageChanged = !cloudImage.isEmpty()
-                                && !cloudImage.equals(previousImageUrl);
+                        boolean cloudImageChanged = !cloudImage.equals(previousImageUrl);
 
                         boolean cloudEmailVerified = parseBooleanValue(document.get("emailVerified"))
                                 || parseBooleanValue(document.get("isEmailVerified"))
@@ -5278,7 +5381,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                         editor.putBoolean("mobile_verified", mobileVerifiedFinal);
                         editor.apply();
                         if (visibleAvatar != null && cloudImageChanged) {
-                            runOnUiThread(() -> loadCloudProfileImage(visibleAvatar));
+                            runOnUiThread(() -> bindProfilePhoto(visibleAvatar, account));
                         }
                     }
                     cloudProfileLoaded = true;
@@ -5297,76 +5400,51 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
 
     private String syncProfileImageFromDocument(SharedPreferences.Editor editor, SharedPreferences account,
                                                 DocumentSnapshot document, String... fields) {
-        if (profileImageExplicitlyRemoved) {
-            editor.remove("profile_image_url");
-            editor.remove("profile_image_uri");
-            editor.remove("profile_image_cache_url");
+        if (profileImageExplicitlyRemoved || (document != null && parseBooleanValue(document.get("profile_image_removed")))) {
+            clearProfileImageCache(editor);
             return "";
         }
-        boolean hasExplicitValue = false;
         if (document != null && document.exists()) {
             for (String field : fields) {
                 Object value = document.get(field);
                 if (value instanceof String) {
-                    hasExplicitValue = true;
                     String imageUrl = ((String) value).trim();
                     if (!imageUrl.isEmpty()) {
-                        clearStaleCachedProfilePhoto(editor, account, imageUrl);
                         editor.putString("profile_image_url", imageUrl);
                         return imageUrl;
                     }
                 }
             }
-        }
-        if (hasExplicitValue) {
-            editor.remove("profile_image_url");
-            editor.remove("profile_image_uri");
-            editor.remove("profile_image_cache_url");
-            return "";
         }
         return account.getString("profile_image_url", "").trim();
     }
 
     private String syncProfileImageFromJson(SharedPreferences.Editor editor, SharedPreferences account,
                                             JSONObject profile, String... fields) {
-        if (profileImageExplicitlyRemoved) {
-            editor.remove("profile_image_url");
-            editor.remove("profile_image_uri");
-            editor.remove("profile_image_cache_url");
+        if (profileImageExplicitlyRemoved || (profile != null && profile.optBoolean("profile_image_removed", false))) {
+            clearProfileImageCache(editor);
             return "";
         }
-        boolean hasExplicitValue = false;
         if (profile != null) {
             for (String field : fields) {
                 if (profile.has(field) && !profile.isNull(field)) {
-                    hasExplicitValue = true;
                     String imageUrl = profile.optString(field, "").trim();
                     if (!imageUrl.isEmpty()) {
-                        clearStaleCachedProfilePhoto(editor, account, imageUrl);
                         editor.putString("profile_image_url", imageUrl);
                         return imageUrl;
                     }
                 }
             }
         }
-        if (hasExplicitValue) {
-            editor.remove("profile_image_url");
-            editor.remove("profile_image_uri");
-            editor.remove("profile_image_cache_url");
-            return "";
-        }
         return account.getString("profile_image_url", "").trim();
     }
 
-    private void clearStaleCachedProfilePhoto(SharedPreferences.Editor editor, SharedPreferences account,
-                                              String newImageUrl) {
-        String previousImageUrl = account.getString("profile_image_url", "").trim();
-        String cachedImageUrl = account.getString("profile_image_cache_url", "").trim();
-        if (!previousImageUrl.equals(newImageUrl) && !cachedImageUrl.isEmpty()
-                && cachedImageUrl.equals(previousImageUrl)) {
-            editor.remove("profile_image_uri");
-            editor.remove("profile_image_cache_url");
-        }
+    private void clearProfileImageCache(SharedPreferences.Editor editor) {
+        editor.remove("profile_image_url");
+        editor.remove("profile_image_uri");
+        editor.remove("profile_image_cache_url");
+        File cachedPhoto = new File(getFilesDir(), "profile_photo_cache.jpg");
+        if (cachedPhoto.exists()) cachedPhoto.delete();
     }
 
     private boolean parseBooleanValue(Object val) {
@@ -5455,8 +5533,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             update.put("imageUrl", currentImageUrl);
             update.put("profile_image_url", currentImageUrl);
             update.put("profile_photo_url", currentImageUrl);
-        } else {
-            update.put("profile_photo_url", "");
+            update.put("profile_image_removed", false);
         }
         if (update.isEmpty()) return;
         FirebaseFirestore db = FirebaseFirestore.getInstance();
@@ -5656,7 +5733,24 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
     }
 
     private String saveProfileBitmapToInternalStorage(Bitmap sourceBitmap) {
-        return saveProfileBitmapToInternalStorage(sourceBitmap, "profile_photo.jpg");
+        clearOldProfilePhotoFiles();
+        String fileName = "profile_photo_" + System.currentTimeMillis() + ".jpg";
+        return saveProfileBitmapToInternalStorage(sourceBitmap, fileName);
+    }
+
+    private void clearOldProfilePhotoFiles() {
+        try {
+            File dir = getFilesDir();
+            File[] files = dir.listFiles((d, name) -> name != null && (name.startsWith("profile_photo") || name.startsWith("profile_photo_")));
+            if (files != null) {
+                for (File file : files) {
+                    if (!file.delete()) {
+                        file.deleteOnExit();
+                    }
+                }
+            }
+        } catch (Exception ignored) {
+        }
     }
 
     private String saveProfileBitmapToInternalStorage(Bitmap sourceBitmap, String fileName) {
@@ -5725,11 +5819,15 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         profile.put("mobileVerified", mobileVerified);
         profile.put("isMobileVerified", mobileVerified);
         profile.put("mobile_verified", mobileVerified);
-        profile.put("imageUrl", imageUrl == null ? "" : imageUrl);
-        profile.put("profile_image_url", imageUrl == null ? "" : imageUrl);
-        profile.put("profile_photo_url", imageUrl == null ? "" : imageUrl);
+        String savedPhotoUrl = imageUrl == null ? "" : imageUrl.trim();
+        if (!savedPhotoUrl.isEmpty()) {
+            profile.put("imageUrl", savedPhotoUrl);
+            profile.put("profile_image_url", savedPhotoUrl);
+            profile.put("profile_photo_url", savedPhotoUrl);
+            profile.put("profile_image_removed", false);
+        }
 
-        syncProfileToBackendApi(username, fullName, email, mobile, state, city, imageUrl == null ? "" : imageUrl);
+        syncProfileToBackendApi(username, fullName, email, mobile, state, city, savedPhotoUrl);
 
         FirebaseFirestore db = FirebaseFirestore.getInstance();
         String docKey = getProfileDocumentKey();
@@ -5740,8 +5838,9 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                     .set(profile, SetOptions.merge());
         }
 
-        account.edit()
-                .putString("profile_image_url", imageUrl == null ? "" : imageUrl)
+        SharedPreferences.Editor accountEditor = account.edit();
+        if (!savedPhotoUrl.isEmpty()) accountEditor.putString("profile_image_url", savedPhotoUrl);
+        accountEditor
                 .putString("profile_first_name", fn)
                 .putString("profile_surname", sn)
                 .putString("full_name", fullName)
@@ -5750,8 +5849,8 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                 .putString("imei_number", account.getString("imei_number", ""))
                 .putString("mobile_serial_number", account.getString("mobile_serial_number", ""))
                 .putString("state", state)
-                .putString("city", city)
-                .apply();
+                .putString("city", city);
+            accountEditor.apply();
 
         profileImageExplicitlyRemoved = false;
         cloudProfileLoaded = true;
@@ -5776,8 +5875,11 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                 putConnection.setDoOutput(true);
                 putConnection.setRequestProperty("Authorization", "Bearer " + token.getToken());
                 putConnection.setRequestProperty("Content-Type", "application/json; charset=UTF-8");
-                String photoJson = photoUrl.isEmpty() ? "null" : "\"" + escapeJson(photoUrl) + "\"";
-                String body = "{\"username\":\"" + escapeJson(username) + "\",\"full_name\":\"" + escapeJson(fullName) + "\",\"email\":\"" + escapeJson(email) + "\",\"mobile\":\"" + escapeJson(mobile) + "\",\"state\":\"" + escapeJson(state) + "\",\"city\":\"" + escapeJson(city) + "\",\"profile_photo_url\":" + photoJson + ",\"email_verified\":" + emailVerified + ",\"mobile_verified\":" + mobileVerified + "}";
+                String body = "{\"username\":\"" + escapeJson(username) + "\",\"full_name\":\"" + escapeJson(fullName) + "\",\"email\":\"" + escapeJson(email) + "\",\"mobile\":\"" + escapeJson(mobile) + "\",\"state\":\"" + escapeJson(state) + "\",\"city\":\"" + escapeJson(city) + "\",\"email_verified\":" + emailVerified + ",\"mobile_verified\":" + mobileVerified;
+                if (!photoUrl.isEmpty() || profileImageExplicitlyRemoved) {
+                    body += ",\"profile_photo_url\":\"" + escapeJson(photoUrl) + "\",\"profile_image_removed\":" + profileImageExplicitlyRemoved;
+                }
+                body += "}";
                 try (OutputStream output = putConnection.getOutputStream()) {
                     output.write(body.getBytes(StandardCharsets.UTF_8));
                 }
@@ -7999,6 +8101,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                         }
                         SharedPreferences.Editor editor = getSharedPreferences("fendly_account", MODE_PRIVATE).edit();
                         editor.putString("profile_image_url", uploadedUrl);
+                        editor.putString("profile_image_cache_url", uploadedUrl);
                         editor.apply();
 
                         String username = account.getString("username", "");
@@ -8021,30 +8124,38 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                 Toast.makeText(this, "Could not load selected image", Toast.LENGTH_SHORT).show();
             }
         }
-        if (requestCode == REQUEST_PROFILE_CAMERA && resultCode == RESULT_OK && data != null && data.getExtras() != null) {
-            Bitmap bitmap = (Bitmap) data.getExtras().get("data");
+        if (requestCode == REQUEST_PROFILE_CAMERA && resultCode == RESULT_OK) {
+            Bitmap bitmap = null;
+            if (pendingProfileCameraUri != null) {
+                bitmap = decodeProfileCameraBitmap(pendingProfileCameraUri, 1600);
+            }
+            if (bitmap == null && data != null && data.getExtras() != null) {
+                bitmap = (Bitmap) data.getExtras().get("data");
+            }
             if (bitmap != null) {
-                String savedPath = saveProfileBitmapToInternalStorage(bitmap);
+                final Bitmap captureBitmap = bitmap;
+                capturedProfileImage = captureBitmap;
+                selectedProfileImage = null;
+                profileImageExplicitlyRemoved = false;
+                String savedPath = saveProfileBitmapToInternalStorage(captureBitmap);
                 if (savedPath != null) {
-                    capturedProfileImage = null;
-                    selectedProfileImage = null;
-                    profileImageExplicitlyRemoved = false;
                     SharedPreferences account = getSharedPreferences("fendly_account", MODE_PRIVATE);
-                        account.edit()
-                            .putString("profile_image_uri", savedPath)
-                            .remove("profile_image_cache_url")
-                            .apply();
+                    account.edit()
+                        .putString("profile_image_uri", savedPath)
+                        .remove("profile_image_cache_url")
+                        .apply();
 
                     FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
                     if (user != null) {
                         user.getIdToken(false).addOnSuccessListener(token -> network.execute(() -> {
-                            String uploadedUrl = uploadImage(null, bitmap, token.getToken());
+                            String uploadedUrl = uploadImage(null, captureBitmap, token.getToken());
                             if (uploadedUrl == null || uploadedUrl.isEmpty()) {
                                 runOnUiThread(() -> Toast.makeText(this, "Profile picture upload failed", Toast.LENGTH_LONG).show());
                                 return;
                             }
                             SharedPreferences.Editor editor = getSharedPreferences("fendly_account", MODE_PRIVATE).edit();
                             editor.putString("profile_image_url", uploadedUrl);
+                            editor.putString("profile_image_cache_url", uploadedUrl);
                             editor.apply();
 
                             String username = account.getString("username", "");
@@ -8064,7 +8175,10 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                         });
                     }
                 }
+            } else {
+                Toast.makeText(this, "Could not capture a clear profile photo", Toast.LENGTH_SHORT).show();
             }
+            pendingProfileCameraUri = null;
         }
 
         if (requestCode == IntentIntegrator.REQUEST_CODE && resultCode == RESULT_OK) {

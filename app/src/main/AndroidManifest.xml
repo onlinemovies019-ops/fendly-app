@@ -68,6 +68,16 @@
             android:configChanges="orientation|screenSize|keyboardHidden"
             android:theme="@style/Theme.Fendly" />
 
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/image_share_filepaths" />
+        </provider>
+
         <service
             android:name=".notifications.FendlyMessagingService"
             android:exported="false">
