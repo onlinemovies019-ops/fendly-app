@@ -35,17 +35,13 @@ def _validate_production_config() -> None:
         "DATABASE_URL",
         "FIREBASE_SERVICE_ACCOUNT_JSON",
         "APP_SECRET_KEY",
+        "RESEND_API_KEY",
     )
     missing = [name for name in required if not os.getenv(name)]
     if missing:
         raise RuntimeError(f"Missing production configuration: {', '.join(missing)}")
     if len(os.getenv("APP_SECRET_KEY", "")) < 32:
         raise RuntimeError("APP_SECRET_KEY must contain at least 32 characters")
-
-    if not os.getenv("RESEND_API_KEY") or not os.getenv("RESEND_FROM_EMAIL"):
-        raise RuntimeError(
-            "Missing production email configuration: set RESEND_API_KEY and RESEND_FROM_EMAIL"
-        )
 
 
 @asynccontextmanager

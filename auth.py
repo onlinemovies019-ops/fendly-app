@@ -27,7 +27,12 @@ router = APIRouter(prefix="/api/auth", tags=["Authentication"])
 
 TWO_FACTOR_API_KEY = os.getenv("TWO_FACTOR_API_KEY") or os.getenv("TWOFACTOR_API_KEY", "")
 RESEND_API_KEY = os.getenv("RESEND_API_KEY", "")
-RESEND_FROM_EMAIL = os.getenv("RESEND_FROM_EMAIL", "onboarding@resend.dev")
+RESEND_FROM_EMAIL = (
+    os.getenv("RESEND_FROM_EMAIL")
+    or os.getenv("EMAIL_FROM")
+    or os.getenv("SMTP_FROM_EMAIL")
+    or "onboarding@resend.dev"
+)
 
 EMAIL_OTP_TTL_SECONDS = 600
 EMAIL_OTP_RESEND_SECONDS = 60
