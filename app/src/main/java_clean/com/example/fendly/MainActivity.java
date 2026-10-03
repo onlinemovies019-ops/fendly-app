@@ -12,7 +12,6 @@ import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.Paint;
 import android.graphics.Typeface;
-import android.graphics.drawable.BitmapDrawable;
 import android.graphics.drawable.ColorDrawable;
 import android.graphics.drawable.Drawable;
 import android.content.res.ColorStateList;
@@ -132,11 +131,6 @@ import com.cloudinary.android.MediaManager;
 import com.cloudinary.android.callback.ErrorInfo;
 import com.cloudinary.android.callback.UploadCallback;
 import com.bumptech.glide.Glide;
-import com.bumptech.glide.load.DataSource;
-import com.bumptech.glide.load.engine.DiskCacheStrategy;
-import com.bumptech.glide.load.engine.GlideException;
-import com.bumptech.glide.request.RequestListener;
-import com.bumptech.glide.request.target.Target;
 import android.net.Uri;
 import android.provider.MediaStore;
 import android.provider.Settings;
@@ -233,6 +227,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
     private Uri selectedProfileImage;
     private Bitmap capturedProfileImage;
     private boolean profileImageExplicitlyRemoved = false;
+    private String profilePhotoCacheDownloadUrl = "";
     private static final int REQUEST_PROFILE_IMAGE = 706;
     private static final int REQUEST_PROFILE_CAMERA = 707;
     private static final int REQUEST_IMEI_SCAN = 708;
@@ -5501,82 +5496,57 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
 
         Glide.with(this)
                 .load(imageUrl)
-                .diskCacheStrategy(DiskCacheStrategy.ALL)
                 .placeholder(R.drawable.ic_field_person)
                 .error(R.drawable.ic_field_person)
-                .listener(new RequestListener<Drawable>() {
-                    @Override
-                    public boolean onLoadFailed(GlideException error, Object model,
-                                                Target<Drawable> target, boolean isFirstResource) {
-                        return false;
-                    }
-
-                    @Override
-                    public boolean onResourceReady(Drawable resource, Object model,
-                                                   Target<Drawable> target, DataSource dataSource,
-                                                   boolean isFirstResource) {
-                        cacheLoadedProfilePhoto(resource, imageUrl);
-                        return false;
-                    }
-                })
                 .into(avatar);
+        cacheProfilePhotoFromCloud(imageUrl);
     }
 
-    private void cacheLoadedProfilePhoto(Drawable sourceDrawable, String imageUrl) {
-        if (sourceDrawable == null) return;
-        Bitmap cachedBitmap = null;
-        if (sourceDrawable instanceof BitmapDrawable) {
-            Bitmap sourceBitmap = ((BitmapDrawable) sourceDrawable).getBitmap();
-            try {
-                cachedBitmap = sourceBitmap.copy(Bitmap.Config.ARGB_8888, false);
-            } catch (Exception ignored) {
-                int width = sourceBitmap.getWidth();
-                int height = sourceBitmap.getHeight();
-                if (width > 0 && height > 0) {
-                    cachedBitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888);
-                    new Canvas(cachedBitmap).drawBitmap(sourceBitmap, 0, 0, null);
-                }
-            }
-        } else {
-            int width = sourceDrawable.getIntrinsicWidth();
-            int height = sourceDrawable.getIntrinsicHeight();
-            if (width <= 0 || height <= 0) {
-                width = dp(118);
-                height = dp(118);
-            }
-            float scale = Math.min(1f, 400f / Math.max(width, height));
-            width = Math.max(1, Math.round(width * scale));
-            height = Math.max(1, Math.round(height * scale));
-            cachedBitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888);
-            int left = sourceDrawable.getBounds().left;
-            int top = sourceDrawable.getBounds().top;
-            int right = sourceDrawable.getBounds().right;
-            int bottom = sourceDrawable.getBounds().bottom;
-            sourceDrawable.setBounds(0, 0, width, height);
-            sourceDrawable.draw(new Canvas(cachedBitmap));
-            sourceDrawable.setBounds(left, top, right, bottom);
-        }
-        if (cachedBitmap == null) {
-            Log.w("PROFILE_PHOTO_CACHE", "Could not convert loaded avatar to a bitmap");
-            return;
-        }
-        Bitmap bitmapForSave = cachedBitmap;
-
+    private void cacheProfilePhotoFromCloud(String imageUrl) {
+        if (!imageUrl.startsWith("http://") && !imageUrl.startsWith("https://")) return;
+        SharedPreferences account = getSharedPreferences("fendly_account", MODE_PRIVATE);
+        String existingUri = account.getString("profile_image_uri", "").trim();
+        String cachedUrl = account.getString("profile_image_cache_url", "").trim();
+        if (imageUrl.equals(cachedUrl) && !existingUri.isEmpty() && new File(existingUri).isFile()) return;
+        if (imageUrl.equals(profilePhotoCacheDownloadUrl)) return;
+        profilePhotoCacheDownloadUrl = imageUrl;
         network.execute(() -> {
-            String savedPath = saveProfileBitmapToInternalStorage(bitmapForSave, "profile_photo_cache.jpg");
-            bitmapForSave.recycle();
-            if (savedPath == null) {
-                Log.w("PROFILE_PHOTO_CACHE", "Could not write avatar cache file");
-                return;
+            HttpURLConnection connection = null;
+            Bitmap bitmap = null;
+            String savedPath = null;
+            try {
+                connection = (HttpURLConnection) new URL(imageUrl).openConnection();
+                connection.setConnectTimeout(15000);
+                connection.setReadTimeout(30000);
+                connection.setInstanceFollowRedirects(true);
+                if (connection.getResponseCode() >= 200 && connection.getResponseCode() < 300) {
+                    try (InputStream input = connection.getInputStream()) {
+                        bitmap = BitmapFactory.decodeStream(input);
+                    }
+                    if (bitmap != null) {
+                        savedPath = saveProfileBitmapToInternalStorage(bitmap, "profile_photo_cache.jpg");
+                    }
+                }
+            } catch (Exception error) {
+                Log.w("PROFILE_PHOTO_CACHE", "Cloud avatar cache download failed");
+            } finally {
+                if (connection != null) connection.disconnect();
+                if (bitmap != null && !bitmap.isRecycled()) bitmap.recycle();
             }
+            String cachedPath = savedPath;
             runOnUiThread(() -> {
-                SharedPreferences account = getSharedPreferences("fendly_account", MODE_PRIVATE);
-                String currentImageUrl = account.getString("profile_image_url", "").trim();
+                if (imageUrl.equals(profilePhotoCacheDownloadUrl)) profilePhotoCacheDownloadUrl = "";
+                if (cachedPath == null) return;
+                SharedPreferences currentAccount = getSharedPreferences("fendly_account", MODE_PRIVATE);
+                String currentImageUrl = currentAccount.getString("profile_image_url", "").trim();
                 if (imageUrl.equals(currentImageUrl)) {
-                    account.edit()
-                            .putString("profile_image_uri", savedPath)
+                    currentAccount.edit()
+                            .putString("profile_image_uri", cachedPath)
                             .putString("profile_image_cache_url", imageUrl)
                             .apply();
+                    if (currentPage == PAGE_PROFILE && visibleAvatar != null) {
+                        bindProfilePhoto(visibleAvatar, currentAccount);
+                    }
                 } else {
                     Log.d("PROFILE_PHOTO_CACHE", "Skipped stale avatar cache after cloud URL changed");
                 }
@@ -6345,15 +6315,23 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                             String remoteEmail = profile.optString("email", "").trim();
                             String remoteMobile = profile.optString("mobile", "").trim();
                             String remoteFullName = profile.optString("full_name", "").trim();
+                            String previousPhotoUrl = account.getString("profile_image_url", "").trim();
                             SharedPreferences.Editor backendEditor = account.edit();
                             if (remoteEmailVerified) backendEditor.putBoolean("email_verified", true);
                             if (remoteMobileVerified) backendEditor.putBoolean("mobile_verified", true);
                             if (!remoteEmail.isEmpty() && !remoteEmail.endsWith("@login.fendly.app")) backendEditor.putString("email", remoteEmail);
                             if (!remoteMobile.isEmpty()) backendEditor.putString("mobile", remoteMobile);
                             if (!remoteFullName.isEmpty()) backendEditor.putString("full_name", remoteFullName);
-                            syncProfileImageFromJson(backendEditor, account, profile,
+                            String updatedPhotoUrl = syncProfileImageFromJson(backendEditor, account, profile,
                                     "profile_photo_url", "imageUrl", "image_url");
                             backendEditor.apply();
+                            if (!updatedPhotoUrl.equals(previousPhotoUrl)) {
+                                runOnUiThread(() -> {
+                                    if (currentPage == PAGE_PROFILE && visibleAvatar != null) {
+                                        bindProfilePhoto(visibleAvatar, account);
+                                    }
+                                });
+                            }
                         }
                     }
                 } catch (Exception ignored) {
