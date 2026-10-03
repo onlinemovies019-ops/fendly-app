@@ -48,6 +48,39 @@ class DeviceToken(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
 
+class EmailOTPChallenge(Base):
+    __tablename__ = "email_otp_challenges"
+
+    firebase_uid: Mapped[str] = mapped_column(String(128), primary_key=True)
+    email: Mapped[str] = mapped_column(String(320), index=True)
+    code_digest: Mapped[str] = mapped_column(String(64))
+    sent_at: Mapped[int] = mapped_column(BigInteger)
+    expires_at: Mapped[int] = mapped_column(BigInteger, index=True)
+    send_window_started: Mapped[int] = mapped_column(BigInteger, default=0)
+    send_count: Mapped[int] = mapped_column(default=0)
+    attempts: Mapped[int] = mapped_column(default=0)
+    sent: Mapped[bool] = mapped_column(Boolean, default=False)
+
+
+class SmsOTPRateLimit(Base):
+    __tablename__ = "sms_otp_rate_limits"
+
+    quota_key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    sent_at: Mapped[int] = mapped_column(BigInteger)
+    window_started: Mapped[int] = mapped_column(BigInteger)
+    send_count: Mapped[int] = mapped_column(default=0)
+
+
+class SmsOTPChallenge(Base):
+    __tablename__ = "sms_otp_challenges"
+
+    session_digest: Mapped[str] = mapped_column(String(64), primary_key=True)
+    phone_digest: Mapped[str] = mapped_column(String(64), index=True)
+    sent_at: Mapped[int] = mapped_column(BigInteger)
+    expires_at: Mapped[int] = mapped_column(BigInteger, index=True)
+    attempts: Mapped[int] = mapped_column(default=0)
+
+
 class UserNotification(Base):
     __tablename__ = "user_notifications"
 
@@ -97,7 +130,6 @@ class LostItem(Base):
     report_location: Mapped[str | None] = mapped_column(String(500))
     image_url: Mapped[str | None] = mapped_column(String(1000))
     image_urls: Mapped[list[str] | None] = mapped_column(JSON)
-    imei: Mapped[str | None] = mapped_column(String(32), index=True)
     edit_count: Mapped[int] = mapped_column(default=0)
     image_embedding: Mapped[list[float] | None] = mapped_column(Vector(512))
     embedding: Mapped[list[float] | None] = mapped_column(Vector(1536))
@@ -123,7 +155,6 @@ class FoundItem(Base):
     report_location: Mapped[str | None] = mapped_column(String(500))
     image_url: Mapped[str | None] = mapped_column(String(1000))
     image_urls: Mapped[list[str] | None] = mapped_column(JSON)
-    imei: Mapped[str | None] = mapped_column(String(32), index=True)
     edit_count: Mapped[int] = mapped_column(default=0)
     image_embedding: Mapped[list[float] | None] = mapped_column(Vector(512))
     embedding: Mapped[list[float] | None] = mapped_column(Vector(1536))

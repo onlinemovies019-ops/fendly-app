@@ -1,50 +1,337 @@
 import pytest
+import re
+from fastapi import HTTPException
+from fastapi.testclient import TestClient
+from types import SimpleNamespace
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
+import auth
 import main
 
-from auth import (
-    SendEmailOtpRequest,
-    VerifyEmailOtpRequest,
-    _EMAIL_OTP_STORE,
-    create_session_token,
-    send_email_otp,
-    verify_email_otp,
-    verify_session_token,
-)
-from models import Base, User
+from auth import EmailOTPRequest, SendOTPRequest, VerifyEmailOTPRequest, VerifyOTPRequest
+from models import Base, EmailOTPChallenge, SmsOTPChallenge, SmsOTPRateLimit, User
 from schemas import ProfileUpdate
 from routers.users import get_profile, update_profile
 
 
-def test_session_token_round_trip():
-    token = create_session_token("2factor:abc123", {"phone_number": "+919999999999"})
-    payload = verify_session_token(token)
+@pytest.mark.asyncio
+async def test_sms_otp_send_and_verify_use_short_lived_hashed_challenge(monkeypatch, profile_session):
+    responses = [
+        {"Status": "Success", "Details": "session-id-123"},
+        {"Status": "Success", "Details": "OTP Matched"},
+    ]
 
-    assert payload["sub"] == "2factor:abc123"
-    assert payload["phone_number"] == "+919999999999"
+    class FakeResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return responses.pop(0)
+
+    class FakeClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, traceback):
+            return False
+
+        async def get(self, *args, **kwargs):
+            return FakeResponse()
+
+    monkeypatch.setattr(auth, "TWO_FACTOR_API_KEY", "test-key")
+    monkeypatch.setenv("APP_SECRET_KEY", "test-app-secret-0123456789abcdef")
+    monkeypatch.setattr(auth.httpx, "AsyncClient", FakeClient)
+    request = SimpleNamespace(client=SimpleNamespace(host="203.0.113.4"))
+
+    sent = await auth.send_otp(
+        SendOTPRequest(phone_number="+91 98765 43210"),
+        request,
+        session=profile_session,
+    )
+
+    assert sent["success"] is True
+    assert sent["session_id"] == "session-id-123"
+    challenge = profile_session.query(SmsOTPChallenge).one()
+    assert challenge.session_digest != "session-id-123"
+    assert challenge.phone_digest != "9876543210"
+    assert profile_session.query(SmsOTPRateLimit).count() == 3
+
+    verified = await auth.verify_otp(
+        VerifyOTPRequest(session_id="session-id-123", otp="123456"),
+        session=profile_session,
+    )
+    assert verified["success"] is True
+    assert profile_session.query(SmsOTPChallenge).count() == 0
+
+
+def test_sms_otp_send_enforces_persistent_phone_and_ip_limits(monkeypatch, profile_session):
+    monkeypatch.setenv("APP_SECRET_KEY", "test-app-secret-0123456789abcdef")
+    now = 1_700_000_000
+    phone_digest = auth._sms_otp_digest("phone", "9876543210")
+    auth._reserve_sms_otp_quota(
+        profile_session,
+        phone_digest=phone_digest,
+        client_ip="203.0.113.4",
+        now=now,
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        auth._reserve_sms_otp_quota(
+            profile_session,
+            phone_digest=phone_digest,
+            client_ip="203.0.113.4",
+            now=now + 1,
+        )
+
+    assert exc.value.status_code == 429
+    assert profile_session.query(SmsOTPRateLimit).count() == 3
 
 
 @pytest.mark.asyncio
-async def test_email_otp_debug_fallback(monkeypatch):
-    monkeypatch.delenv("SMTP_HOST", raising=False)
-    monkeypatch.delenv("SMTP_USERNAME", raising=False)
-    monkeypatch.delenv("SMTP_PASSWORD", raising=False)
-    monkeypatch.delenv("EMAIL_OTP_DEBUG_MODE", raising=False)
-    monkeypatch.setenv("ENVIRONMENT", "development")
-    _EMAIL_OTP_STORE.clear()
+async def test_sms_otp_send_rejects_invalid_indian_number(monkeypatch, profile_session):
+    monkeypatch.setattr(auth, "TWO_FACTOR_API_KEY", "test-key")
+    request = SimpleNamespace(client=SimpleNamespace(host="203.0.113.4"))
 
-    sent = await send_email_otp(SendEmailOtpRequest(email="user@example.com"))
-    assert sent["success"] is True
-    assert sent.get("debug_otp")
+    with pytest.raises(HTTPException) as exc:
+        await auth.send_otp(
+            SendOTPRequest(phone_number="1234567890"),
+            request,
+            session=profile_session,
+        )
 
-    otp = _EMAIL_OTP_STORE["user@example.com"]["otp"]
-    verified = await verify_email_otp(VerifyEmailOtpRequest(email="user@example.com", otp=otp))
+    assert exc.value.status_code == 422
+    assert profile_session.query(SmsOTPRateLimit).count() == 0
 
+
+@pytest.mark.asyncio
+async def test_sms_otp_verification_is_bound_to_server_challenge_and_limited(monkeypatch, profile_session):
+    monkeypatch.setattr(auth, "TWO_FACTOR_API_KEY", "test-key")
+    monkeypatch.setenv("APP_SECRET_KEY", "test-app-secret-0123456789abcdef")
+    monkeypatch.setattr(auth.time, "time", lambda: 1_700_000_000)
+    session_id = "session-with-guess-limit"
+    session_digest = auth._sms_otp_digest("session", session_id)
+    profile_session.add(
+        SmsOTPChallenge(
+            session_digest=session_digest,
+            phone_digest=auth._sms_otp_digest("phone", "9876543210"),
+            sent_at=1_700_000_000,
+            expires_at=1_700_000_600,
+            attempts=0,
+        )
+    )
+    profile_session.commit()
+
+    class FakeResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"Status": "Error", "Details": "OTP Mismatch"}
+
+    class FakeClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, traceback):
+            return False
+
+        async def get(self, *args, **kwargs):
+            return FakeResponse()
+
+    monkeypatch.setattr(auth.httpx, "AsyncClient", FakeClient)
+    for _ in range(auth.SMS_OTP_MAX_VERIFY_ATTEMPTS):
+        result = await auth.verify_otp(
+            VerifyOTPRequest(session_id=session_id, otp="123456"),
+            session=profile_session,
+        )
+        assert result["success"] is False
+    assert profile_session.query(SmsOTPChallenge).count() == 0
+
+    with pytest.raises(HTTPException) as exc:
+        await auth.verify_otp(
+            VerifyOTPRequest(session_id=session_id, otp="123456"),
+            session=profile_session,
+        )
+    assert exc.value.status_code == 400
+
+
+def test_policy_and_external_account_deletion_pages_are_publicly_served():
+    client = TestClient(main.app)
+
+    policy = client.get("/static/privacy-policy.html")
+    deletion = client.get("/static/delete-account.html")
+
+    assert policy.status_code == 200
+    assert "account deletion request page" in policy.text
+    assert deletion.status_code == 200
+    assert "info.fendly@gmail.com" in deletion.text
+
+
+@pytest.mark.asyncio
+async def test_email_otp_requires_mail_configuration(monkeypatch):
+    monkeypatch.setattr(auth, "RESEND_API_KEY", "")
+    session = _new_profile_session()
+
+    with pytest.raises(HTTPException) as exc:
+        await auth.send_email_otp(
+            EmailOTPRequest(email="user@example.com"),
+            session=session,
+            uid="firebase-user",
+        )
+
+    assert exc.value.status_code == 503
+    assert session.query(EmailOTPChallenge).count() == 0
+    session.close()
+
+
+@pytest.mark.asyncio
+async def test_email_otp_is_bound_to_uid_and_verified_before_success(monkeypatch, profile_session):
+    class FakeResponse:
+        def raise_for_status(self):
+            return None
+
+    class FakeClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, traceback):
+            return False
+
+        async def post(self, *args, **kwargs):
+            self.request = kwargs
+            return FakeResponse()
+
+    fake_client = FakeClient()
+    monkeypatch.setattr(auth, "RESEND_API_KEY", "test-key")
+    monkeypatch.setenv("APP_SECRET_KEY", "test-app-secret-0123456789abcdef")
+    monkeypatch.setattr(auth.httpx, "AsyncClient", lambda: fake_client)
+    monkeypatch.setattr(auth, "_firebase_app", lambda: object())
+    monkeypatch.setattr(auth.firebase_auth, "update_user", lambda *args, **kwargs: None)
+    result = await auth.send_email_otp(
+        EmailOTPRequest(email="User@example.com"),
+        session=profile_session,
+        uid="firebase-user",
+    )
+    code_match = re.search(r">(\d{6})</div>", fake_client.request["json"]["html"])
+    assert code_match
+    otp = code_match.group(1)
+
+    assert result["success"] is True
+    assert "debug_otp" not in result
+    assert fake_client.request["json"]["to"] == ["user@example.com"]
+    challenge = profile_session.get(EmailOTPChallenge, "firebase-user")
+    assert challenge is not None
+    assert challenge.code_digest != otp
+    assert challenge.sent is True
+
+    with pytest.raises(HTTPException) as exc:
+        await auth.send_email_otp(
+            EmailOTPRequest(email="other@example.com"),
+            session=profile_session,
+            uid="firebase-user",
+        )
+    assert exc.value.status_code == 429
+
+    with pytest.raises(HTTPException) as exc:
+        auth.verify_email_otp(
+            VerifyEmailOTPRequest(email="user@example.com", otp=otp),
+            session=profile_session,
+            uid="different-user",
+        )
+    assert exc.value.status_code == 400
+
+    verified = auth.verify_email_otp(
+        VerifyEmailOTPRequest(email="user@example.com", otp=otp),
+        session=profile_session,
+        uid="firebase-user",
+    )
+    saved_user = profile_session.query(User).filter_by(firebase_uid="firebase-user").one()
     assert verified["success"] is True
-    assert "token" in verified
+    assert saved_user.email == "user@example.com"
+    assert saved_user.email_verified is True
+    assert profile_session.get(EmailOTPChallenge, "firebase-user") is None
+
+
+def test_email_otp_rejects_invalid_code_and_expires(monkeypatch):
+    monkeypatch.setenv("APP_SECRET_KEY", "test-app-secret-0123456789abcdef")
+    now = auth.time.time()
+    session = _new_profile_session()
+    challenge = EmailOTPChallenge(
+        firebase_uid="firebase-user",
+        email="user@example.com",
+        code_digest=auth._email_otp_digest("firebase-user", "user@example.com", "123456"),
+        sent_at=int(now),
+        expires_at=int(now + 60),
+        attempts=0,
+        sent=True,
+    )
+    session.add(challenge)
+    session.commit()
+
+    with pytest.raises(HTTPException) as exc:
+        auth.verify_email_otp(
+            VerifyEmailOTPRequest(email="user@example.com", otp="654321"),
+            session=session,
+            uid="firebase-user",
+        )
+    assert exc.value.status_code == 400
+    assert session.get(EmailOTPChallenge, "firebase-user").attempts == 1
+
+    monkeypatch.setattr(auth.time, "time", lambda: now + 61)
+    with pytest.raises(HTTPException) as exc:
+        auth.verify_email_otp(
+            VerifyEmailOTPRequest(email="user@example.com", otp="123456"),
+            session=session,
+            uid="firebase-user",
+        )
+    assert exc.value.status_code == 400
+    assert session.get(EmailOTPChallenge, "firebase-user") is None
+    session.close()
+
+
+@pytest.mark.asyncio
+async def test_email_otp_enforces_daily_send_limit(monkeypatch):
+    monkeypatch.setattr(auth, "RESEND_API_KEY", "test-key")
+    monkeypatch.setenv("APP_SECRET_KEY", "test-app-secret-0123456789abcdef")
+    session = _new_profile_session()
+    now = int(auth.time.time())
+    session.add(
+        EmailOTPChallenge(
+            firebase_uid="firebase-user",
+            email="user@example.com",
+            code_digest=auth._email_otp_digest("firebase-user", "user@example.com", "123456"),
+            sent_at=now - 61,
+            expires_at=now + 60,
+            send_window_started=now - 120,
+            send_count=auth.EMAIL_OTP_MAX_SENDS_PER_DAY,
+            attempts=0,
+            sent=True,
+        )
+    )
+    session.commit()
+
+    with pytest.raises(HTTPException) as exc:
+        await auth.send_email_otp(
+            EmailOTPRequest(email="user@example.com"),
+            session=session,
+            uid="firebase-user",
+        )
+
+    assert exc.value.status_code == 429
+    assert session.get(EmailOTPChallenge, "firebase-user").send_count == 10
+    session.close()
+
+
+def _new_profile_session():
+    engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(bind=engine)
+    return sessionmaker(bind=engine, autoflush=False, autocommit=False)()
 
 
 @pytest.fixture
@@ -118,6 +405,27 @@ def test_same_firebase_uid_profile_is_shared_across_devices(profile_session):
     assert saved["mobile"] == "9876543210"
     assert saved["state"] == "Maharashtra"
     assert saved["city"] == "Nagpur"
+
+
+def test_changing_profile_email_clears_verified_status(profile_session):
+    profile_session.add(
+        User(
+            firebase_uid="firebase-email-change",
+            email="verified@example.com",
+            email_verified=True,
+        )
+    )
+    profile_session.commit()
+
+    update_profile(
+        payload=ProfileUpdate(email="new@example.com"),
+        session=profile_session,
+        uid="firebase-email-change",
+    )
+
+    saved = get_profile(session=profile_session, uid="firebase-email-change")
+    assert saved["email"] == "new@example.com"
+    assert saved["email_verified"] is False
 
 
 def test_partial_profile_update_does_not_clear_existing_data(profile_session):

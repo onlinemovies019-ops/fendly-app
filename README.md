@@ -19,6 +19,8 @@ Required environment variables:
 	must be enabled in the Supabase project.
 - `FIREBASE_SERVICE_ACCOUNT_JSON`, or `GOOGLE_APPLICATION_CREDENTIALS`: Firebase
 	Admin credentials used to verify Android ID tokens.
+- `APP_SECRET_KEY`: a private value of at least 32 characters used to protect
+	verification challenges and rate-limit identifiers.
 - `PUBLIC_BASE_URL`: Public API URL used in uploaded image URLs.
 - `CORS_ORIGINS`: Comma-separated allowed origins. Defaults to `*`.
 - `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, and `SUPABASE_STORAGE_BUCKET`:
@@ -27,6 +29,9 @@ Required environment variables:
 - `IMAGE_MATCHING_FUNCTION_URL` points the API to the authenticated Firebase
   Cloud Function that indexes Cloudinary report images and performs CLIP visual
   matching. Deploy it with `firebase deploy --only functions:matchReportImages`.
+- Set `TWO_FACTOR_API_KEY` to enable Indian SMS verification. Requests are
+  limited per phone and source IP; challenge sessions expire after 10 minutes
+  and verification attempts are capped.
 - Matching is local and free: keyword similarity is combined with location
 	proximity. OpenAI is optional; if absent, the app falls back to a local
 	free sentence-transformers model.
@@ -50,7 +55,11 @@ development writes to `static/uploads`; Render's free filesystem is ephemeral.
 - `POST /api/items/lost`
 - `POST /api/items/found`
 - `GET /api/items/mine`
-- `POST /api/items/match`
+- `POST /api/items/match` (report owners can match their own reports; ordinary
+  accounts receive a limited potential-match preview, while explicitly listed
+  admins can access full report details)
+- `DELETE /api/users/account` (deletes account data and its reports)
+- `/static/delete-account.html` (external account-deletion request page)
 - `GET /api/users/username/{username}`
 - `POST /api/users/username`
 - `GET /api/admin/items`
@@ -59,7 +68,9 @@ development writes to `static/uploads`; Render's free filesystem is ephemeral.
 - `POST /api/devices/fcm-token`
 - `DELETE /api/devices/fcm-token`
 
-All `/api` endpoints require `Authorization: Bearer <Firebase ID token>`.
-Admin endpoints additionally require the Firebase UID to be listed in
-`ADMIN_FIREBASE_UIDS`. Set `OPENAI_API_KEY` to enable provider-backed moderation;
-without it, the backend uses its local safety blocklist.
+Protected `/api` endpoints require `Authorization: Bearer <Firebase ID token>`.
+SMS send/verify endpoints are unauthenticated for sign-up support and are
+protected by persistent rate limits and short-lived challenges. Admin access
+requires an explicit Firebase UID in `ADMIN_FIREBASE_UIDS`; wildcard
+configuration is not accepted. Set `OPENAI_API_KEY` to enable provider-backed
+moderation; without it, the backend uses its local safety blocklist.

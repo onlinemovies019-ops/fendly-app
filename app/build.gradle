@@ -7,7 +7,7 @@ plugins {
 
 android {
     namespace 'com.example.fendly'
-    compileSdk 35
+    compileSdk 36
 
     // androidResources {
     //     generateLocaleConfig true
@@ -20,7 +20,7 @@ android {
     defaultConfig {
         applicationId "com.example.fendly"
         minSdk 23
-        targetSdk 34
+        targetSdk 36
         versionCode 1
         versionName "1.0"
 

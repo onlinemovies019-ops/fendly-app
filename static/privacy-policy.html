@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Fendly privacy policy and account deletion information">
+  <title>Fendly Privacy Policy</title>
+  <style>
+    :root { color-scheme: light dark; font: 16px/1.6 system-ui, sans-serif; }
+    body { margin: 0 auto; max-width: 860px; padding: 28px 20px 56px; }
+    h1, h2 { line-height: 1.25; }
+    h2 { margin-top: 2rem; }
+    a { color: #3978d4; }
+    .updated { color: #667085; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Fendly Privacy Policy</h1>
+    <p class="updated">Effective date: October 3, 2026</p>
+    <p>Fendly is operated by Rohan. Questions or privacy requests can be sent to
+      <a href="mailto:info.fendly@gmail.com">info.fendly@gmail.com</a>.</p>
+
+    <h2>Information handled by Fendly</h2>
+    <ul>
+      <li><strong>Account and profile:</strong> Firebase account identifier,
+        username, name, email address, phone number, state, city, and profile
+        photo when you provide them.</li>
+      <li><strong>Lost-and-found reports:</strong> report title, description,
+        category, date, location (which may be precise), and item photos you
+        submit. Reports are used to operate the service, show full reports to
+        authorized administrators, and identify possible matches. A limited
+        preview (title, category, date, and report photo) may be shown to the
+        owners of reports that the system identifies as a potential match.</li>
+      <li><strong>Location:</strong> with permission, the app can use foreground
+        device location to help add a location to a report. Fendly does not
+        request background-location permission or continuously track location.</li>
+      <li><strong>Notifications:</strong> a push-notification token and
+        notification delivery/read status may be stored to send match
+        notifications.</li>
+      <li><strong>Payments:</strong> subscription status and a payment
+        transaction identifier are stored by Fendly. Payment details are
+        processed by Razorpay; Fendly does not receive or store your full card
+        number or payment credentials through the app.</li>
+    </ul>
+
+    <h2>How information is used and shared</h2>
+    <p>Fendly uses this information to authenticate accounts, maintain profiles
+      and reports, support lost-item matching, moderate report text, translate
+      reports when enabled, send notifications, process subscriptions, and
+      respond to privacy requests. Authorized Fendly administrators can access
+      report details, including report locations, to help coordinate recovery.
+      Users receive only a limited preview of potential matches; free-text
+      descriptions and precise locations are not included in that preview.
+      When an administrator opens a map link, the selected location is passed
+      to the mapping application or service.</p>
+    <p>Depending on the services enabled for the deployment, information is
+      processed by service providers that support Fendly, including Firebase
+      Authentication, Firestore and Firebase Cloud Messaging; the configured
+      database and image-storage provider (including Supabase Storage or the
+      Fendly API host); Resend for email verification codes; 2Factor for SMS
+      verification; Razorpay for payments; and Brevo for administrator email
+      alerts. When configured, report text may be sent to OpenAI or Google
+      Gemini for moderation, translation or text matching. Image matching may
+      process report images locally or through the configured matching
+      service, which may include Cloudinary. These providers process information
+      under their own terms and privacy notices.</p>
+    <p>Fendly does not use IMEI or serial numbers to associate devices with
+      accounts. The app does not use background location tracking.</p>
+
+    <h2>Retention</h2>
+    <p>SMS and email verification challenges expire after 10 minutes. Temporary
+      verification rate-limit records use keyed digests rather than raw phone
+      numbers or IP addresses and are cleaned up after their limit window.
+      Service-provider backups may retain deleted data until their normal
+      backup-retention cycle expires. Push notifications already delivered to
+      a device cannot be recalled.</p>
+    <p>When account deletion completes, Fendly deletes the account's profiles,
+      lost-and-found reports, report photos managed by Fendly, and related
+      match alerts from active service stores. Images hosted outside services
+      Fendly controls cannot be removed by Fendly; contact us if you need help
+      identifying such an image.</p>
+
+    <h2 id="account-deletion">Account deletion</h2>
+    <p>You can delete your account in the Fendly app from your profile by
+      selecting <strong>Delete account</strong>. You can also submit a deletion
+      request without the app on our
+      <a href="/static/delete-account.html">account deletion request page</a>.
+      The request deletes your Firebase sign-in, profile information, profile
+      document copies, notification records and token, username reservation,
+      pending email-verification challenges, lost-and-found reports, and related match
+      alerts. Fendly also attempts to delete report and profile photos stored
+      by services it controls. Deletion can fail temporarily if a required
+      service is unavailable; the app will tell you to retry rather than
+      report success.</p>
+
+    <h2>Security and your choices</h2>
+    <p>Fendly uses authenticated services and access controls intended to limit
+      profile access to the account owner and report administration to
+      authorized administrators. No online service can guarantee absolute
+      security. You can choose whether to grant foreground location permission
+      and whether to include photos or location in a report. Android app data
+      is excluded from the device's backup and transfer rules.</p>
+
+    <h2>Changes and contact</h2>
+    <p>This policy may be updated as Fendly's features or service providers
+      change. For questions, correction requests, or help with deletion, email
+      <a href="mailto:info.fendly@gmail.com">info.fendly@gmail.com</a>.</p>
+  </main>
+</body>
+</html>

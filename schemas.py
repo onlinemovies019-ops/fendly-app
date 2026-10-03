@@ -13,7 +13,6 @@ class ItemCreate(BaseModel):
     report_location: str | None = Field(default=None, max_length=500)
     image_url: str | None = Field(default=None, max_length=1000)
     image_urls: list[str] = Field(default_factory=list, max_length=3)
-    imei: str | None = Field(default=None, max_length=32)
     category: str = Field(default="other", min_length=1, max_length=80)
     payment_id: str | None = Field(default=None, max_length=128)
 
@@ -41,7 +40,6 @@ class ItemResponse(ItemCreate):
 
 
 class MatchRequest(BaseModel):
-    imei: str | None = Field(default=None, max_length=32)
     targetType: str | None = Field(default=None, max_length=10)
     imageUrl: str | None = Field(default=None, max_length=2000)
     found_item_id: str | None = Field(default=None, min_length=1)
@@ -49,11 +47,17 @@ class MatchRequest(BaseModel):
     radius_degrees: float = Field(default=0.25, gt=0, le=10)
 
 
+class MatchPreview(BaseModel):
+    title: str
+    category: str
+    report_date: str | None = None
+    image_url: str | None = None
+
+
 class MatchResponse(BaseModel):
-    item: ItemResponse | None = None
+    item: ItemResponse | MatchPreview | None = None
     score: float = Field(ge=0, le=1)
     matchType: str | None = None
-    imei: str | None = None
 
 
 class FcmTokenRequest(BaseModel):
@@ -73,5 +77,3 @@ class ProfileUpdate(BaseModel):
     state: str | None = Field(default=None, max_length=120)
     city: str | None = Field(default=None, max_length=120)
     profile_photo_url: str | None = Field(default=None, max_length=1000)
-    email_verified: bool | None = Field(default=None)
-    mobile_verified: bool | None = Field(default=None)

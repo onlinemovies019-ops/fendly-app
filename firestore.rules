@@ -2,17 +2,146 @@ rules_version = '2';
 
 service cloud.firestore {
   match /databases/{database}/documents {
+    // Assumed data model:
+    // users/{uid} contains only that user's profile. Optional text fields are
+    // bounded by isValidUser; emails are limited to 320 characters; age is an
+    // integer from 0 through 130; image URLs must be HTTPS and at most 1000
+    // characters. The document ID is the immutable Firebase Auth UID.
+    // Legacy role/verification flags are owner-readable but cannot be set true
+    // on create or changed on update. They are never an authority source.
+    //
+    // verified_emails/{email}, found_items/{id}, and lost_items/{id} are
+    // backend-managed and inaccessible through the client SDK.
+
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function uidUnchanged() {
+      return !('uid' in request.resource.data) ||
+        request.resource.data.uid == request.auth.uid;
+    }
+
+    function uidNotModified() {
+      return !('uid' in resource.data)
+        ? (!('uid' in request.resource.data) ||
+           request.resource.data.uid == request.auth.uid)
+        : request.resource.data.uid == resource.data.uid;
+    }
+
+    function optionalText(data, field, maxLength) {
+      return !(field in data) ||
+        (data[field] is string && data[field].size() <= maxLength);
+    }
+
+    function optionalEmail(data, field) {
+      return !(field in data) ||
+        data[field] == "" ||
+        (data[field] is string &&
+         data[field].size() <= 320 &&
+         data[field].matches("^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}$"));
+    }
+
+    function optionalHttpsUrl(data, field) {
+      return !(field in data) ||
+        data[field] == "" ||
+        (data[field] is string &&
+         data[field].size() <= 1000 &&
+         data[field].matches("^https://.*"));
+    }
+
+    function optionalBoolean(data, field) {
+      return !(field in data) || data[field] is bool;
+    }
+
+    function hasOnlyAllowedUserFields(data) {
+      return data.keys().hasOnly([
+        'uid', 'username', 'name', 'surname', 'full_name', 'first_name',
+        'profile_first_name', 'profile_surname', 'email', 'mobile',
+        'mobileNumber', 'state', 'city', 'address', 'age', 'imageUrl',
+        'profile_image_url', 'profile_photo_url', 'profile_image_removed',
+        'isAdmin', 'emailVerified', 'isEmailVerified', 'email_verified',
+        'mobileVerified', 'isMobileVerified', 'mobile_verified'
+      ]);
+    }
+
+    function isValidUser(data) {
+      return hasOnlyAllowedUserFields(data) &&
+        uidUnchanged() &&
+        optionalText(data, 'uid', 128) &&
+        optionalText(data, 'username', 32) &&
+        optionalText(data, 'name', 80) &&
+        optionalText(data, 'surname', 80) &&
+        optionalText(data, 'full_name', 160) &&
+        optionalText(data, 'first_name', 80) &&
+        optionalText(data, 'profile_first_name', 80) &&
+        optionalText(data, 'profile_surname', 80) &&
+        optionalEmail(data, 'email') &&
+        optionalText(data, 'mobile', 32) &&
+        optionalText(data, 'mobileNumber', 32) &&
+        optionalText(data, 'state', 120) &&
+        optionalText(data, 'city', 120) &&
+        optionalText(data, 'address', 500) &&
+        (!('age' in data) ||
+         (data.age is int && data.age >= 0 && data.age <= 130)) &&
+        optionalHttpsUrl(data, 'imageUrl') &&
+        optionalHttpsUrl(data, 'profile_image_url') &&
+        optionalHttpsUrl(data, 'profile_photo_url') &&
+        optionalBoolean(data, 'profile_image_removed') &&
+        optionalBoolean(data, 'isAdmin') &&
+        optionalBoolean(data, 'emailVerified') &&
+        optionalBoolean(data, 'isEmailVerified') &&
+        optionalBoolean(data, 'email_verified') &&
+        optionalBoolean(data, 'mobileVerified') &&
+        optionalBoolean(data, 'isMobileVerified') &&
+        optionalBoolean(data, 'mobile_verified');
+    }
+
+    function isSafeUserCreate(data) {
+      return isValidUser(data) &&
+        (!('isAdmin' in data) || data.isAdmin == false) &&
+        (!('emailVerified' in data) || data.emailVerified == false) &&
+        (!('isEmailVerified' in data) || data.isEmailVerified == false) &&
+        (!('email_verified' in data) || data.email_verified == false) &&
+        (!('mobileVerified' in data) || data.mobileVerified == false) &&
+        (!('isMobileVerified' in data) || data.isMobileVerified == false) &&
+        (!('mobile_verified' in data) || data.mobile_verified == false);
+    }
+
+    function isSafeUserUpdate(data) {
+      return isValidUser(data) &&
+        uidNotModified() &&
+        !request.resource.data.diff(resource.data).affectedKeys().hasAny([
+          'isAdmin', 'emailVerified', 'isEmailVerified', 'email_verified',
+          'mobileVerified', 'isMobileVerified', 'mobile_verified'
+        ]);
+    }
+
     match /users/{userId} {
-      allow read, write: if request.auth != null;
+      allow read: if isOwner(userId);
+      allow create: if isOwner(userId) && isSafeUserCreate(request.resource.data);
+      allow update: if isOwner(userId) && isSafeUserUpdate(request.resource.data);
+      allow delete: if isOwner(userId);
     }
+
     match /verified_emails/{email} {
-      allow read, write: if request.auth != null;
+      allow read, write: if false;
     }
+
     match /found_items/{itemId} {
-      allow read, write: if request.auth != null;
+      allow read, write: if false;
     }
+
     match /lost_items/{itemId} {
-      allow read, write: if request.auth != null;
+      allow read, write: if false;
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
     }
   }
 }

@@ -26,22 +26,8 @@ from moderation import moderate_content
 from models import FoundItem, LostItem
 from notifications import persist_admin_match_alert, send_admin_match_email, send_match_notifications
 from routers.payments import verify_captured_payment
-from schemas import ItemCreate, ItemResponse, ItemUpdate, MatchRequest, MatchResponse
+from schemas import ItemCreate, ItemResponse, ItemUpdate, MatchPreview, MatchRequest, MatchResponse
 from translation import translate_report_fields
-
-def validate_luhn(imei: str) -> bool:
-    digits = [int(d) for d in imei if d.isdigit()]
-    if len(digits) != 15:
-        return False
-    checksum = 0
-    reverse_digits = digits[::-1]
-    for i, digit in enumerate(reverse_digits):
-        if i % 2 == 1:
-            doubled = digit * 2
-            checksum += doubled - 9 if doubled > 9 else doubled
-        else:
-            checksum += digit
-    return checksum % 10 == 0
 
 router = APIRouter(prefix="/api", tags=["items"])
 MAX_IMAGE_BYTES = 10 * 1024 * 1024
@@ -55,7 +41,7 @@ async def notify_admin_of_match(
     session: Session,
     query_identifier: str,
     matched_items: list,
-    match_type: str = "EXACT_IMEI",
+    match_type: str = "ITEM_MATCH",
 ):
     try:
         print(f"[ADMIN DASHBOARD ALERT] Match Type: {match_type} | Identifier: {query_identifier} | Matches: {len(matched_items)}")
@@ -194,7 +180,6 @@ class ItemSubmission(BaseModel):
     imageUrl: str | None = Field(default=None, max_length=1000)
     imageUrls: list[str] = Field(default_factory=list, max_length=3)
     type: Literal["lost", "found"]
-    imei: str | None = Field(default=None, max_length=32)
     lat: float = Field(default=0.0, ge=-90, le=90)
     lng: float = Field(default=0.0, ge=-180, le=180)
     report_date: str | None = Field(default=None, max_length=32)
@@ -285,10 +270,6 @@ def resolve_item_category(category: str | None, title: str, description: str) ->
 
 async def _save_item(payload: ItemCreate, session: Session, uid: str, model: type[LostItem] | type[FoundItem]):
     category = resolve_item_category(payload.category, payload.title, payload.description)
-    if payload.imei:
-        if not validate_luhn(str(payload.imei)):
-            raise HTTPException(status_code=400, detail="Invalid 15-digit IMEI number")
-
     if model is LostItem:
         if payload.payment_id in ["test_bypass", "test_payment_123"] or (payload.payment_id and payload.payment_id.startswith("pay_test_")):
             pass
@@ -502,7 +483,6 @@ async def create_item_compat(
             source_language=request.source_language,
             image_url=request.imageUrl,
             image_urls=request.imageUrls,
-            imei=request.imei,
             lat=request.lat,
             lng=request.lng,
             report_date=request.report_date,
@@ -537,7 +517,6 @@ async def list_my_items(
             "title": item.title,
             "description": item.description,
             "category": item.category,
-            "imei": item.imei,
             "lat": item.lat,
             "lng": item.lng,
             "report_date": item.report_date or _stored_report_field(item.description, "Date"),
@@ -662,47 +641,48 @@ def _notify_admin_for_match(
 async def match_items(
     request: MatchRequest,
     session: Session | None = Depends(get_db),
-    _: str = Depends(get_current_user),
+    uid: str = Depends(get_current_user),
 ) -> list[dict[str, object]]:
     session = _require_db_session(session)
+    from routers.admin import _parse_admin_uids
 
-    # 1. Direct IMEI Matching Path (Fixed with select())
-    if getattr(request, "imei", None):
-        try:
-            clean_imei = "".join(filter(str.isdigit, str(request.imei)))
-            target_type = getattr(request, "targetType", "lost")
-            model = LostItem if target_type == "lost" else FoundItem
-
-            statement = select(model).where(model.imei == clean_imei)
-            matched_records = session.scalars(statement).all()
-
-            results = []
-            for item in matched_records:
-                raw_imei = getattr(item, "imei", "") or ""
-                masked_imei = f"{raw_imei[:6]}******{raw_imei[-3:]}" if len(raw_imei) == 15 else raw_imei
-
-                item_dict = item.__dict__.copy()
-                item_dict["imei"] = masked_imei
-                results.append({
-                    "item": item_dict,
-                    "score": 1.0,
-                    "matchType": "EXACT_IMEI",
-                    "explanation": "Exact 15-digit IMEI serial match",
-                })
-            if matched_records:
-                await notify_admin_of_match(session, clean_imei, matched_records, "EXACT_IMEI")
-                return results
-            if not request.imageUrl:
-                return results
-        except Exception as e:
-            logger.error(f"IMEI match error: {e}")
-            raise HTTPException(status_code=400, detail=str(e))
+    is_admin = uid in _parse_admin_uids(os.getenv("ADMIN_FIREBASE_UIDS"))
 
     if request.imageUrl:
         target_type = (request.targetType or "").strip().lower()
         if target_type not in {"lost", "found"}:
             raise HTTPException(400, "targetType must be lost or found for image matching")
-        return await _find_cloudinary_image_matches(request.imageUrl, target_type, session)
+        if not is_admin:
+            owned_image = False
+            for model in (LostItem, FoundItem):
+                owned_reports = session.scalars(
+                    select(model).where(model.created_by == uid)
+                ).all()
+                if any(
+                    item.image_url == request.imageUrl
+                    or (
+                        isinstance(item.image_urls, list)
+                        and request.imageUrl in item.image_urls
+                    )
+                    for item in owned_reports
+                ):
+                    owned_image = True
+                    break
+            if not owned_image:
+                raise HTTPException(404, "Report not found")
+        results = await _find_cloudinary_image_matches(request.imageUrl, target_type, session)
+        return [
+            {
+                **result,
+                "item": result["item"] if is_admin else MatchPreview(
+                    title=result["item"].title,
+                    category=result["item"].category,
+                    report_date=result["item"].report_date,
+                    image_url=result["item"].image_url,
+                ),
+            }
+            for result in results
+        ]
 
     # 2. Standard Item-ID Matching Fallback
     if bool(request.found_item_id) == bool(request.lost_item_id):
@@ -712,8 +692,12 @@ async def match_items(
     query_model = FoundItem if matching_found_item else LostItem
     candidate_model = LostItem if matching_found_item else FoundItem
     query_item_id = request.found_item_id or request.lost_item_id
-    query_item = session.get(query_model, query_item_id)
+    query_item = session.scalar(
+        select(query_model).where(query_model.id == query_item_id)
+    )
     if query_item is None:
+        raise HTTPException(404, "Report not found")
+    if not is_admin and query_item.created_by != uid:
         raise HTTPException(404, "Report not found")
 
     candidates = session.scalars(
@@ -769,4 +753,15 @@ async def match_items(
         found_item = query_item if matching_found_item else matched_item
         lost_item = matched_item if matching_found_item else query_item
         _notify_admin_for_match(session, found_item, lost_item, score, "SIMILARITY")
-    return ranked_results
+    return [
+        {
+            **result,
+            "item": result["item"] if is_admin else MatchPreview(
+                title=result["item"].title,
+                category=result["item"].category,
+                report_date=result["item"].report_date,
+                image_url=result["item"].image_url,
+            ),
+        }
+        for result in ranked_results
+    ]

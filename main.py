@@ -2,23 +2,29 @@ import os
 import json
 import urllib.request
 import urllib.parse
+import asyncio
+import logging
+import time
 from contextlib import asynccontextmanager
 import logging
 from fastapi import Depends, FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, EmailStr
-from sqlalchemy import select, text
+from sqlalchemy import delete, select, text
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 from auth import router as auth_router, get_current_user
 from database import engine, get_db
-from models import Base, User
+from models import Base, EmailOTPChallenge, SmsOTPChallenge, SmsOTPRateLimit, User
 from routers.items import create_item_compat, match_items, router as items_router
 from routers.notifications import router as notifications_router
 from routers.users import router as users_router
 from routers.admin import router as admin_router
 from routers.payments import router as payments_router
 from schemas import ItemResponse, MatchResponse
+
+logger = logging.getLogger(__name__)
 
 
 def _validate_production_config() -> None:
@@ -33,13 +39,12 @@ def _validate_production_config() -> None:
     missing = [name for name in required if not os.getenv(name)]
     if missing:
         raise RuntimeError(f"Missing production configuration: {', '.join(missing)}")
+    if len(os.getenv("APP_SECRET_KEY", "")) < 32:
+        raise RuntimeError("APP_SECRET_KEY must contain at least 32 characters")
 
-    email_provider = bool(os.getenv("BREVO_API_KEY") and os.getenv("SENDER_EMAIL")) or bool(
-        os.getenv("SMTP_HOST") and os.getenv("SMTP_USERNAME") and os.getenv("SMTP_PASSWORD") and os.getenv("SMTP_FROM_EMAIL")
-    )
-    if not email_provider:
+    if not os.getenv("RESEND_API_KEY") or not os.getenv("RESEND_FROM_EMAIL"):
         raise RuntimeError(
-            "Missing production email configuration: set BREVO_API_KEY + SENDER_EMAIL or SMTP_HOST + SMTP_USERNAME + SMTP_PASSWORD + SMTP_FROM_EMAIL"
+            "Missing production email configuration: set RESEND_API_KEY and RESEND_FROM_EMAIL"
         )
 
 
@@ -54,6 +59,28 @@ async def lifespan(_: FastAPI):
             Base.metadata.create_all(bind=connection)
             if dialect_name == "postgresql":
                 connection.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+                connection.execute(
+                    text("ALTER TABLE public.email_otp_challenges ENABLE ROW LEVEL SECURITY")
+                )
+                connection.execute(
+                    text("ALTER TABLE public.sms_otp_challenges ENABLE ROW LEVEL SECURITY")
+                )
+                connection.execute(
+                    text("ALTER TABLE public.sms_otp_rate_limits ENABLE ROW LEVEL SECURITY")
+                )
+            now = int(time.time())
+            connection.execute(
+                delete(EmailOTPChallenge).where(
+                    EmailOTPChallenge.expires_at <= now,
+                    EmailOTPChallenge.send_window_started + 86400 <= now,
+                )
+            )
+            connection.execute(
+                delete(SmsOTPChallenge).where(SmsOTPChallenge.expires_at <= now)
+            )
+            connection.execute(
+                delete(SmsOTPRateLimit).where(SmsOTPRateLimit.sent_at <= now - 86400)
+            )
 
             def table_has_column(table_name: str, column_name: str) -> bool:
                 try:
@@ -121,8 +148,6 @@ async def lifespan(_: FastAPI):
             add_column_if_missing("found_items", "image_embedding", "vector(512)")
             add_column_if_missing("lost_items", "embedding", "vector(1536)")
             add_column_if_missing("found_items", "embedding", "vector(1536)")
-            add_column_if_missing("lost_items", "imei", "varchar(32)")
-            add_column_if_missing("found_items", "imei", "varchar(32)")
             add_column_if_missing("lost_items", "report_date", "varchar(32)")
             add_column_if_missing("lost_items", "report_location", "varchar(500)")
             add_column_if_missing("lost_items", "image_urls", "json")
@@ -142,7 +167,40 @@ async def lifespan(_: FastAPI):
             add_column_if_missing("found_items", "source_language", "varchar(16)", not_null=True, default="'auto'")
             add_column_if_missing("found_items", "edit_count", "integer", not_null=True, default="0")
             add_column_if_missing("admin_match_alerts", "review_status", "varchar(20)", not_null=True, default="'pending'")
-    yield
+    cleanup_task = asyncio.create_task(_cleanup_expired_otp_challenges())
+    try:
+        yield
+    finally:
+        cleanup_task.cancel()
+        try:
+            await cleanup_task
+        except asyncio.CancelledError:
+            pass
+
+
+async def _cleanup_expired_otp_challenges() -> None:
+    while True:
+        now = int(time.time())
+        try:
+            with Session(engine) as session:
+                session.execute(
+                    delete(EmailOTPChallenge).where(
+                        EmailOTPChallenge.expires_at <= now,
+                        EmailOTPChallenge.send_window_started + 86400 <= now,
+                    )
+                )
+                session.execute(
+                    delete(SmsOTPChallenge).where(SmsOTPChallenge.expires_at <= now)
+                )
+                session.execute(
+                    delete(SmsOTPRateLimit).where(
+                        SmsOTPRateLimit.sent_at <= now - 86400
+                    )
+                )
+                session.commit()
+        except SQLAlchemyError:
+            logger.exception("Expired verification data cleanup failed")
+        await asyncio.sleep(3600)
 
 
 app = FastAPI(title="Fendly API", lifespan=lifespan)

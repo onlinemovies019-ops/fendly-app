@@ -1,5 +1,4 @@
 import os
-import re
 from typing import Any, Optional
 
 from fastapi import APIRouter, FastAPI, HTTPException
@@ -7,48 +6,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 
-def validate_luhn(imei: str) -> bool:
-    """Validate a 15-digit IMEI using the Luhn checksum algorithm."""
-    clean = re.sub(r"\D", "", str(imei or ""))
-    if len(clean) != 15 or not clean.isdigit():
-        return False
-
-    total = 0
-    parity = len(clean) % 2
-    for index, digit_char in enumerate(clean):
-        digit = int(digit_char)
-        if index % 2 == parity:
-            digit *= 2
-            if digit > 9:
-                digit -= 9
-        total += digit
-    return total % 10 == 0
-
-
-def clean_imei(raw: Optional[str]) -> Optional[str]:
-    if raw is None:
-        return None
-    cleaned = re.sub(r"\D", "", str(raw))
-    return cleaned if cleaned else None
-
-
-def mask_imei(imei: Optional[str]) -> Optional[str]:
-    if imei and "*" in imei:
-        return imei
-    value = clean_imei(imei)
-    if not value:
-        return None
-    if len(value) <= 9:
-        return value
-    return f"{value[:6]}{'*' * (len(value) - 9)}{value[-3:]}"
-
-
 class ItemCreateRequest(BaseModel):
     title: str = Field(..., min_length=1, max_length=160)
     description: str = Field(default="", max_length=5000)
     imageUrl: Optional[str] = Field(default=None, max_length=1000)
     type: str = Field(..., min_length=1, max_length=10)
-    imei: Optional[str] = Field(default=None, max_length=32)
     lat: float = 0.0
     lng: float = 0.0
     report_date: Optional[str] = Field(default=None, max_length=32)
@@ -59,7 +21,6 @@ class ItemCreateRequest(BaseModel):
 
 class ItemMatchRequest(BaseModel):
     imageUrl: Optional[str] = Field(default=None, max_length=1000)
-    imei: Optional[str] = Field(default=None, max_length=32)
     targetType: Optional[str] = Field(default=None, min_length=1, max_length=10)
     found_item_id: Optional[str] = None
     lost_item_id: Optional[str] = None
@@ -89,40 +50,6 @@ def _supabase_client() -> Any | None:
     if not url or not key:
         return None
     return create_client(url, key)
-
-
-def _exact_imei_matches(clean_imei: str, target_type: Optional[str] = None) -> list[dict[str, Any]]:
-    client = _supabase_client()
-    if client is None:
-        return []
-
-    try:
-        query = client.table("items").select("*").eq("imei", clean_imei)
-        if target_type:
-            query = query.eq("type", target_type)
-        response = query.execute()
-        rows = response.data or []
-    except Exception:
-        return []
-
-    matches: list[dict[str, Any]] = []
-    for row in rows:
-        matches.append(
-            {
-                "id": row.get("id"),
-                "title": row.get("title"),
-                "description": row.get("description"),
-                "image_url": row.get("image_url") or row.get("imageUrl"),
-                "report_location": row.get("report_location") or row.get("location"),
-                "lat": row.get("lat", 0.0),
-                "lng": row.get("lng", 0.0),
-                "type": row.get("type"),
-                "imei": mask_imei(row.get("imei")),
-                "score": 1.0,
-                "matchType": "EXACT_IMEI",
-            }
-        )
-    return matches
 
 
 def _item_by_id(item_id: str, item_type: str) -> dict[str, Any]:
@@ -180,7 +107,6 @@ def _visual_matches(image_url: str, target_type: str) -> list[dict[str, Any]]:
                 "lat": row.get("lat", 0.0),
                 "lng": row.get("lng", 0.0),
                 "type": row.get("type"),
-                "imei": mask_imei(row.get("imei")),
                 "score": float(score),
                 "matchType": "VISUAL",
             }
@@ -192,15 +118,10 @@ def _visual_matches(image_url: str, target_type: str) -> list[dict[str, Any]]:
 
 @router.post("/items", status_code=201)
 async def create_item(request: ItemCreateRequest):
-    if request.imei:
-        if not validate_luhn(request.imei):
-            raise HTTPException(status_code=400, detail="Invalid 15-digit IMEI number")
-
     payment_id = request.payment_id or ""
     if payment_id in ["test_bypass", "test_payment_123"] or (payment_id and payment_id.startswith("pay_test_")):
         pass
 
-    cleaned_imei = clean_imei(request.imei)
     item_type = (request.type or "").strip().lower()
     if item_type not in {"lost", "found"}:
         raise HTTPException(status_code=400, detail="type must be 'lost' or 'found'")
@@ -217,7 +138,6 @@ async def create_item(request: ItemCreateRequest):
         "report_location": request.report_location,
         "category": request.category,
         "payment_id": request.payment_id,
-        "imei": cleaned_imei,
     }
 
     if request.imageUrl is None:
@@ -229,11 +149,11 @@ async def create_item(request: ItemCreateRequest):
         try:
             response = client.table("items").insert(payload).execute()
             row = (response.data or [{}])[0]
-            return {"ok": True, "item": row, "imei": mask_imei(cleaned_imei)}
+            return {"ok": True, "item": row}
         except Exception:
             pass
 
-    return {"ok": True, "item": payload, "imei": mask_imei(cleaned_imei)}
+    return {"ok": True, "item": payload}
 
 
 @router.post("/items/match")
@@ -250,26 +170,14 @@ async def match_items(request: ItemMatchRequest):
         target_type = "found"
     else:
         target_type = (request.targetType or "").strip().lower()
-        if request.imei is not None and target_type and target_type not in {"lost", "found"}:
-            raise HTTPException(status_code=400, detail="targetType must be 'lost' or 'found'")
-        if request.imei is None and target_type not in {"lost", "found"}:
+        if target_type not in {"lost", "found"}:
             target_type = ""
-
-    cleaned_imei = clean_imei(request.imei)
-    if request.imei is not None and (cleaned_imei is None or len(cleaned_imei) != 15 or not cleaned_imei.isdigit()):
-        raise HTTPException(status_code=400, detail="Invalid 15-digit IMEI number")
-    if cleaned_imei is None and source_item is not None:
-        cleaned_imei = clean_imei(source_item.get("imei"))
 
     image_url = request.imageUrl
     if not image_url and source_item is not None:
         image_url = source_item.get("image_url") or source_item.get("imageUrl")
 
     results: list[dict[str, Any]] = []
-
-    if cleaned_imei and len(cleaned_imei) == 15 and cleaned_imei.isdigit():
-        exact_results = _exact_imei_matches(cleaned_imei, target_type if target_type in {"lost", "found"} else None)
-        results.extend(exact_results)
 
     if image_url and target_type in {"lost", "found"}:
         visual_results = _visual_matches(image_url, target_type)
@@ -286,13 +194,9 @@ async def match_items(request: ItemMatchRequest):
     ranked = sorted(
         deduped.values(),
         key=lambda item: (
-            0 if item.get("matchType") == "EXACT_IMEI" else 1,
             -(float(item.get("score") or 0.0)),
         ),
     )
-
-    for item in ranked:
-        item["imei"] = mask_imei(item.get("imei"))
 
     return ranked
 

@@ -21,34 +21,6 @@ public final class AiMatchService {
     private AiMatchService() {
     }
 
-    public static String normalizeImei(String rawImei) {
-        if (rawImei == null) return null;
-        String digits = rawImei.replaceAll("[^0-9]", "");
-        return digits.isEmpty() ? null : digits;
-    }
-
-    public static boolean isValidImei(String rawImei) {
-        String digits = normalizeImei(rawImei);
-        if (digits == null || digits.length() != 15 || !digits.matches("\\d{15}")) {
-            return false;
-        }
-
-        int sum = 0;
-        boolean doubleDigit = false;
-        for (int index = digits.length() - 1; index >= 0; index--) {
-            int digit = Character.getNumericValue(digits.charAt(index));
-            if (doubleDigit) {
-                digit *= 2;
-                if (digit > 9) {
-                    digit -= 9;
-                }
-            }
-            sum += digit;
-            doubleDigit = !doubleDigit;
-        }
-        return sum % 10 == 0;
-    }
-
     public static String inferCategory(String title, String description) {
         String searchableText = " " + ((title == null ? "" : title) + " " + (description == null ? "" : description))
                 .toLowerCase(Locale.US).replaceAll("[^a-z0-9]+", " ").trim() + " ";
@@ -86,7 +58,6 @@ public final class AiMatchService {
             String location,
             String date,
             String paymentId,
-            String imei,
             String sourceLanguage,
             String idToken
     ) throws Exception {
@@ -108,16 +79,11 @@ public final class AiMatchService {
                 .put("report_location", location == null ? JSONObject.NULL : location)
                 .put("report_date", date == null ? JSONObject.NULL : date)
                 .put("category", inferCategory(title, description))
-                .put("payment_id", paymentId == null ? JSONObject.NULL : paymentId)
-                .put("imei", imei == null ? JSONObject.NULL : normalizeImei(imei));
+                .put("payment_id", paymentId == null ? JSONObject.NULL : paymentId);
         return post("/api/items", payload, idToken);
     }
 
     public static ApiResponse findImageMatches(String imageUrl, String targetType, String idToken) throws Exception {
-        return findImageMatches(imageUrl, null, targetType, idToken);
-    }
-
-    public static ApiResponse findImageMatches(String imageUrl, String imei, String targetType, String idToken) throws Exception {
         if (imageUrl == null || imageUrl.trim().isEmpty()) {
             throw new IllegalArgumentException("A valid imageUrl is required for visual matching");
         }
@@ -127,8 +93,7 @@ public final class AiMatchService {
         }
         JSONObject payload = new JSONObject()
                 .put("imageUrl", imageUrl)
-                .put("targetType", normalizedType)
-                .put("imei", imei == null ? JSONObject.NULL : normalizeImei(imei));
+                .put("targetType", normalizedType);
         return post("/api/items/match", payload, idToken);
     }
 

@@ -75,8 +75,6 @@ class ProfileViewModel(
                                     put("state", profile.state)
                                     put("city", profile.city)
                                     put("profile_photo_url", profile.imageUrl ?: "")
-                                    put("email_verified", profile.isEmailVerified)
-                                    put("mobile_verified", profile.isMobileVerified)
                                 }.toString()
 
                                 connection.outputStream.use { output ->

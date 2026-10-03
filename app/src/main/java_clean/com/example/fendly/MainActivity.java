@@ -2,6 +2,7 @@ package com.example.fendly;
 
 import android.Manifest;
 import android.app.Activity;
+import android.content.ActivityNotFoundException;
 import android.content.Intent;
 import android.content.Context;
 import android.content.pm.ActivityInfo;
@@ -97,8 +98,6 @@ import com.google.firebase.firestore.DocumentSnapshot;
 import com.google.firebase.firestore.QuerySnapshot;
 import com.google.firebase.Timestamp;
 import java.util.Collections;
-import com.google.zxing.integration.android.IntentIntegrator;
-import com.google.zxing.integration.android.IntentResult;
 import android.graphics.drawable.GradientDrawable;
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
@@ -184,7 +183,6 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
     private final Uri[] reportImages = new Uri[3];
     private final Bitmap[] reportCameraImages = new Bitmap[3];
     private int pendingImageSlot = -1;
-    private static final int REQUEST_IMAGE_PERMISSION = 704;
     private static final int REQUEST_CAMERA_PERMISSION = 705;
     private double currentLat;
     private double currentLng;
@@ -215,12 +213,21 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         return "+" + digits;
     }
 
-    private boolean isValidMobileNumber(String raw) {
-        return raw != null && raw.replaceAll("\\D", "").length() == 10;
+    private void stopActiveLocationUpdates() {
+        LocationListener listener = activeLocationListener;
+        activeLocationListener = null;
+        if (listener == null) return;
+        LocationManager manager = (LocationManager) getSystemService(Context.LOCATION_SERVICE);
+        if (manager == null) return;
+        try {
+            manager.removeUpdates(listener);
+        } catch (SecurityException error) {
+            Log.w("LOCATION", "Location access was revoked before updates could be stopped", error);
+        }
     }
 
-    private boolean isValidImeiValue(String raw) {
-        return AiMatchService.isValidImei(raw);
+    private boolean isValidMobileNumber(String raw) {
+        return raw != null && raw.replaceAll("\\D", "").length() == 10;
     }
 
     private String formatPhoneNumberForDisplay(String phoneNumber) {
@@ -235,14 +242,12 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
     private String profilePhotoCacheDownloadUrl = "";
     private static final int REQUEST_PROFILE_IMAGE = 706;
     private static final int REQUEST_PROFILE_CAMERA = 707;
-    private static final int REQUEST_IMEI_SCAN = 708;
     private static final long EMAIL_VERIFICATION_COOLDOWN_MS = 60000L;
     private Runnable emailVerificationCooldownRunnable;
     private String draftItem = "";
     private String draftDescription = "";
     private String draftLocation = "";
     private String draftDate = "";
-    private String draftImei = "";
     private String localEmailOtp = "";
     private String draftFullName = "";
     private String draftEmail = "";
@@ -255,12 +260,9 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
     private String editingReportImageUrl;
     private EditText pendingPaymentItem;
     private EditText pendingPaymentDescription;
-    private EditText pendingPaymentImei;
     private EditText pendingPaymentLocation;
     private EditText pendingPaymentDate;
     private TextView pendingPaymentButton;
-    private EditText imeiScanTarget;
-    private EditText serialScanTarget;
     private boolean inRenewalPaymentFlow;
     private int currentPage;
     private static final int PAGE_AUTH = 0;
@@ -281,7 +283,6 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
     private TextView userNotificationBadge;
     private boolean accountCreated;
     private boolean profileSetupVisible;
-    private boolean advancedSettingsExpanded;
     private boolean profileHydrationInFlight = false;
     private boolean profileHydrated = false;
     private boolean cloudProfileHydrationInFlight = false;
@@ -360,6 +361,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         selectedLanguage = languagePreferences.getInt("selected_language_index", 0);
         darkMode = getSharedPreferences("fendly_settings", MODE_PRIVATE).getBoolean("dark_mode", false);
         SharedPreferences account = getSharedPreferences("fendly_account", MODE_PRIVATE);
+        account.edit().remove("imei_number").remove("mobile_serial_number").apply();
         FirebaseUser firebaseUser = FirebaseAuth.getInstance().getCurrentUser();
         // Always reset fresh account drafts when there's no current Firebase user,
         // even if the 'created' flag persists from a previous session.
@@ -376,7 +378,6 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             draftDescription = savedInstanceState.getString("state_draft_description", "");
             draftLocation = savedInstanceState.getString("state_draft_location", "");
             draftDate = savedInstanceState.getString("state_draft_date", "");
-            draftImei = savedInstanceState.getString("state_draft_imei", "");
             draftFullName = savedInstanceState.getString("state_draft_full_name", "");
             draftEmail = savedInstanceState.getString("state_draft_email", "");
             draftMobile = savedInstanceState.getString("state_draft_mobile", "");
@@ -384,7 +385,6 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             draftState = savedInstanceState.getString("state_draft_state", "");
             draftCity = savedInstanceState.getString("state_draft_city", "");
             profileSetupVisible = savedInstanceState.getBoolean("state_profile_setup_visible", false);
-            advancedSettingsExpanded = savedInstanceState.getBoolean("state_advanced_settings_expanded", false);
             profileScrollY = savedInstanceState.getInt("state_profile_scroll_y", 0);
             inRenewalPaymentFlow = savedInstanceState.getBoolean("state_in_renewal_payment_flow", false);
         }
@@ -423,25 +423,6 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                     runOnUiThread(() -> refreshEmailVerificationState(visibleEmail, visibleEmailVerify));
                 }
             }
-
-            FirebaseFirestore db = FirebaseFirestore.getInstance();
-            db.collection("users").document(getProfileDocumentKey())
-                    .get(Source.SERVER)
-                    .addOnSuccessListener(document -> {
-                        if (document != null && document.exists()) {
-                            boolean cloudVerified = parseBooleanValue(document.get("emailVerified"))
-                                    || parseBooleanValue(document.get("isEmailVerified"))
-                                    || parseBooleanValue(document.get("email_verified"));
-                            if (cloudVerified) {
-                                getSharedPreferences("fendly_account", MODE_PRIVATE).edit()
-                                        .putBoolean("email_verified", true)
-                                        .apply();
-                                if (currentPage == PAGE_PROFILE && visibleEmail != null && visibleEmailVerify != null) {
-                                    runOnUiThread(() -> refreshEmailVerificationState(visibleEmail, visibleEmailVerify));
-                                }
-                            }
-                        }
-                    });
 
             currentUser.getIdToken(false).addOnSuccessListener(token -> network.execute(() -> {
                 HttpURLConnection connection = null;
@@ -490,6 +471,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
 
     @Override
     protected void onDestroy() {
+        stopActiveLocationUpdates();
         if (cloudProfileListener != null) cloudProfileListener.remove();
         if (realtimeProfileSave != null) realtimeProfileHandler.removeCallbacks(realtimeProfileSave);
         if (ttsEngine != null) {
@@ -734,6 +716,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
     @Override
     protected void onPause() {
         super.onPause();
+        stopActiveLocationUpdates();
         saveProfileDrafts();
     }
 
@@ -752,7 +735,6 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         outState.putString("state_draft_description", draftDescription);
         outState.putString("state_draft_location", draftLocation);
         outState.putString("state_draft_date", draftDate);
-        outState.putString("state_draft_imei", draftImei);
         outState.putString("state_draft_full_name", draftFullName);
         outState.putString("state_draft_email", draftEmail);
         outState.putString("state_draft_mobile", draftMobile);
@@ -760,7 +742,6 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         outState.putString("state_draft_state", draftState);
         outState.putString("state_draft_city", draftCity);
         outState.putBoolean("state_profile_setup_visible", profileSetupVisible);
-        outState.putBoolean("state_advanced_settings_expanded", advancedSettingsExpanded);
         outState.putInt("state_profile_scroll_y", profileScrollY);
         outState.putBoolean("state_in_renewal_payment_flow", inRenewalPaymentFlow);
     }
@@ -880,6 +861,78 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         dialog.setCanceledOnTouchOutside(true);
         dialog.show();
         sizeThemedDialog(dialog);
+    }
+
+    private void showDeleteAccountDialog() {
+        Dialog dialog = new Dialog(this);
+        dialog.requestWindowFeature(Window.FEATURE_NO_TITLE);
+        LinearLayout content = themedDialogContent(
+                R.drawable.ic_field_lock,
+                "Delete account?",
+                "Your profile, login, notifications, and lost/found reports—including report text, locations, and photos—will be deleted from Fendly. Push notifications already delivered to devices cannot be recalled."
+        );
+        LinearLayout actions = new LinearLayout(this);
+        actions.setOrientation(LinearLayout.HORIZONTAL);
+        actions.setGravity(Gravity.CENTER);
+
+        TextView cancel = filledButton("Cancel", LOST_GREEN, LOST_GREEN_ON);
+        cancel.setOnClickListener(view -> dialog.dismiss());
+        actions.addView(cancel, new LinearLayout.LayoutParams(0, dp(44), 1f));
+
+        TextView delete = filledButton("Delete account", Color.rgb(180, 45, 45), Color.WHITE);
+        LinearLayout.LayoutParams deleteParams = new LinearLayout.LayoutParams(0, dp(44), 1f);
+        deleteParams.setMargins(dp(12), 0, 0, 0);
+        actions.addView(delete, deleteParams);
+        delete.setOnClickListener(view -> deleteAccount(dialog, delete));
+
+        content.addView(actions, new LinearLayout.LayoutParams(-1, dp(44)));
+        dialog.setContentView(content);
+        dialog.setCanceledOnTouchOutside(false);
+        dialog.show();
+        sizeThemedDialog(dialog);
+    }
+
+    private void deleteAccount(Dialog dialog, TextView deleteButton) {
+        FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
+        if (user == null) {
+            Toast.makeText(this, "Sign in to delete your account", Toast.LENGTH_LONG).show();
+            return;
+        }
+        deleteButton.setEnabled(false);
+        deleteButton.setText("Deleting...");
+        user.getIdToken(false).addOnSuccessListener(token -> network.execute(() -> {
+            HttpURLConnection connection = null;
+            int responseCode = -1;
+            try {
+                connection = (HttpURLConnection) new URL(API_BASE + "/api/users/account").openConnection();
+                connection.setRequestMethod("DELETE");
+                connection.setConnectTimeout(15000);
+                connection.setReadTimeout(60000);
+                connection.setRequestProperty("Authorization", "Bearer " + token.getToken());
+                responseCode = connection.getResponseCode();
+            } catch (Exception error) {
+                Log.e("ACCOUNT_DELETE", "Account deletion request failed", error);
+            } finally {
+                if (connection != null) connection.disconnect();
+            }
+            final int finalResponseCode = responseCode;
+            runOnUiThread(() -> {
+                if (finalResponseCode == 204) {
+                    dialog.dismiss();
+                    getSharedPreferences("fendly_account", MODE_PRIVATE).edit().clear().apply();
+                    FirebaseAuth.getInstance().signOut();
+                    finishAffinity();
+                } else {
+                    deleteButton.setEnabled(true);
+                    deleteButton.setText("Delete account");
+                    Toast.makeText(this, "Account deletion failed. Please retry later.", Toast.LENGTH_LONG).show();
+                }
+            });
+        })).addOnFailureListener(error -> {
+            deleteButton.setEnabled(true);
+            deleteButton.setText("Delete account");
+            Toast.makeText(this, "Could not authenticate account deletion", Toast.LENGTH_LONG).show();
+        });
     }
 
     private int responsiveHorizontalPadding() {
@@ -2744,11 +2797,11 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         draftDescription = "";
         draftLocation = "";
         draftDate = "";
-        draftImei = "";
         selectedImage = null;
         capturedImage = null;
         Arrays.fill(reportImages, null);
         Arrays.fill(reportCameraImages, null);
+        stopActiveLocationUpdates();
         hasLocation = false;
         currentLat = 0.0;
         currentLng = 0.0;
@@ -2765,7 +2818,6 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
     private void showHome() {
         currentPage = PAGE_HOME;
         profileScrollY = 0;
-        advancedSettingsExpanded = false;
         screenRenderer = this::showHome;
         LinearLayout root = screenBase("Home");
         addHeading("Find what matters.", "Lost or Found? We Connect the Dots.");
@@ -2824,105 +2876,23 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
 
         EditText item = field("");
         EditText description = field("");
-        EditText imei = field("");
-        imei.setText(draftImei);
-        imei.setInputType(InputType.TYPE_CLASS_NUMBER);
-        imei.setFilters(new InputFilter[]{new InputFilter.LengthFilter(15)});
-        TextView imeiHint = text("Enter 15-digit IMEI number", 10, secondaryTextColor(), Typeface.NORMAL);
-        imeiHint.setVisibility(View.GONE);
-        imei.addTextChangedListener(new TextWatcher() {
-            private boolean selfUpdating = false;
-            @Override public void beforeTextChanged(CharSequence value, int start, int count, int after) { }
-            @Override public void onTextChanged(CharSequence value, int start, int before, int count) { }
-            @Override public void afterTextChanged(Editable value) {
-                if (selfUpdating || value == null) return;
-                String digits = value.toString().replaceAll("\\D", "");
-                draftImei = digits;
-                if (!digits.equals(value.toString())) {
-                    selfUpdating = true;
-                    value.clear();
-                    value.append(digits);
-                    selfUpdating = false;
-                }
-                if (value.length() > 0 && value.length() < 15) {
-                    imei.setError(null);
-                    imeiHint.setVisibility(View.GONE);
-                }
-                if (value.length() == 15) {
-                    imei.setError(null);
-                    imeiHint.setVisibility(View.GONE);
-                }
-            }
-        });
-        imei.setOnFocusChangeListener((view, hasFocus) -> {
-            if (!hasFocus) {
-                String imeiValue = imei.getText().toString().trim();
-                if (!imeiValue.isEmpty() && !imeiValue.matches("\\d{15}")) {
-                    imei.setError("Invalid IMEI number");
-                    imeiHint.setVisibility(View.VISIBLE);
-                } else {
-                    imei.setError(null);
-                    imeiHint.setVisibility(View.GONE);
-                }
-            }
-        });
         EditText location = field("");
         EditText date = field("");
         item.setText(draftItem);
         description.setText(draftDescription);
         location.setText(draftLocation);
         date.setText(draftDate);
-        final LinearLayout imeiGroup = new LinearLayout(this);
-        imeiGroup.setOrientation(LinearLayout.VERTICAL);
-        imeiGroup.addView(fieldLabel("IMEI Number"), new LinearLayout.LayoutParams(-1, dp(20)));
-        FrameLayout imeiFrame = new FrameLayout(this);
-        imeiFrame.setBackground(roundWithStroke(surfaceColor(), 10, fieldBorderColor()));
-        imei.setBackgroundColor(Color.TRANSPARENT);
-        imei.setPadding(dp(16), dp(8), dp(48), dp(8));
-        imeiFrame.addView(imei, new FrameLayout.LayoutParams(-1, dp(46)));
-        ImageView imeiCamera = new ImageView(this);
-        imeiCamera.setImageResource(R.drawable.ic_field_camera);
-        imeiCamera.setColorFilter(accentColor());
-        imeiCamera.setPadding(dp(11), dp(11), dp(11), dp(11));
-        imeiCamera.setContentDescription("Scan IMEI");
-        imeiCamera.setOnClickListener(view -> openImeiScanner(imei));
-        FrameLayout.LayoutParams imeiIconParams = new FrameLayout.LayoutParams(dp(46), dp(46), Gravity.END | Gravity.CENTER_VERTICAL);
-        imeiFrame.addView(imeiCamera, imeiIconParams);
-        imeiFrame.setOnClickListener(view -> openImeiScanner(imei));
-        imeiGroup.addView(imeiFrame, new LinearLayout.LayoutParams(-1, dp(46)));
-        LinearLayout.LayoutParams imeiParams = contentParams(-1, dp(76), dp(8));
-        imeiParams.topMargin = dp(2);
-        imeiGroup.setLayoutParams(imeiParams);
-        imeiGroup.setVisibility(View.GONE);
-        Runnable refreshImeiField = () -> {
-            boolean shouldShow = !draftImei.isEmpty()
-                    || containsMobileKeyword(item.getText().toString())
-                    || containsMobileKeyword(description.getText().toString());
-            imeiGroup.setVisibility(shouldShow ? View.VISIBLE : View.GONE);
-            if (!shouldShow) {
-                draftImei = "";
-                imei.setText("");
-                imei.setError(null);
-            } else if (!draftImei.equals(imei.getText().toString())) {
-                imei.setText(draftImei);
-                imei.setSelection(draftImei.length());
-            }
-        };
         item.addTextChangedListener(draftWatcher(value -> {
             draftItem = value;
-            refreshImeiField.run();
         }));
         description.addTextChangedListener(draftWatcher(value -> {
             draftDescription = value;
-            refreshImeiField.run();
         }));
         location.addTextChangedListener(draftWatcher(value -> draftLocation = value));
         date.addTextChangedListener(draftWatcher(value -> draftDate = value));
         configureDateField(date);
         addLabeledField(root, "Item name", item);
         addLabeledField(root, "Description", description);
-        root.addView(imeiGroup, root.getChildCount(), imeiParams);
-        refreshImeiField.run();
         addLabeledDateField(root, translate("FOUND".equals(type) ? "Date found" : "Date lost"), date);
         addLabeledField(root, translate("FOUND".equals(type) ? "Place found" : "Last seen at"), location);
 
@@ -2941,6 +2911,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             if (hasLocation && currentReportType != null && currentReportType.equalsIgnoreCase(activeLocationReportType)) {
                 setReportLocationState(currentReportType, false, 0.0, 0.0);
                 locationRequestGeneration++;
+                stopActiveLocationUpdates();
                 hasLocation = false;
                 activeLocationReportType = null;
                 currentLat = 0.0;
@@ -2957,11 +2928,11 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
 
         if (editingReportId != null && type.equalsIgnoreCase(editingReportType)) {
             TextView save = actionButton(translate("Save changes"), true);
-            save.setOnClickListener(view -> submitItem(type, item, description, imei, location, date, save, null));
+            save.setOnClickListener(view -> submitItem(type, item, description, location, date, save, null));
             root.addView(save, contentParams(-1, dp(44), 0));
         } else if ("FOUND".equals(type)) {
             TextView publish = actionButton(translate("Submit report — free"), true);
-            publish.setOnClickListener(view -> submitItem(type, item, description, imei, location, date, publish, null));
+            publish.setOnClickListener(view -> submitItem(type, item, description, location, date, publish, null));
             root.addView(publish, contentParams(-1, dp(44), 0));
         } else {
             boolean unlocked = hasActiveAnnualSubscription();
@@ -2974,30 +2945,30 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             if (unlocked) {
                 String subscriptionPaymentId = getSharedPreferences("fendly_account", MODE_PRIVATE)
                     .getString("annual_subscription_payment_id", null);
-                action.setOnClickListener(view -> submitItem(type, item, description, imei, location, date, action, subscriptionPaymentId));
+                action.setOnClickListener(view -> submitItem(type, item, description, location, date, action, subscriptionPaymentId));
             } else {
-                action.setOnClickListener(view -> showPaymentOptions(item, description, imei, location, date));
+                action.setOnClickListener(view -> showPaymentOptions(item, description, location, date));
             }
             root.addView(action, contentParams(-1, dp(44), 0));
         }
     }
 
-    private void showPaymentOptions(EditText item, EditText description, EditText imei, EditText location, EditText date) {
+    private void showPaymentOptions(EditText item, EditText description, EditText location, EditText date) {
         inRenewalPaymentFlow = false;
         currentPage = PAGE_SUBSCRIPTION;
         LinearLayout root = screenBase("Payment");
         addHeading("Choose payment method", "Complete your lost report payment");
 
         TextView upi = filledButton("Pay with UPI", LOST_GREEN, LOST_GREEN_ON);
-        upi.setOnClickListener(view -> startPayment(item, description, imei, location, date, upi));
+        upi.setOnClickListener(view -> startPayment(item, description, location, date, upi));
         addField(root, upi);
 
         TextView card = actionButton("Debit / Credit card", false);
-        card.setOnClickListener(view -> startPayment(item, description, imei, location, date, card));
+        card.setOnClickListener(view -> startPayment(item, description, location, date, card));
         addField(root, card);
 
         TextView wallet = actionButton("Wallet / Paytm", false);
-        wallet.setOnClickListener(view -> startPayment(item, description, imei, location, date, wallet));
+        wallet.setOnClickListener(view -> startPayment(item, description, location, date, wallet));
         addField(root, wallet);
 
         TextView back = actionButton("Back to report", false);
@@ -3031,7 +3002,6 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
     private void startAnnualSubscriptionPayment(TextView button) {
         pendingPaymentItem = null;
         pendingPaymentDescription = null;
-        pendingPaymentImei = null;
         pendingPaymentLocation = null;
         pendingPaymentDate = null;
         pendingPaymentButton = button;
@@ -3071,10 +3041,9 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         }).addOnFailureListener(error -> paymentFailed("Authentication failed"));
     }
 
-    private void startPayment(EditText item, EditText description, EditText imei, EditText location, EditText date, TextView button) {
+    private void startPayment(EditText item, EditText description, EditText location, EditText date, TextView button) {
         pendingPaymentItem = item;
         pendingPaymentDescription = description;
-        pendingPaymentImei = imei;
         pendingPaymentLocation = location;
         pendingPaymentDate = date;
         pendingPaymentButton = button;
@@ -3250,12 +3219,12 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                     return;
                 }
                 activateAnnualSubscription(paymentId);
-                if (pendingPaymentItem == null && pendingPaymentDescription == null && pendingPaymentImei == null && pendingPaymentLocation == null && pendingPaymentDate == null) {
+                if (pendingPaymentItem == null && pendingPaymentDescription == null && pendingPaymentLocation == null && pendingPaymentDate == null) {
                     Toast.makeText(this, "Payment Successful", Toast.LENGTH_LONG).show();
                     showProfile();
                     return;
                 }
-                submitItem("LOST", pendingPaymentItem, pendingPaymentDescription, pendingPaymentImei, pendingPaymentLocation, pendingPaymentDate, pendingPaymentButton, paymentId);
+                submitItem("LOST", pendingPaymentItem, pendingPaymentDescription, pendingPaymentLocation, pendingPaymentDate, pendingPaymentButton, paymentId);
             });
         })).addOnFailureListener(error -> paymentFailed("Authentication failed"));
     }
@@ -3285,7 +3254,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         }
     }
 
-    private void submitItem(String type, EditText item, EditText description, EditText imei, EditText location, EditText date, TextView publish, String paymentId) {
+    private void submitItem(String type, EditText item, EditText description, EditText location, EditText date, TextView publish, String paymentId) {
         String title = item.getText().toString().trim();
         String details = description.getText().toString().trim();
         if (title.isEmpty()) {
@@ -3295,13 +3264,6 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         if (details.isEmpty()) {
             description.setError("Describe the item");
             return;
-        }
-        if (containsMobileKeyword(title) || containsMobileKeyword(details)) {
-            String imeiValue = imei == null ? "" : imei.getText().toString().trim();
-            if (!isValidImeiValue(imeiValue)) {
-                if (imei != null) imei.setError("Enter a valid 15-digit IMEI number");
-                return;
-            }
         }
         String dateValue = date.getText().toString().trim();
         if (!dateValue.isEmpty() && !validDate(dateValue)) {
@@ -3331,15 +3293,14 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                 return;
             }
             network.execute(() -> {
-                String imeiValue = imei == null ? null : imei.getText().toString().trim();
                 ItemSubmissionResult submission = postItem(
                         type, title, details, location.getText().toString().trim(),
                         date.getText().toString().trim(), latitude, longitude,
-                        images, cameraImages, imeiValue, token.getToken(), paymentId);
+                        images, cameraImages, token.getToken(), paymentId);
                 runOnUiThread(() -> {
                     publish.setEnabled(true);
                     int code = submission.statusCode;
-                    if ((code >= 200 && code < 300) || submission.firestoreSaved) {
+                    if (code >= 200 && code < 300) {
                         boolean paidLostReport = paymentId != null && "LOST".equalsIgnoreCase(type);
                         String message = ReportSubmissionMessages.buildSubmissionSuccessMessage(paidLostReport, submission.errorMessage, null);
                         Toast.makeText(this, message, Toast.LENGTH_LONG).show();
@@ -3364,18 +3325,15 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
     private static final class ItemSubmissionResult {
         final int statusCode;
         final String errorMessage;
-        final boolean firestoreSaved;
 
-        ItemSubmissionResult(int statusCode, String errorMessage, boolean firestoreSaved) {
+        ItemSubmissionResult(int statusCode, String errorMessage) {
             this.statusCode = statusCode;
             this.errorMessage = errorMessage;
-            this.firestoreSaved = firestoreSaved;
         }
     }
 
-    private ItemSubmissionResult postItem(String type, String title, String description, String location, String date, double latitude, double longitude, Uri[] images, Bitmap[] cameraImages, String imeiValue, String idToken, String paymentId) {
+    private ItemSubmissionResult postItem(String type, String title, String description, String location, String date, double latitude, double longitude, Uri[] images, Bitmap[] cameraImages, String idToken, String paymentId) {
         lastSubmissionError = null;
-        boolean firestoreSaved = false;
         try {
             List<String> imageUrls = new ArrayList<>();
             for (int slot = 0; slot < Math.min(images.length, cameraImages.length); slot++) {
@@ -3389,58 +3347,19 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             }
             String imageUrl = imageUrls.isEmpty() ? null : imageUrls.get(0);
 
-            FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
-            if (user != null) {
-                String collectionName = "FOUND".equals(type) ? "found_items" : "lost_items";
-                String username = getProfileDocumentKey();
-                String reportId = "rep_" + System.currentTimeMillis() + "_" + (new Random().nextInt(9000) + 1000);
-                Map<String, Object> reportDoc = new LinkedHashMap<>();
-                reportDoc.put("id", reportId);
-                reportDoc.put("type", type);
-                reportDoc.put("title", title);
-                reportDoc.put("description", description);
-                reportDoc.put("source_language", getTtsLocaleForSelectedLanguage().getLanguage());
-                reportDoc.put("report_location", location);
-                reportDoc.put("report_date", date);
-                reportDoc.put("latitude", latitude);
-                reportDoc.put("longitude", longitude);
-                reportDoc.put("category", AiMatchService.inferCategory(title, description));
-                reportDoc.put("image_url", imageUrl);
-                reportDoc.put("image_urls", imageUrls);
-                reportDoc.put("user_id", user.getUid());
-                reportDoc.put("created_by", user.getUid());
-                reportDoc.put("uid", user.getUid());
-                reportDoc.put("username", username);
-                reportDoc.put("created_by_username", username);
-                reportDoc.put("edit_count", 0);
-                reportDoc.put("created_at", new Date());
-
-                try {
-                    Tasks.await(
-                        FirebaseFirestore.getInstance().collection(collectionName).document(reportId)
-                            .set(reportDoc, SetOptions.merge()),
-                        20,
-                        TimeUnit.SECONDS
-                    );
-                    firestoreSaved = true;
-                } catch (Exception firestoreError) {
-                    lastSubmissionError = "report copy unavailable";
-                }
-            }
-
             AiMatchService.ApiResponse response = AiMatchService.createItem(
                     title, description, imageUrl, imageUrls, type, latitude, longitude,
-                    location, date, paymentId, imeiValue,
+                    location, date, paymentId,
                     getTtsLocaleForSelectedLanguage().getLanguage(), idToken);
             if (!response.isSuccessful()) {
                 lastSubmissionError = "Could not save report (" + response.getStatusCode() + "): " + response.getErrorMessage();
-                return new ItemSubmissionResult(response.getStatusCode(), lastSubmissionError, firestoreSaved);
+                return new ItemSubmissionResult(response.getStatusCode(), lastSubmissionError);
             }
 
-            return new ItemSubmissionResult(response.getStatusCode(), lastSubmissionError, firestoreSaved);
+            return new ItemSubmissionResult(response.getStatusCode(), lastSubmissionError);
         } catch (Exception error) {
             lastSubmissionError = "Could not save report: " + error.getClass().getSimpleName();
-            return new ItemSubmissionResult(-1, lastSubmissionError, firestoreSaved);
+            return new ItemSubmissionResult(-1, lastSubmissionError);
         }
     }
 
@@ -3629,27 +3548,6 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
     }
 
     private int putItem(String type, String id, String title, String description, String location, String date, String imageUrl, String idToken) {
-        FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
-        if (user != null && id != null && !id.trim().isEmpty()) {
-            String collectionName = "FOUND".equalsIgnoreCase(type) ? "found_items" : "lost_items";
-            String username = getProfileDocumentKey();
-            Map<String, Object> reportDoc = new LinkedHashMap<>();
-            reportDoc.put("title", title);
-            reportDoc.put("description", description);
-            reportDoc.put("source_language", getTtsLocaleForSelectedLanguage().getLanguage());
-            reportDoc.put("report_location", location);
-            reportDoc.put("report_date", date);
-            reportDoc.put("category", AiMatchService.inferCategory(title, description));
-            if (imageUrl != null) reportDoc.put("image_url", imageUrl);
-            reportDoc.put("user_id", user.getUid());
-            reportDoc.put("created_by", user.getUid());
-            reportDoc.put("username", username);
-            reportDoc.put("created_by_username", username);
-
-            FirebaseFirestore.getInstance().collection(collectionName).document(id)
-                    .set(reportDoc, SetOptions.merge());
-        }
-
         HttpURLConnection connection = null;
         try {
             String endpoint = API_BASE + "/api/items/" + type.toLowerCase(Locale.US) + "/" + id;
@@ -3715,7 +3613,6 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             String city = account.getString("city", "");
 
             saveCloudProfileDocument(user, username, fullName, email, mobile, state, city, finalImageUrl, null);
-            syncProfileToBackendApi(username, fullName, email, mobile, state, city, finalImageUrl);
 
             runOnUiThread(() -> {
                 if (currentPage == PAGE_PROFILE) showProfile();
@@ -3963,12 +3860,6 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
     }
 
     private void openProfilePhotoPicker() {
-        String permission = Build.VERSION.SDK_INT >= 33
-                ? Manifest.permission.READ_MEDIA_IMAGES : Manifest.permission.READ_EXTERNAL_STORAGE;
-        if (ContextCompat.checkSelfPermission(this, permission) != PackageManager.PERMISSION_GRANTED) {
-            ActivityCompat.requestPermissions(this, new String[]{permission}, REQUEST_PROFILE_IMAGE);
-            return;
-        }
         Intent intent = new Intent(Intent.ACTION_GET_CONTENT);
         intent.setType("image/*");
         startActivityForResult(intent, REQUEST_PROFILE_IMAGE);
@@ -4096,57 +3987,6 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             verifyButton.setBackground(round(GOLD, 24));
         }
 
-        if (!cloudEmailVerified && !firebaseEmailVerified && currentUser != null) {
-            FirebaseFirestore db = FirebaseFirestore.getInstance();
-            db.collection("users").document(getProfileDocumentKey())
-                    .get(Source.SERVER)
-                    .addOnSuccessListener(document -> {
-                        if (document != null && document.exists()) {
-                            boolean isVerifiedInCloud = parseBooleanValue(document.get("emailVerified"))
-                                    || parseBooleanValue(document.get("isEmailVerified"))
-                                    || parseBooleanValue(document.get("email_verified"));
-                            String cloudEmail = document.getString("email");
-                            if (isVerifiedInCloud) {
-                                SharedPreferences.Editor editor = getSharedPreferences("fendly_account", MODE_PRIVATE).edit();
-                                editor.putBoolean("email_verified", true);
-                                if (cloudEmail != null && !cloudEmail.trim().isEmpty() && !cloudEmail.endsWith("@login.fendly.app")) {
-                                    editor.putString("email", cloudEmail.trim());
-                                    if (email != null) {
-                                        email.setText(cloudEmail.trim());
-                                    }
-                                }
-                                editor.apply();
-                                cancelEmailVerificationCooldown();
-                                lockVerifiedEmailField(email, verifyButton);
-                                return;
-                            }
-                        }
-
-                        // Backup check: query verified_emails collection directly by email address from SERVER!
-                        String currentFieldEmail = (email != null ? email.getText().toString() : "").trim().toLowerCase(Locale.US);
-                        String prefsSavedEmail = account.getString("email", "").trim().toLowerCase(Locale.US);
-                        String emailToCheck = !currentFieldEmail.isEmpty() ? currentFieldEmail : prefsSavedEmail;
-
-                        if (!emailToCheck.isEmpty() && !emailToCheck.endsWith("@login.fendly.app")) {
-                            db.collection("verified_emails").document(emailToCheck)
-                                    .get(Source.SERVER)
-                                    .addOnSuccessListener(emailDoc -> {
-                                        if (emailDoc != null && emailDoc.exists() && parseBooleanValue(emailDoc.get("verified"))) {
-                                            getSharedPreferences("fendly_account", MODE_PRIVATE).edit()
-                                                    .putBoolean("email_verified", true)
-                                                    .putString("email", emailToCheck)
-                                                    .apply();
-                                            if (email != null && email.getText().toString().trim().isEmpty()) {
-                                                email.setText(emailToCheck);
-                                            }
-                                            cancelEmailVerificationCooldown();
-                                            lockVerifiedEmailField(email, verifyButton);
-                                        }
-                                    });
-                        }
-                    });
-        }
-
         String savedEmail = account.getString("email", "").trim();
         if ((savedEmail == null || savedEmail.isEmpty()) && currentUser != null && currentUser.getEmail() != null) {
             String firebaseEmail = currentUser.getEmail().trim();
@@ -4256,48 +4096,57 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
 
         verifyButton.setEnabled(false);
         verifyButton.setText(translate("Sending..."));
-        network.execute(() -> {
-            boolean sent = false;
-            String debugOtp = "";
-            String errorMessage = "Could not send email OTP";
-            try {
-                JSONObject payload = new JSONObject();
-                payload.put("email", emailValue);
-                JSONObject response = postJson("/api/auth/send-email-otp", payload.toString(), null);
-                if (response != null) {
-                    sent = response.optBoolean("success", false);
-                    debugOtp = response.optString("debug_otp", "");
-                    if (!sent) {
-                        errorMessage = response.optString("detail", response.optString("message", errorMessage));
+        FirebaseUser currentUser = FirebaseAuth.getInstance().getCurrentUser();
+        if (currentUser == null) {
+            verifyButton.setText(translate("Enter OTP"));
+            verifyButton.setEnabled(true);
+            Toast.makeText(this, "Sign in required", Toast.LENGTH_SHORT).show();
+            return;
+        }
+
+        currentUser.getIdToken(false).addOnSuccessListener(tokenResult -> {
+            String idToken = tokenResult != null ? tokenResult.getToken() : null;
+            network.execute(() -> {
+                boolean sent = false;
+                String errorMessage = "Could not send email OTP";
+                try {
+                    if (idToken == null || idToken.isEmpty()) {
+                        throw new IllegalStateException("Authentication token unavailable");
                     }
+                    JSONObject payload = new JSONObject();
+                    payload.put("email", emailValue);
+                    JSONObject response = postJson("/api/auth/send-email-otp", payload.toString(), idToken);
+                    if (response != null) {
+                        sent = response.optBoolean("success", false);
+                        if (!sent) {
+                            errorMessage = response.optString("detail", response.optString("message", errorMessage));
+                        }
+                    }
+                } catch (Exception error) {
+                    errorMessage = error.getMessage() != null ? error.getMessage() : "Could not send email OTP";
                 }
-            } catch (Exception error) {
-                errorMessage = error.getMessage() != null ? error.getMessage() : "Could not send email OTP";
-            }
-
-            final boolean finalSent = sent;
-            final String finalErrorMessage = errorMessage;
-            final String finalDebugOtp = debugOtp;
-            runOnUiThread(() -> {
-                verifyButton.setText(translate("Enter OTP"));
-                verifyButton.setEnabled(true);
-                if (!finalSent) {
-                    Toast.makeText(this, finalErrorMessage, Toast.LENGTH_LONG).show();
-                    return;
-                }
-                getSharedPreferences("fendly_account", MODE_PRIVATE).edit()
-                        .putString("email", emailValue)
-                        .apply();
-                long newCooldownUntil = System.currentTimeMillis() + EMAIL_VERIFICATION_COOLDOWN_MS;
-                startEmailVerificationCooldown(verifyButton, newCooldownUntil, true);
-                showEmailOtpDialog(emailValue, emailField, verifyButton);
-
-                String toastMsg = "Verification code sent to your email";
-                if (!finalDebugOtp.isEmpty()) {
-                    toastMsg = "Verification code sent (Dev: " + finalDebugOtp + ")";
-                }
-                Toast.makeText(this, toastMsg, Toast.LENGTH_LONG).show();
+                final boolean finalSent = sent;
+                final String finalErrorMessage = errorMessage;
+                runOnUiThread(() -> {
+                    verifyButton.setText(translate("Enter OTP"));
+                    verifyButton.setEnabled(true);
+                    if (!finalSent) {
+                        Toast.makeText(this, finalErrorMessage, Toast.LENGTH_LONG).show();
+                        return;
+                    }
+                    getSharedPreferences("fendly_account", MODE_PRIVATE).edit()
+                            .putString("email", emailValue)
+                            .apply();
+                    long newCooldownUntil = System.currentTimeMillis() + EMAIL_VERIFICATION_COOLDOWN_MS;
+                    startEmailVerificationCooldown(verifyButton, newCooldownUntil, true);
+                    showEmailOtpDialog(emailValue, emailField, verifyButton);
+                    Toast.makeText(this, "Verification code sent to your email", Toast.LENGTH_LONG).show();
+                });
             });
+        }).addOnFailureListener(error -> {
+            verifyButton.setText(translate("Enter OTP"));
+            verifyButton.setEnabled(true);
+            Toast.makeText(this, "Authentication failed", Toast.LENGTH_SHORT).show();
         });
     }
 
@@ -4425,41 +4274,43 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
     private void sendBackendMobileOtp(String phoneNumber, String mobileValue, Object mobileTarget, TextView verifyButton) {
         network.execute(() -> {
             String sessionId = "";
-            String debugOtp = "";
+            String errorMessage = "Could not send SMS verification code";
+            boolean sent = false;
             try {
                 JSONObject payload = new JSONObject();
                 payload.put("phone_number", phoneNumber);
                 JSONObject response = postJson("/api/auth/send-otp", payload.toString(), null);
                 if (response != null) {
+                    sent = response.optBoolean("success", false);
                     sessionId = response.optString("session_id", "");
-                    debugOtp = response.optString("debug_otp", "");
+                    errorMessage = response.optString("message", errorMessage);
                 }
-            } catch (Exception ignored) {
+            } catch (Exception error) {
+                Log.e("AUTH", "Could not request SMS verification code", error);
             }
 
-            if (sessionId == null || sessionId.trim().isEmpty()) {
-                sessionId = "sess_" + System.currentTimeMillis();
-            }
-
-            phoneVerificationId = sessionId;
-            final String finalOtp = debugOtp;
+            final String finalSessionId = sessionId;
+            final boolean finalSent = sent && sessionId != null && !sessionId.trim().isEmpty();
+            final String finalErrorMessage = errorMessage;
             runOnUiThread(() -> {
                 verifyButton.setText(translate("Enter OTP"));
                 verifyButton.setEnabled(true);
-                if (finalOtp != null && !finalOtp.trim().isEmpty()) {
-                    Toast.makeText(MainActivity.this, "OTP Code: " + finalOtp, Toast.LENGTH_LONG).show();
+                if (!finalSent) {
+                    phoneVerificationId = null;
+                    Toast.makeText(MainActivity.this, finalErrorMessage, Toast.LENGTH_LONG).show();
+                    return;
                 }
-                showOtpDialogForProfile(mobileValue, mobileTarget, verifyButton, finalOtp);
+                phoneVerificationId = finalSessionId;
+                showOtpDialogForProfile(mobileValue, mobileTarget, verifyButton);
             });
         });
     }
 
-    private void showOtpDialogForProfile(String mobileValue, Object mobileTarget, TextView verifyButton, String otpHint) {
-        String subtitle = "Enter 6-digit code sent to " + normalizePhoneNumber(mobileValue);
-        if (otpHint != null && !otpHint.trim().isEmpty()) {
-            subtitle += " (Code: " + otpHint + ")";
-        }
-        showThemedOtpDialog("Verify mobile", subtitle, "6-digit OTP",
+    private void showOtpDialogForProfile(String mobileValue, Object mobileTarget, TextView verifyButton) {
+        showThemedOtpDialog(
+            "Verify mobile",
+            "Enter 6-digit code sent to " + normalizePhoneNumber(mobileValue),
+            "6-digit OTP",
             (otpValue, dialog, verifyInDialog, codeCells) -> {
                 if (phoneVerificationId == null || otpValue.length() != 6) {
                     Toast.makeText(this, "Enter a valid 6-digit code", Toast.LENGTH_LONG).show();
@@ -4472,10 +4323,6 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             }, () -> {
                 verifyProfileMobileTarget(mobileTarget, verifyButton);
             });
-    }
-
-    private void showOtpDialogForProfile(String mobileValue, Object mobileTarget, TextView verifyButton) {
-        showOtpDialogForProfile(mobileValue, mobileTarget, verifyButton, null);
     }
 
     private void verifyProfileOtp(String sessionId, String otpValue, String mobileValue, Object mobileTarget, TextView verifyButton,
@@ -4591,26 +4438,11 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         Map<String, Object> update = new LinkedHashMap<>();
         update.put("uid", user.getUid());
         update.put("email", cleanEmail);
-        update.put("emailVerified", true);
-        update.put("isEmailVerified", true);
-        update.put("email_verified", true);
 
         FirebaseFirestore db = FirebaseFirestore.getInstance();
         db.collection("users").document(getProfileDocumentKey())
                 .set(update, SetOptions.merge())
-                .addOnSuccessListener(unused -> Log.d("FIREBASE_SUCCESS", "Email verified saved to users document"))
-                .addOnFailureListener(error -> Log.e("FIREBASE_ERROR", "Email verification cloud save failed: ", error));
-
-        if (!cleanEmail.isEmpty() && !cleanEmail.endsWith("@login.fendly.app")) {
-            Map<String, Object> emailDoc = new LinkedHashMap<>();
-            emailDoc.put("email", cleanEmail);
-            emailDoc.put("verified", true);
-            emailDoc.put("uid", user.getUid());
-            db.collection("verified_emails").document(cleanEmail)
-                    .set(emailDoc, SetOptions.merge())
-                    .addOnSuccessListener(unused -> Log.d("FIREBASE_SUCCESS", "Email verified saved to verified_emails collection"))
-                    .addOnFailureListener(error -> Log.e("FIREBASE_ERROR", "Verified emails save failed: ", error));
-        }
+                .addOnFailureListener(error -> Log.e("FIREBASE_ERROR", "Profile email save failed: ", error));
 
         syncProfileToBackendApi(account.getString("username", ""), account.getString("full_name", ""),
                 cleanEmail, account.getString("mobile", ""), account.getString("state", ""), account.getString("city", ""),
@@ -4629,9 +4461,6 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         Map<String, Object> update = new LinkedHashMap<>();
         update.put("uid", user.getUid());
         update.put("mobile", mobileValue);
-        update.put("mobileVerified", true);
-        update.put("isMobileVerified", true);
-        update.put("mobile_verified", true);
         FirebaseFirestore.getInstance().collection("users").document(getProfileDocumentKey())
                 .set(update, SetOptions.merge())
                 .addOnFailureListener(error -> Log.e("FIREBASE_ERROR", "Mobile verification cloud save failed: ", error));
@@ -4795,15 +4624,8 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
 
     private void openGalleryForSlot(int slot) {
         pendingImageSlot = slot;
-        String permission = Build.VERSION.SDK_INT >= 33
-                ? Manifest.permission.READ_MEDIA_IMAGES : Manifest.permission.READ_EXTERNAL_STORAGE;
-        if (ContextCompat.checkSelfPermission(this, permission) != PackageManager.PERMISSION_GRANTED) {
-            ActivityCompat.requestPermissions(this, new String[]{permission}, REQUEST_IMAGE_PERMISSION);
-            return;
-        }
-        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+        Intent intent = new Intent(Intent.ACTION_GET_CONTENT);
         intent.setType("image/*");
-        intent.addCategory(Intent.CATEGORY_OPENABLE);
         startActivityForResult(intent, 710 + slot);
     }
 
@@ -4850,40 +4672,6 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                 date.setError(invalid ? "Use a valid date in DD/MM/YYYY format" : null);
             }
         });
-    }
-
-    private void openImeiScanner(EditText imeiField) {
-        imeiScanTarget = imeiField;
-        serialScanTarget = null;
-        setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_PORTRAIT);
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
-            ActivityCompat.requestPermissions(this, new String[]{Manifest.permission.CAMERA}, REQUEST_IMEI_SCAN);
-            return;
-        }
-        IntentIntegrator integrator = new IntentIntegrator(this);
-        integrator.setCaptureActivity(PortraitCaptureActivity.class);
-        integrator.setDesiredBarcodeFormats(IntentIntegrator.ALL_CODE_TYPES);
-        integrator.setPrompt(LanguageManager.profileText(this, "scan_imei"));
-        integrator.setBeepEnabled(true);
-        integrator.setOrientationLocked(true);
-        integrator.initiateScan();
-    }
-
-    private void openSerialScanner(EditText serialField) {
-        serialScanTarget = serialField;
-        imeiScanTarget = null;
-        setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_PORTRAIT);
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
-            ActivityCompat.requestPermissions(this, new String[]{Manifest.permission.CAMERA}, REQUEST_IMEI_SCAN);
-            return;
-        }
-        IntentIntegrator integrator = new IntentIntegrator(this);
-        integrator.setCaptureActivity(PortraitCaptureActivity.class);
-        integrator.setDesiredBarcodeFormats(IntentIntegrator.ALL_CODE_TYPES);
-        integrator.setPrompt(LanguageManager.profileText(this, "scan_serial"));
-        integrator.setBeepEnabled(true);
-        integrator.setOrientationLocked(true);
-        integrator.initiateScan();
     }
 
     private void addLabeledDateField(LinearLayout parent, String label, EditText date) {
@@ -4956,19 +4744,6 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         }
     }
 
-    private void showSubscription(EditText item, EditText description, EditText imei, EditText location, EditText date) {
-        currentPage = PAGE_SUBSCRIPTION;
-        LinearLayout root = screenBase("Fendly Plus");
-        addHeading("Report an item", "Silver wristwatch");
-        addField(root, premiumCard(translate("Subscription"), localizedAnnualPriceText()));
-        TextView pay = actionButton("Pay and submit lost report", true);
-        pay.setOnClickListener(view -> startPayment(item, description, imei, location, date, pay));
-        addField(root, pay);
-        TextView back = actionButton("Back to report", false);
-        back.setOnClickListener(view -> showReport("LOST"));
-        addField(root, back);
-    }
-
     private void showReports() {
         currentPage = PAGE_REPORTS;
         screenRenderer = this::showReports;
@@ -4988,8 +4763,6 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
 
         user.getIdToken(false).addOnSuccessListener(tokenResult -> {
             String idToken = (tokenResult != null) ? tokenResult.getToken() : null;
-            String currentUid = user.getUid();
-            FirebaseFirestore db = FirebaseFirestore.getInstance();
 
             network.execute(() -> {
                 List<JSONObject> backendReports = new ArrayList<>();
@@ -5017,86 +4790,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                     }
                 }
 
-                String currentUsername = getProfileDocumentKey();
-                Task<QuerySnapshot> f1 = db.collection("found_items").whereEqualTo("user_id", currentUid).get();
-                Task<QuerySnapshot> f2 = db.collection("found_items").whereEqualTo("created_by", currentUid).get();
-                Task<QuerySnapshot> f3 = db.collection("found_items").whereEqualTo("uid", currentUid).get();
-                Task<QuerySnapshot> f4 = db.collection("found_items").whereEqualTo("userId", currentUid).get();
-                Task<QuerySnapshot> f5 = db.collection("found_items").whereEqualTo("username", currentUsername).get();
-                Task<QuerySnapshot> f6 = db.collection("found_items").whereEqualTo("created_by_username", currentUsername).get();
-
-                Task<QuerySnapshot> l1 = db.collection("lost_items").whereEqualTo("user_id", currentUid).get();
-                Task<QuerySnapshot> l2 = db.collection("lost_items").whereEqualTo("created_by", currentUid).get();
-                Task<QuerySnapshot> l3 = db.collection("lost_items").whereEqualTo("uid", currentUid).get();
-                Task<QuerySnapshot> l4 = db.collection("lost_items").whereEqualTo("userId", currentUid).get();
-                Task<QuerySnapshot> l5 = db.collection("lost_items").whereEqualTo("username", currentUsername).get();
-                Task<QuerySnapshot> l6 = db.collection("lost_items").whereEqualTo("created_by_username", currentUsername).get();
-
-                Tasks.whenAllComplete(f1, f2, f3, f4, f5, f6, l1, l2, l3, l4, l5, l6).addOnCompleteListener(firestoreTask -> {
-                    List<JSONObject> firestoreReports = new ArrayList<>();
-                    try {
-                        List<DocumentSnapshot> foundDocs = new ArrayList<>();
-                        List<DocumentSnapshot> lostDocs = new ArrayList<>();
-                        if (f1.isSuccessful() && f1.getResult() != null) foundDocs.addAll(f1.getResult().getDocuments());
-                        if (f2.isSuccessful() && f2.getResult() != null) foundDocs.addAll(f2.getResult().getDocuments());
-                        if (f3.isSuccessful() && f3.getResult() != null) foundDocs.addAll(f3.getResult().getDocuments());
-                        if (f4.isSuccessful() && f4.getResult() != null) foundDocs.addAll(f4.getResult().getDocuments());
-                        if (f5.isSuccessful() && f5.getResult() != null) foundDocs.addAll(f5.getResult().getDocuments());
-                        if (f6.isSuccessful() && f6.getResult() != null) foundDocs.addAll(f6.getResult().getDocuments());
-
-                        if (l1.isSuccessful() && l1.getResult() != null) lostDocs.addAll(l1.getResult().getDocuments());
-                        if (l2.isSuccessful() && l2.getResult() != null) lostDocs.addAll(l2.getResult().getDocuments());
-                        if (l3.isSuccessful() && l3.getResult() != null) lostDocs.addAll(l3.getResult().getDocuments());
-                        if (l4.isSuccessful() && l4.getResult() != null) lostDocs.addAll(l4.getResult().getDocuments());
-                        if (l5.isSuccessful() && l5.getResult() != null) lostDocs.addAll(l5.getResult().getDocuments());
-                        if (l6.isSuccessful() && l6.getResult() != null) lostDocs.addAll(l6.getResult().getDocuments());
-
-                        Map<String, DocumentSnapshot> uniqueFound = new LinkedHashMap<>();
-                        for (DocumentSnapshot doc : foundDocs) uniqueFound.put(doc.getId(), doc);
-                        Map<String, DocumentSnapshot> uniqueLost = new LinkedHashMap<>();
-                        for (DocumentSnapshot doc : lostDocs) uniqueLost.put(doc.getId(), doc);
-
-                        for (DocumentSnapshot doc : uniqueFound.values()) {
-                            JSONObject obj = new JSONObject();
-                            obj.put("id", doc.getId());
-                            obj.put("type", "FOUND");
-                            obj.put("title", doc.getString("title") != null ? doc.getString("title") : "Untitled item");
-                            obj.put("description", doc.getString("description") != null ? doc.getString("description") : "");
-                            obj.put("report_location", doc.getString("report_location") != null ? doc.getString("report_location") : "");
-                            obj.put("report_date", doc.getString("report_date") != null ? doc.getString("report_date") : "");
-                            obj.put("image_url", doc.getString("image_url"));
-                            Object foundImages = doc.get("image_urls");
-                            if (foundImages instanceof List) obj.put("image_urls", new JSONArray((List<?>) foundImages));
-                            Long editCount = doc.getLong("edit_count");
-                            obj.put("edit_count", editCount != null ? editCount.intValue() : 0);
-                            Timestamp ts = doc.getTimestamp("created_at");
-                            obj.put("created_at_ms", ts != null ? ts.toDate().getTime() : System.currentTimeMillis());
-                            firestoreReports.add(obj);
-                        }
-                        for (DocumentSnapshot doc : uniqueLost.values()) {
-                            JSONObject obj = new JSONObject();
-                            obj.put("id", doc.getId());
-                            obj.put("type", "LOST");
-                            obj.put("title", doc.getString("title") != null ? doc.getString("title") : "Untitled item");
-                            obj.put("description", doc.getString("description") != null ? doc.getString("description") : "");
-                            obj.put("report_location", doc.getString("report_location") != null ? doc.getString("report_location") : "");
-                            obj.put("report_date", doc.getString("report_date") != null ? doc.getString("report_date") : "");
-                            obj.put("image_url", doc.getString("image_url"));
-                            Object lostImages = doc.get("image_urls");
-                            if (lostImages instanceof List) obj.put("image_urls", new JSONArray((List<?>) lostImages));
-                            Long editCount = doc.getLong("edit_count");
-                            obj.put("edit_count", editCount != null ? editCount.intValue() : 0);
-                            Timestamp ts = doc.getTimestamp("created_at");
-                            obj.put("created_at_ms", ts != null ? ts.toDate().getTime() : System.currentTimeMillis());
-                            firestoreReports.add(obj);
-                        }
-                    } catch (Exception ignored) {
-                    }
-
-                    List<JSONObject> finalBackend = backendReports;
-                    List<JSONObject> finalFirestore = firestoreReports;
-                    runOnUiThread(() -> renderMergedReports(finalBackend, finalFirestore));
-                });
+                runOnUiThread(() -> renderMergedReports(backendReports, Collections.emptyList()));
             });
         }).addOnFailureListener(error -> {
             loading.setText(localizeReportsText("Your reports could not be loaded."));
@@ -5228,10 +4922,6 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
     }
 
     private int deleteItem(String type, String id, String idToken) {
-        if (id != null && !id.trim().isEmpty()) {
-            String collectionName = "FOUND".equalsIgnoreCase(type) ? "found_items" : "lost_items";
-            FirebaseFirestore.getInstance().collection(collectionName).document(id).delete();
-        }
         HttpURLConnection connection = null;
         try {
             connection = (HttpURLConnection) new URL(API_BASE + "/api/items/" + type.toLowerCase(Locale.US) + "/" + id).openConnection();
@@ -5465,7 +5155,8 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
     }
 
     private void applyCloudProfileToVisibleFields(DocumentSnapshot document) {
-        if (applyingCloudProfile || visibleFirstName == null || visibleFirstName.hasFocus()) return;
+        if (applyingCloudProfile) return;
+        if (visibleFirstName == null || visibleFirstName.hasFocus()) return;
         selectedLanguage = getSharedPreferences("fendly_language", MODE_PRIVATE)
                 .getInt("selected_language_index", 0);
         applyingCloudProfile = true;
@@ -5813,18 +5504,8 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         profile.put("profile_surname", sn);
         profile.put("email", email);
         profile.put("mobile", mobile);
-        profile.put("imei_number", account.getString("imei_number", ""));
-        profile.put("mobile_serial_number", account.getString("mobile_serial_number", ""));
         profile.put("state", state);
         profile.put("city", city);
-        boolean emailVerified = account.getBoolean("email_verified", false);
-        boolean mobileVerified = account.getBoolean("mobile_verified", false);
-        profile.put("emailVerified", emailVerified);
-        profile.put("isEmailVerified", emailVerified);
-        profile.put("email_verified", emailVerified);
-        profile.put("mobileVerified", mobileVerified);
-        profile.put("isMobileVerified", mobileVerified);
-        profile.put("mobile_verified", mobileVerified);
         String savedPhotoUrl = imageUrl == null ? "" : imageUrl.trim();
         if (!savedPhotoUrl.isEmpty()) {
             profile.put("imageUrl", savedPhotoUrl);
@@ -5833,7 +5514,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             profile.put("profile_image_removed", false);
         }
 
-        syncProfileToBackendApi(username, fullName, email, mobile, state, city, savedPhotoUrl);
+        syncProfileToBackendApi(username, fullName, email, mobile, state, city, savedPhotoUrl, saveButton);
 
         FirebaseFirestore db = FirebaseFirestore.getInstance();
         String docKey = getProfileDocumentKey();
@@ -5852,24 +5533,27 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                 .putString("full_name", fullName)
                 .putString("email", email)
                 .putString("mobile", mobile)
-                .putString("imei_number", account.getString("imei_number", ""))
-                .putString("mobile_serial_number", account.getString("mobile_serial_number", ""))
                 .putString("state", state)
                 .putString("city", city);
             accountEditor.apply();
 
         profileImageExplicitlyRemoved = false;
         cloudProfileLoaded = true;
-        if (saveButton != null) profileSaveSucceeded(saveButton);
     }
 
     private void syncProfileToBackendApi(String username, String fullName, String email, String mobile,
                                        String state, String city, String profilePhotoUrl) {
+        syncProfileToBackendApi(username, fullName, email, mobile, state, city, profilePhotoUrl, null);
+    }
+
+    private void syncProfileToBackendApi(String username, String fullName, String email, String mobile,
+                                       String state, String city, String profilePhotoUrl, TextView saveButton) {
         FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
-        if (user == null) return;
+        if (user == null) {
+            if (saveButton != null) profileSaveFailed(saveButton, "Sign in before saving profile");
+            return;
+        }
         SharedPreferences account = getSharedPreferences("fendly_account", MODE_PRIVATE);
-        boolean emailVerified = account.getBoolean("email_verified", false);
-        boolean mobileVerified = account.getBoolean("mobile_verified", false);
         String photoUrl = profilePhotoUrl == null ? "" : profilePhotoUrl.trim();
         user.getIdToken(false).addOnSuccessListener(token -> network.execute(() -> {
             HttpURLConnection putConnection = null;
@@ -5881,7 +5565,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                 putConnection.setDoOutput(true);
                 putConnection.setRequestProperty("Authorization", "Bearer " + token.getToken());
                 putConnection.setRequestProperty("Content-Type", "application/json; charset=UTF-8");
-                String body = "{\"username\":\"" + escapeJson(username) + "\",\"full_name\":\"" + escapeJson(fullName) + "\",\"email\":\"" + escapeJson(email) + "\",\"mobile\":\"" + escapeJson(mobile) + "\",\"state\":\"" + escapeJson(state) + "\",\"city\":\"" + escapeJson(city) + "\",\"email_verified\":" + emailVerified + ",\"mobile_verified\":" + mobileVerified;
+                String body = "{\"username\":\"" + escapeJson(username) + "\",\"full_name\":\"" + escapeJson(fullName) + "\",\"email\":\"" + escapeJson(email) + "\",\"mobile\":\"" + escapeJson(mobile) + "\",\"state\":\"" + escapeJson(state) + "\",\"city\":\"" + escapeJson(city) + "\"";
                 if (!photoUrl.isEmpty() || profileImageExplicitlyRemoved) {
                     body += ",\"profile_photo_url\":\"" + escapeJson(photoUrl) + "\",\"profile_image_removed\":" + profileImageExplicitlyRemoved;
                 }
@@ -5889,12 +5573,30 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                 try (OutputStream output = putConnection.getOutputStream()) {
                     output.write(body.getBytes(StandardCharsets.UTF_8));
                 }
-                putConnection.getResponseCode();
-            } catch (Exception ignored) {
+                int statusCode = putConnection.getResponseCode();
+                if (statusCode < 200 || statusCode >= 300) {
+                    Log.e("PROFILE_SYNC", "Backend profile sync failed with HTTP " + statusCode);
+                    if (saveButton != null) {
+                        runOnUiThread(() -> profileSaveFailed(saveButton,
+                                "Profile sync failed (HTTP " + statusCode + "). Please try again."));
+                    }
+                } else if (saveButton != null) {
+                    runOnUiThread(() -> profileSaveSucceeded(saveButton));
+                }
+            } catch (Exception error) {
+                Log.e("PROFILE_SYNC", "Backend profile sync failed", error);
+                if (saveButton != null) {
+                    runOnUiThread(() -> profileSaveFailed(saveButton, "Profile sync failed. Please try again."));
+                }
             } finally {
                 if (putConnection != null) putConnection.disconnect();
             }
-        }));
+        })).addOnFailureListener(error -> {
+            Log.e("PROFILE_SYNC", "Could not get authentication token for profile sync", error);
+            if (saveButton != null) {
+                profileSaveFailed(saveButton, "Profile sync failed. Please try again.");
+            }
+        });
     }
 
     private void profileSaveSucceeded(TextView saveButton) {
@@ -5906,7 +5608,10 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
     }
 
     private void profileSaveFailed(TextView saveButton, String message) {
-        if (saveButton != null) saveButton.setEnabled(true);
+        if (saveButton != null) {
+            saveButton.setEnabled(true);
+            saveButton.setText(localizedFieldLabel("Save changes"));
+        }
         Toast.makeText(this, message, Toast.LENGTH_LONG).show();
     }
 
@@ -6001,19 +5706,6 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                     editor.putBoolean("created", true);
                     editor.putString("username", formatUsernameDisplay(username));
                     editor.apply();
-
-                    String checkEmail = (email != null ? email : "").trim().toLowerCase(Locale.US);
-                    if (!emailVerified && !checkEmail.isEmpty() && !checkEmail.endsWith("@login.fendly.app")) {
-                        db.collection("verified_emails").document(checkEmail)
-                                .get(Source.SERVER)
-                                .addOnSuccessListener(emailDoc -> {
-                                    if (emailDoc != null && emailDoc.exists() && parseBooleanValue(emailDoc.get("verified"))) {
-                                        getSharedPreferences("fendly_account", MODE_PRIVATE).edit()
-                                                .putBoolean("email_verified", true)
-                                                .apply();
-                                    }
-                                });
-                    }
 
                     user.getIdToken(false).addOnSuccessListener(token -> network.execute(() -> {
                         HttpURLConnection connection = null;
@@ -6395,17 +6087,6 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         String fallbackKey = currentUser.getUid();
 
         Runnable proceedWithProfile = () -> {
-            String currentEmailKey = account.getString("email", "").trim().toLowerCase(Locale.US);
-            if (!currentEmailKey.isEmpty() && !currentEmailKey.endsWith("@login.fendly.app")) {
-                db.collection("verified_emails").document(currentEmailKey)
-                        .get(Source.SERVER)
-                        .addOnSuccessListener(emailDoc -> {
-                            if (emailDoc != null && emailDoc.exists() && parseBooleanValue(emailDoc.get("verified"))) {
-                                account.edit().putBoolean("email_verified", true).apply();
-                            }
-                        });
-            }
-
             currentUser.getIdToken(false).addOnSuccessListener(token -> network.execute(() -> {
                 HttpURLConnection connection = null;
                 try {
@@ -6694,30 +6375,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             cell.setCursorVisible(true);
         }
         boolean isMobileVerified = account.getBoolean("mobile_verified", false);
-        if (isMobileVerified) {
-            lockVerifiedMobileField(mobileCells, mobileVerify);
-        } else if (currentUser != null) {
-            FirebaseFirestore.getInstance().collection("users").document(getProfileDocumentKey())
-                    .get(Source.SERVER)
-                    .addOnSuccessListener(document -> {
-                        if (document != null && document.exists()) {
-                            boolean isMobileVerifiedInCloud = parseBooleanValue(document.get("mobileVerified"))
-                                    || parseBooleanValue(document.get("isMobileVerified"))
-                                    || parseBooleanValue(document.get("mobile_verified"));
-                            String cloudMobile = document.getString("mobile");
-                            if (isMobileVerifiedInCloud) {
-                                SharedPreferences.Editor editor = getSharedPreferences("fendly_account", MODE_PRIVATE).edit();
-                                editor.putBoolean("mobile_verified", true);
-                                if (cloudMobile != null && !cloudMobile.trim().isEmpty()) {
-                                    editor.putString("mobile", cloudMobile.trim());
-                                    setMobileCells(mobileCells, cloudMobile.trim());
-                                }
-                                editor.apply();
-                                lockVerifiedMobileField(mobileCells, mobileVerify);
-                            }
-                        }
-                    });
-        }
+        if (isMobileVerified) lockVerifiedMobileField(mobileCells, mobileVerify);
         for (EditText cell : mobileCells) {
             cell.addTextChangedListener(new TextWatcher() {
                 @Override public void beforeTextChanged(CharSequence value, int start, int count, int after) { }
@@ -6795,94 +6453,6 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         addEditableProfileField(root, getString(R.string.profile_email), email, emailVerify);
         addLabeledMobileField(root, getString(R.string.profile_mobile), mobileCells, mobileVerify);
 
-        EditText imeiNumberField = field("");
-        imeiNumberField.setText(account.getString("imei_number", ""));
-        imeiNumberField.setHint(LanguageManager.profileText(this, "imei_hint"));
-        imeiNumberField.setHintTextColor(Color.GRAY);
-        imeiNumberField.setTextSize(responsiveTextSize(13));
-        imeiNumberField.setSingleLine(false);
-        imeiNumberField.setMaxLines(2);
-        imeiNumberField.setHorizontallyScrolling(false);
-        imeiNumberField.setMinHeight(dp(58));
-        imeiNumberField.setInputType(InputType.TYPE_CLASS_NUMBER);
-        imeiNumberField.setFilters(new InputFilter[]{new InputFilter.LengthFilter(15)});
-
-        EditText mobileSerialField = field("");
-        mobileSerialField.setText(account.getString("mobile_serial_number", ""));
-        mobileSerialField.setInputType(InputType.TYPE_CLASS_TEXT);
-
-        final LinearLayout advancedFields = new LinearLayout(this);
-        advancedFields.setOrientation(LinearLayout.VERTICAL);
-        advancedFields.setVisibility(advancedSettingsExpanded ? View.VISIBLE : View.GONE);
-
-        LinearLayout imeiFieldGroup = new LinearLayout(this);
-        imeiFieldGroup.setOrientation(LinearLayout.VERTICAL);
-        imeiFieldGroup.addView(fieldLabel(LanguageManager.profileText(this, "imei_label")), new LinearLayout.LayoutParams(-1, dp(20)));
-        FrameLayout imeiFieldFrame = new FrameLayout(this);
-        imeiFieldFrame.setBackground(roundWithStroke(surfaceColor(), 10, fieldBorderColor()));
-        imeiNumberField.setBackgroundColor(Color.TRANSPARENT);
-        imeiNumberField.setPadding(dp(16), dp(8), dp(48), dp(8));
-        imeiFieldFrame.addView(imeiNumberField, new FrameLayout.LayoutParams(-1, dp(46)));
-        ImageView imeiCamera = new ImageView(this);
-        imeiCamera.setImageResource(R.drawable.ic_field_camera);
-        imeiCamera.setColorFilter(accentColor());
-        imeiCamera.setPadding(dp(11), dp(11), dp(11), dp(11));
-        imeiCamera.setContentDescription(LanguageManager.profileText(this, "scan_imei"));
-        imeiCamera.setOnClickListener(view -> openImeiScanner(imeiNumberField));
-        FrameLayout.LayoutParams imeiIconParams = new FrameLayout.LayoutParams(dp(46), dp(46), Gravity.END | Gravity.CENTER_VERTICAL);
-        imeiFieldFrame.addView(imeiCamera, imeiIconParams);
-        imeiFieldFrame.setOnClickListener(view -> openImeiScanner(imeiNumberField));
-        imeiFieldGroup.addView(imeiFieldFrame, new LinearLayout.LayoutParams(-1, dp(46)));
-        advancedFields.addView(imeiFieldGroup, contentParams(-1, dp(76), dp(4)));
-
-        LinearLayout serialFieldGroup = new LinearLayout(this);
-        serialFieldGroup.setOrientation(LinearLayout.VERTICAL);
-        serialFieldGroup.addView(fieldLabel(LanguageManager.profileText(this, "serial_label")), new LinearLayout.LayoutParams(-1, dp(20)));
-        FrameLayout serialFieldFrame = new FrameLayout(this);
-        serialFieldFrame.setBackground(roundWithStroke(surfaceColor(), 10, fieldBorderColor()));
-        mobileSerialField.setBackgroundColor(Color.TRANSPARENT);
-        mobileSerialField.setPadding(dp(16), dp(8), dp(48), dp(8));
-        serialFieldFrame.addView(mobileSerialField, new FrameLayout.LayoutParams(-1, dp(46)));
-        ImageView serialCamera = new ImageView(this);
-        serialCamera.setImageResource(R.drawable.ic_field_camera);
-        serialCamera.setColorFilter(accentColor());
-        serialCamera.setPadding(dp(11), dp(11), dp(11), dp(11));
-        serialCamera.setContentDescription(LanguageManager.profileText(this, "scan_serial"));
-        serialCamera.setOnClickListener(view -> openSerialScanner(mobileSerialField));
-        FrameLayout.LayoutParams serialIconParams = new FrameLayout.LayoutParams(dp(46), dp(46), Gravity.END | Gravity.CENTER_VERTICAL);
-        serialFieldFrame.addView(serialCamera, serialIconParams);
-        serialFieldFrame.setOnClickListener(view -> openSerialScanner(mobileSerialField));
-        serialFieldGroup.addView(serialFieldFrame, new LinearLayout.LayoutParams(-1, dp(46)));
-        advancedFields.addView(serialFieldGroup, contentParams(-1, dp(76), dp(4)));
-
-        LinearLayout advancedHeaderRow = new LinearLayout(this);
-        advancedHeaderRow.setOrientation(LinearLayout.HORIZONTAL);
-        advancedHeaderRow.setGravity(Gravity.CENTER_VERTICAL | Gravity.CENTER_HORIZONTAL);
-        advancedHeaderRow.setPadding(dp(12), dp(12), dp(12), dp(12));
-        advancedHeaderRow.setBackgroundColor(Color.TRANSPARENT);
-
-        TextView advancedSettingsTitle = text(LanguageManager.profileText(this, "advanced_settings"), 15, primaryTextColor(), Typeface.BOLD);
-        advancedSettingsTitle.setGravity(Gravity.CENTER_VERTICAL);
-        advancedSettingsTitle.setIncludeFontPadding(false);
-        advancedSettingsTitle.setLayoutParams(new LinearLayout.LayoutParams(-2, -2));
-
-        TextView advancedSettingsArrow = text(">", 18, primaryTextColor(), Typeface.BOLD);
-        advancedSettingsArrow.setText(advancedSettingsExpanded ? "⌃" : ">");
-        advancedSettingsArrow.setGravity(Gravity.CENTER_VERTICAL);
-        advancedSettingsArrow.setIncludeFontPadding(false);
-        advancedSettingsArrow.setPadding(dp(6), 0, 0, 0);
-        advancedSettingsArrow.setLayoutParams(new LinearLayout.LayoutParams(-2, -2));
-
-        advancedHeaderRow.addView(advancedSettingsTitle);
-        advancedHeaderRow.addView(advancedSettingsArrow);
-        advancedHeaderRow.setOnClickListener(view -> {
-            advancedSettingsExpanded = !advancedSettingsExpanded;
-            advancedFields.setVisibility(advancedSettingsExpanded ? View.VISIBLE : View.GONE);
-            advancedSettingsArrow.setText(advancedSettingsExpanded ? "⌃" : ">");
-        });
-        root.addView(advancedHeaderRow, contentParams(-1, dp(48), dp(8)));
-        root.addView(advancedFields, contentParams(-1, -2, dp(4)));
-
         EditText[] changePinCells = pinCells();
         LinearLayout pinGroup = new LinearLayout(this);
         pinGroup.setOrientation(LinearLayout.VERTICAL);
@@ -6951,8 +6521,6 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             String updatedFullName = (updatedFirstName + " " + updatedSurname).trim();
             String updatedEmail = email.getText().toString().trim();
             String updatedMobile = normalizeLocalizedDigits(mobileValue(mobileCells));
-            String updatedImeiNumber = imeiNumberField.getText().toString().trim();
-            String updatedMobileSerialNumber = mobileSerialField.getText().toString().trim();
             String selectedState = reverseLocalizedProfileValue("state", stateSearch.getText().toString().trim());
             String selectedCity = reverseLocalizedProfileValue("city", citySearch.getText().toString().trim());
             String originalState = String.valueOf(stateSearch.getTag() == null ? "" : stateSearch.getTag());
@@ -7004,8 +6572,6 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                     .putString("full_name", updatedFullName)
                     .putString("email", updatedEmail)
                     .putString("mobile", updatedMobile)
-                    .putString("imei_number", updatedImeiNumber)
-                    .putString("mobile_serial_number", updatedMobileSerialNumber)
                     .putBoolean("email_verified", verifiedEmailAddress)
                     .putBoolean("mobile_verified", verifiedMobileNumber)
                     .putString("state", selectedState)
@@ -7018,6 +6584,26 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                     updatedMobile, selectedState, selectedCity, save);
         });
         root.addView(save, contentParams(-1, dp(44), dp(10)));
+
+        TextView deleteAccount = actionButton("Delete account", false);
+        deleteAccount.setTextColor(Color.rgb(190, 55, 55));
+        deleteAccount.setOnClickListener(view -> showDeleteAccountDialog());
+        root.addView(deleteAccount, contentParams(-1, dp(44), dp(4)));
+
+        TextView privacyPolicy = actionButton("Privacy policy and data deletion", false);
+        privacyPolicy.setOnClickListener(view -> {
+            Intent intent = new Intent(
+                    Intent.ACTION_VIEW,
+                    Uri.parse(API_BASE + "/static/privacy-policy.html")
+            );
+            try {
+                startActivity(intent);
+            } catch (ActivityNotFoundException error) {
+                Log.e("PRIVACY_POLICY", "No browser is available to open the privacy policy", error);
+                Toast.makeText(this, "Could not open the privacy policy", Toast.LENGTH_LONG).show();
+            }
+        });
+        root.addView(privacyPolicy, contentParams(-1, dp(44), dp(4)));
 
         TextView home = actionButton(getString(R.string.profile_back_home), false);
         home.setOnClickListener(view -> showHome());
@@ -8043,29 +7629,13 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                 locationStatus.setText("Location permission denied");
             }
         }
-        if (requestCode == REQUEST_IMAGE_PERMISSION && grantResults.length > 0
-                && grantResults[0] == PackageManager.PERMISSION_GRANTED && pendingImageSlot >= 0) {
-            openGalleryForSlot(pendingImageSlot);
-        }
         if (requestCode == REQUEST_CAMERA_PERMISSION && grantResults.length > 0
                 && grantResults[0] == PackageManager.PERMISSION_GRANTED && pendingImageSlot >= 0) {
             openCameraForSlot(pendingImageSlot);
         }
-        if (requestCode == REQUEST_PROFILE_IMAGE && grantResults.length > 0
-                && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
-            openProfilePhotoPicker();
-        }
         if (requestCode == REQUEST_PROFILE_CAMERA && grantResults.length > 0
                 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
             openProfilePhotoCamera();
-        }
-        if (requestCode == REQUEST_IMEI_SCAN && grantResults.length > 0
-                && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
-            if (imeiScanTarget != null) {
-                openImeiScanner(imeiScanTarget);
-            } else if (serialScanTarget != null) {
-                openSerialScanner(serialScanTarget);
-            }
         }
     }
 
@@ -8127,7 +7697,6 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                         String state = account.getString("state", "");
                         String city = account.getString("city", "");
                         saveCloudProfileDocument(user, username, fullName, email, mobile, state, city, uploadedUrl, null);
-                        syncProfileToBackendApi(username, fullName, email, mobile, state, city, uploadedUrl);
                         runOnUiThread(() -> {
                             if (currentPage == PAGE_PROFILE) showProfile();
                             Toast.makeText(this, translate("Profile picture updated"), Toast.LENGTH_SHORT).show();
@@ -8181,7 +7750,6 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                             String state = account.getString("state", "");
                             String city = account.getString("city", "");
                             saveCloudProfileDocument(user, username, fullName, email, mobile, state, city, uploadedUrl, null);
-                            syncProfileToBackendApi(username, fullName, email, mobile, state, city, uploadedUrl);
                             runOnUiThread(() -> {
                                 if (currentPage == PAGE_PROFILE) showProfile();
                                 Toast.makeText(this, translate("Profile picture updated"), Toast.LENGTH_SHORT).show();
@@ -8197,43 +7765,6 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             pendingProfileCameraUri = null;
         }
 
-        if (requestCode == IntentIntegrator.REQUEST_CODE && resultCode == RESULT_OK) {
-            IntentResult scanResult = IntentIntegrator.parseActivityResult(requestCode, resultCode, data);
-            String normalized = "";
-            if (scanResult != null && scanResult.getContents() != null) {
-                String scanned = scanResult.getContents().trim();
-                if (!scanned.isEmpty()) {
-                    if (imeiScanTarget != null) {
-                        normalized = scanned.replaceAll("\\D", "");
-                        if (!normalized.isEmpty()) {
-                            normalized = normalized.length() > 15 ? normalized.substring(0, 15) : normalized;
-                        }
-                    } else if (serialScanTarget != null) {
-                        normalized = scanned.replaceAll("\\s+", " ").trim();
-                    }
-                }
-            }
-            if (!normalized.isEmpty()) {
-                if (imeiScanTarget != null) {
-                    draftImei = normalized;
-                    imeiScanTarget.setText(normalized);
-                    imeiScanTarget.setSelection(normalized.length());
-                    imeiScanTarget.setError(null);
-                } else if (serialScanTarget != null) {
-                    serialScanTarget.setText(normalized);
-                    serialScanTarget.setSelection(normalized.length());
-                    serialScanTarget.setError(null);
-                }
-            }
-            imeiScanTarget = null;
-            serialScanTarget = null;
-            if (currentPage == PAGE_PROFILE && visibleAvatar != null) {
-                refreshProfileViewInPlace(false);
-            }
-            if (currentReportType != null) {
-                showReport(currentReportType);
-            }
-        }
     }
 
     private String saveProfileBitmap(Bitmap bitmap) {
@@ -8566,7 +8097,6 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         String location = report.optString("original_report_location", report.optString("report_location", report.optString("location", ""))).trim();
         addReportDetail(details, "Location", location);
         addTranslatedReportDetail(details, "English location", report.optString("report_location", ""), location, adminView);
-        addReportDetail(details, "IMEI", report.optString("imei", report.optString("imei_number", "")));
         addReportDetail(details, "Status", report.optString("status", ""));
         double latitude = report.optDouble("lat", report.optDouble("latitude", 0.0));
         double longitude = report.optDouble("lng", report.optDouble("longitude", 0.0));
@@ -8576,7 +8106,11 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         } else {
             preciseLocation = "No location shared";
         }
-        addReportDetail(details, "Precise location", preciseLocation);
+        if (adminView && (latitude != 0.0 || longitude != 0.0)) {
+            addClickableMapReportDetail(details, "Precise location", preciseLocation, latitude, longitude);
+        } else {
+            addReportDetail(details, "Precise location", preciseLocation);
+        }
         if (adminView) {
             addReportDetail(details, "Posted", report.optString("created_at", ""));
             addReportDetail(details, "Reporter ID", report.optString("created_by", ""));
@@ -8620,6 +8154,32 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         String normalizedSource = source == null ? "" : source.trim();
         if (adminView && !normalizedValue.isEmpty() && !normalizedValue.equalsIgnoreCase(normalizedSource)) {
             addReportDetail(parent, label, normalizedValue);
+        }
+    }
+
+    private void addClickableMapReportDetail(LinearLayout parent, String label, String value, double latitude, double longitude) {
+        String content = value == null ? "" : value.trim();
+        if (content.isEmpty() || content.equalsIgnoreCase("null")) return;
+        TextView labelView = text(label, 11, secondaryTextColor(), Typeface.NORMAL);
+        labelView.setPadding(0, dp(10), 0, dp(2));
+        parent.addView(labelView, new LinearLayout.LayoutParams(-1, -2));
+
+        TextView valueView = text(content, 14, accentColor(), Typeface.NORMAL);
+        valueView.setClickable(true);
+        valueView.setFocusable(true);
+        valueView.setTextColor(accentColor());
+        valueView.setOnClickListener(view -> openReportLocationInMaps(latitude, longitude));
+        parent.addView(valueView, new LinearLayout.LayoutParams(-1, -2));
+    }
+
+    private void openReportLocationInMaps(double latitude, double longitude) {
+        String uriString = "https://www.google.com/maps/search/?api=1&query="
+                + latitude + "%2C" + longitude;
+        Uri mapUri = Uri.parse(uriString);
+        Intent mapIntent = new Intent(Intent.ACTION_VIEW, mapUri);
+        mapIntent.addCategory(Intent.CATEGORY_BROWSABLE);
+        if (mapIntent.resolveActivity(getPackageManager()) != null) {
+            startActivity(mapIntent);
         }
     }
 
@@ -8786,9 +8346,6 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
 
             String matchType = result.optString("matchType", matchedItem.optString("matchType", ""));
             double scoreForCard = result.optDouble("score", matchedItem.optDouble("score", 0.0));
-            if ("EXACT_IMEI".equalsIgnoreCase(matchType)) {
-                scoreForCard = 1.0;
-            }
 
             LinearLayout card = matchResultCard(matchedItem, scoreForCard, matchType);
             LinearLayout.LayoutParams cardParams = new LinearLayout.LayoutParams(-1, -2);
@@ -8825,13 +8382,8 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
 
         String badgeText;
         int badgeColor = GOLD;
-        if ("EXACT_IMEI".equalsIgnoreCase(matchType)) {
-            badgeText = "100% Exact IMEI Match";
-            badgeColor = LOST_GREEN;
-        } else {
-            int percent = Math.max(0, Math.min(100, Math.round((float) score * 100f)));
-            badgeText = percent + "% Visual Match";
-        }
+        int percent = Math.max(0, Math.min(100, Math.round((float) score * 100f)));
+        badgeText = percent + "% Visual Match";
 
         TextView scoreLabel = text(badgeText, 12, badgeColor == LOST_GREEN ? LOST_GREEN_ON : GOLD_ON, Typeface.NORMAL);
         scoreLabel.setGravity(Gravity.CENTER);
@@ -8866,25 +8418,27 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         title.setMaxLines(2);
         textColumn.addView(title, new LinearLayout.LayoutParams(-1, -2));
 
-        String description = matchItem.optString("description", "No description");
+        String description = matchItem.optString("description", "").trim();
         if (!description.isEmpty()) {
             TextView desc = text(description, 11, secondaryTextColor(), Typeface.NORMAL);
             desc.setMaxLines(2);
             textColumn.addView(desc, new LinearLayout.LayoutParams(-1, -2));
+        } else {
+            TextView details = text("Full details are visible only to authorized Fendly administrators.",
+                    10, secondaryTextColor(), Typeface.NORMAL);
+            details.setMaxLines(2);
+            textColumn.addView(details, new LinearLayout.LayoutParams(-1, -2));
         }
 
-        String location = matchItem.optString("report_location", matchItem.optString("location", ""));
-        if (location == null || location.trim().isEmpty()) {
-            location = String.format(Locale.US, "%.4f, %.4f", matchItem.optDouble("lat", 0.0), matchItem.optDouble("lng", 0.0));
+        String category = matchItem.optString("category", "").trim();
+        if (!category.isEmpty()) {
+            textColumn.addView(text("Category: " + category, 10, secondaryTextColor(), Typeface.NORMAL),
+                    new LinearLayout.LayoutParams(-1, -2));
         }
-        String maskedImei = matchItem.optString("imei", "");
-        if (!maskedImei.trim().isEmpty()) {
-            TextView imeiText = text("IMEI: " + maskedImei, 10, secondaryTextColor(), Typeface.NORMAL);
-            textColumn.addView(imeiText, new LinearLayout.LayoutParams(-1, -2));
-        }
-        if (!location.trim().isEmpty()) {
-            TextView locationText = text("Location: " + location, 10, secondaryTextColor(), Typeface.NORMAL);
-            textColumn.addView(locationText, new LinearLayout.LayoutParams(-1, -2));
+        String reportDate = matchItem.optString("report_date", "").trim();
+        if (!reportDate.isEmpty()) {
+            textColumn.addView(text("Reported: " + reportDate, 10, secondaryTextColor(), Typeface.NORMAL),
+                    new LinearLayout.LayoutParams(-1, -2));
         }
 
         infoRow.addView(textColumn);
@@ -9309,7 +8863,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                     }
                     updatePendingNotificationCount(pendingCount);
                     if (visibleAlerts.length() == 0) {
-                        Toast.makeText(this, pendingOnly ? "No pending matches to review" : "No match notifications", Toast.LENGTH_SHORT).show();
+                        Toast.makeText(this, pendingOnly ? "No pending admin alerts" : "No admin notifications", Toast.LENGTH_SHORT).show();
                         return;
                     }
                     showAdminAlertsDialog(visibleAlerts, token.getToken());
@@ -9336,11 +8890,11 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         iconParams.gravity = Gravity.CENTER_HORIZONTAL;
         form.addView(bellIcon, iconParams);
 
-        TextView title = text("Review match alerts", 18, primaryTextColor(), Typeface.BOLD);
+        TextView title = text("Admin alerts", 18, primaryTextColor(), Typeface.BOLD);
         title.setGravity(Gravity.CENTER);
         title.setPadding(0, dp(4), 0, dp(12));
         form.addView(title, new LinearLayout.LayoutParams(-1, -2));
-        TextView instructions = text("Compare both reports. Alerts stay pending until you confirm or reject.",
+        TextView instructions = text("Review report matches.",
             12, secondaryTextColor(), Typeface.NORMAL);
         instructions.setGravity(Gravity.CENTER);
         instructions.setPadding(0, 0, 0, dp(12));

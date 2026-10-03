@@ -3,7 +3,7 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
-from models import AdminMatchAlert, Base, UserNotification
+from models import AdminMatchAlert, Base, DeviceToken, UserNotification
 from notifications import send_match_notifications
 from routers import admin as admin_module
 from routers import users as users_module

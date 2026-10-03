@@ -1,10 +1,12 @@
+import json
 import logging
 import os
+import re
 import requests
 from html import escape
 
 import firebase_admin
-from firebase_admin import messaging
+from firebase_admin import credentials, messaging
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -13,6 +15,18 @@ from models import AdminMatchAlert, DeviceToken, FoundItem, LostItem, UserNotifi
 
 
 logger = logging.getLogger(__name__)
+
+
+def _firebase_app():
+    try:
+        return firebase_admin.get_app()
+    except ValueError:
+        service_account_json = os.getenv("FIREBASE_SERVICE_ACCOUNT_JSON")
+        if service_account_json:
+            return firebase_admin.initialize_app(
+                credentials.Certificate(json.loads(service_account_json))
+            )
+        return firebase_admin.initialize_app()
 
 
 def send_match_notifications(
@@ -47,7 +61,7 @@ def send_match_notifications(
         return 0
 
     try:
-        firebase_admin.get_app()
+        _firebase_app()
         response = messaging.send_each_for_multicast(
             messaging.MulticastMessage(
                 tokens=tokens,

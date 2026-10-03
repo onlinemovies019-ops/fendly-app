@@ -5,6 +5,7 @@ from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 import pytest
+from fastapi import HTTPException
 from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.dialects import sqlite
 from sqlalchemy import select
@@ -15,7 +16,7 @@ from models import FoundItem, LostItem, User
 from routers import admin as admin_module
 from routers import items as items_module
 from routers.items import match_items
-from schemas import ItemCreate, ItemUpdate, MatchRequest
+from schemas import ItemCreate, ItemUpdate, MatchRequest, MatchResponse
 from translation import translate_report_fields, translate_report_fields_batch
 
 
@@ -804,35 +805,29 @@ def test_admin_uid_parser_accepts_json_and_newline_lists(monkeypatch):
     assert parsed == {"uid-1", "uid-2", "uid-3"}
 
 
+@pytest.mark.parametrize("wildcard", ["*", "all", "ALL"])
+def test_admin_uid_parser_rejects_wildcard_configuration(wildcard):
+    assert admin_module._parse_admin_uids(wildcard) == set()
+
+
 @pytest.mark.asyncio
-async def test_exact_imei_match_uses_sqlalchemy_session_and_masks_imei():
-    record = LostItem(
-        id="lost-item-1",
-        created_by="user-1",
-        title="Test phone",
-        description="Lost phone",
-        category="electronics",
-        lat=19.076,
-        lng=72.8777,
-        imei="490154203237518",
-    )
+async def test_report_matching_does_not_allow_reading_another_users_report(monkeypatch):
+    monkeypatch.setenv("ADMIN_FIREBASE_UIDS", "")
     session = Mock(spec=Session)
-    session.scalars.return_value.all.return_value = [record]
+    session.scalar.return_value = SimpleNamespace(created_by="report-owner")
 
-    results = await match_items(
-        MatchRequest(imei="490154203237518", targetType="lost"),
-        session=session,
-        _="test-user",
-    )
+    with pytest.raises(HTTPException) as exc:
+        await items_module.match_items(
+            MatchRequest(lost_item_id="private-report"),
+            session=session,
+            uid="different-user",
+        )
 
-    assert session.scalars.call_count == 1
-    assert results[0]["matchType"] == "EXACT_IMEI"
-    assert results[0]["score"] == 1.0
-    assert results[0]["item"]["imei"] == "490154******518"
+    assert exc.value.status_code == 404
 
 
 @pytest.mark.asyncio
-async def test_cloudinary_image_match_uses_internal_function_and_returns_sql_report(monkeypatch):
+async def test_cloudinary_image_match_returns_limited_report_preview(monkeypatch):
     candidate = LostItem(
         id="lost-image-1",
         created_by="user-1",
@@ -841,11 +836,13 @@ async def test_cloudinary_image_match_uses_internal_function_and_returns_sql_rep
         category="other",
         lat=0,
         lng=0,
+        image_url="https://res.cloudinary.com/fendly/image/upload/wallet.jpg",
     )
     session = Mock(spec=Session)
     session.scalars.return_value.all.return_value = [candidate]
     monkeypatch.setenv("IMAGE_MATCHING_FUNCTION_URL", "https://functions.example/matchReportImages")
     monkeypatch.setenv("SUPABASE_SERVICE_ROLE_KEY", "server-only-key")
+    monkeypatch.setenv("ADMIN_FIREBASE_UIDS", "")
     calls = {}
 
     class FakeResponse:
@@ -874,12 +871,17 @@ async def test_cloudinary_image_match_uses_internal_function_and_returns_sql_rep
     results = await items_module.match_items(
         MatchRequest(imageUrl="https://res.cloudinary.com/fendly/image/upload/wallet.jpg", targetType="lost"),
         session=session,
-        _="user-1",
+        uid="user-1",
     )
 
     assert calls["endpoint"] == "https://functions.example/matchReportImages"
     assert calls["request"]["headers"]["Authorization"] == "Bearer server-only-key"
-    assert results[0]["item"].id == "lost-image-1"
+    assert results[0]["item"].title == "Blue wallet"
+    assert results[0]["item"].category == "other"
+    assert not hasattr(results[0]["item"], "description")
+    assert not hasattr(results[0]["item"], "created_by")
+    serialized = MatchResponse.model_validate(results[0]).model_dump(exclude_none=True)
+    assert set(serialized["item"]) == {"title", "category", "image_url"}
     assert results[0]["score"] == 0.91
     assert results[0]["matchType"] == "IMAGE"
 
@@ -905,9 +907,9 @@ async def test_notify_admin_of_match_persists_dashboard_alert(monkeypatch):
     with patch.object(items_module, "persist_admin_match_alert", fake_persist), patch.object(items_module, "send_admin_match_email", fake_send_admin_match_email), patch.object(items_module.asyncio, "create_task", lambda coro: coro.close() or object()):
         await items_module.notify_admin_of_match(
             session=Mock(spec=Session),
-            query_identifier="490154203237518",
+            query_identifier="Blue wallet",
             matched_items=[LostItem(id="lost-item-1", title="Test phone", created_by="u1", description="Lost phone", category="electronics", lat=0, lng=0)],
-            match_type="EXACT_IMEI",
+            match_type="IMAGE",
         )
 
     assert calls["payload"] == ("lost-item-1", "lost-item-1", 1.0)
@@ -940,15 +942,15 @@ async def test_notify_admin_of_match_uses_render_email_env_names(monkeypatch):
     with patch.object(items_module, "send_admin_match_email", fake_send_admin_match_email), patch.object(items_module.asyncio, "create_task", fake_create_task):
         await items_module.notify_admin_of_match(
             session=Mock(spec=Session),
-            query_identifier="490154203237518",
+            query_identifier="Blue wallet",
             matched_items=[{"id": "x"}],
-            match_type="EXACT_IMEI",
+            match_type="IMAGE",
         )
         await scheduled_task
 
-    assert sent["title"].startswith("EXACT_IMEI")
+    assert sent["title"].startswith("IMAGE")
     assert sent["score"] == 1.0
-    assert "490154203237518" in sent["details"]
+    assert "Blue wallet" in sent["details"]
 
 
 @pytest.mark.asyncio
@@ -969,16 +971,16 @@ async def test_notify_admin_of_match_starts_background_task_without_blocking(mon
 
     await items_module.notify_admin_of_match(
         session=Mock(spec=Session),
-        query_identifier="490154203237518",
+        query_identifier="Blue wallet",
         matched_items=[{"id": "x"}],
-        match_type="EXACT_IMEI",
+        match_type="IMAGE",
     )
 
     assert "coro" in scheduled
 
 
 @pytest.mark.asyncio
-async def test_startup_adds_imei_columns_to_existing_item_tables(monkeypatch):
+async def test_startup_adds_translation_columns_without_device_identifiers(monkeypatch):
     engine = create_engine("sqlite://")
     with engine.begin() as connection:
         connection.execute(text("CREATE TABLE lost_items (id VARCHAR(36) PRIMARY KEY)"))
@@ -992,53 +994,6 @@ async def test_startup_adds_imei_columns_to_existing_item_tables(monkeypatch):
 
     for table_name in ("lost_items", "found_items"):
         columns = {column["name"] for column in inspect(engine).get_columns(table_name)}
-        assert "imei" in columns
+        assert "imei" not in columns
         assert {"title_en", "description_en", "report_location_en", "category_en", "source_language"} <= columns
     engine.dispose()
-
-
-@pytest.mark.asyncio
-async def test_exact_imei_match_triggers_admin_alert(monkeypatch):
-    lost_item = LostItem(
-        id="lost-item-1",
-        created_by="user-1",
-        title="Lost phone",
-        description="Lost phone",
-        category="electronics",
-        lat=19.076,
-        lng=72.8777,
-        imei="490154203237518",
-    )
-    found_item = FoundItem(
-        id="found-item-1",
-        created_by="user-2",
-        title="Found phone",
-        description="Found phone",
-        category="electronics",
-        lat=19.076,
-        lng=72.8777,
-        imei="490154203237518",
-    )
-    session = Mock(spec=Session)
-    session.scalars.return_value.all.return_value = [lost_item]
-    alert_calls = []
-
-    async def fake_notify(*args, **kwargs):
-        alert_calls.append((args, kwargs))
-
-    monkeypatch.setattr(
-        items_module,
-        "notify_admin_of_match",
-        fake_notify,
-    )
-
-    results = await match_items(
-        MatchRequest(imei="490154203237518", targetType="lost"),
-        session=session,
-        _="test-user",
-    )
-
-    assert results[0]["matchType"] == "EXACT_IMEI"
-    assert results[0]["score"] == 1.0
-    assert alert_calls
-    assert alert_calls[0][0][1] == "490154203237518"

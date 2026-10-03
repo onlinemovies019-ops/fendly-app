@@ -30,13 +30,6 @@ data class UserProfile(
         "email" to email,
         "address" to address,
         "age" to age,
-        "isMobileVerified" to isMobileVerified,
-        "mobileVerified" to isMobileVerified,
-        "mobile_verified" to isMobileVerified,
-        "isEmailVerified" to isEmailVerified,
-        "emailVerified" to isEmailVerified,
-        "email_verified" to isEmailVerified,
-        "isAdmin" to isAdmin,
         "imageUrl" to (imageUrl ?: ""),
     )
 }

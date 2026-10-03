@@ -1,5 +1,6 @@
 import asyncio
 import json
+import logging
 import math
 import os
 import re
@@ -22,6 +23,7 @@ from translation import translate_report_fields, translate_report_fields_batch
 
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
+logger = logging.getLogger(__name__)
 WORD_PATTERN = re.compile(r"[a-z0-9]+")
 ENGLISH_UNAVAILABLE = "English translation unavailable"
 TEST_REPORT_MARKER = re.compile(
@@ -75,9 +77,6 @@ def _parse_admin_uids(raw_value: str | None) -> set[str]:
     value = raw_value.strip()
     if not value:
         return set()
-    if value in {"*", "all", "ALL"}:
-        return {"*"}
-
     candidates = set()
     for token in re.findall(r"[A-Za-z0-9._:-]+", value):
         if token and token.lower() not in {"all", "admin", "admins"}:
@@ -89,9 +88,9 @@ def require_admin(uid: str = Depends(get_current_user)) -> str:
     allowed = _parse_admin_uids(os.getenv("ADMIN_FIREBASE_UIDS"))
     if not allowed:
         raise HTTPException(503, "Admin access is not configured")
-    if "*" in allowed or uid in allowed:
+    if uid in allowed:
         return uid
-    print(f"[ADMIN AUTH] rejected uid={uid!r}; configured_admin_uids={sorted(allowed)[:10]}", flush=True)
+    logger.warning("Rejected request for an admin-only endpoint")
     raise HTTPException(403, "Admin access required")
 
 
@@ -273,7 +272,6 @@ async def list_all_items(
             "original_report_location": item.report_location,
             "image_url": item.image_url,
             "image_urls": item.image_urls or ([item.image_url] if item.image_url else []),
-            "imei": item.imei,
             "created_by": item.created_by,
             "created_at": item.created_at,
         }
@@ -298,7 +296,9 @@ async def list_match_alerts(
                 alert for alert in raw_alerts
                 if not (_is_dummy_text(alert.get("found_title")) or _is_dummy_text(alert.get("lost_title")))
             ]
-            return await _translate_alert_titles(alerts, session)
+            translated_alerts = await _translate_alert_titles(alerts, session)
+            translated_alerts.sort(key=lambda alert: str(alert.get("created_at") or ""), reverse=True)
+            return translated_alerts[:50]
         return raw_alerts
 
     alerts = session.scalars(
@@ -321,7 +321,9 @@ async def list_match_alerts(
         for alert in alerts
         if not (_is_dummy_text(alert.found_title) or _is_dummy_text(alert.lost_title))
     ]
-    return await _translate_alert_titles(alerts, session)
+    translated_alerts = await _translate_alert_titles(alerts, session)
+    translated_alerts.sort(key=lambda alert: str(alert.get("created_at") or ""), reverse=True)
+    return translated_alerts[:50]
 
 
 @router.post("/alerts/{alert_id}/read", status_code=204)
@@ -451,7 +453,6 @@ async def search_users_and_reports(
             "original_report_location": item.report_location,
             "image_url": item.image_url,
             "image_urls": item.image_urls or ([item.image_url] if item.image_url else []),
-            "imei": item.imei,
             "created_at": item.created_at,
         } for item_type, item in report_items)
         reports.sort(key=lambda item: item["created_at"].timestamp() if item["created_at"] else 0, reverse=True)
@@ -509,7 +510,6 @@ async def search_admin_reports(
             "original_report_location": item.report_location,
             "image_url": item.image_url,
             "image_urls": item.image_urls or ([item.image_url] if item.image_url else []),
-            "imei": item.imei,
             "created_by": item.created_by,
             "created_at": item.created_at,
         }

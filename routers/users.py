@@ -1,18 +1,299 @@
 import logging
+import hashlib
+import os
+import re
+import time
 from typing import Any
-from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import desc, func, select, update
+from pathlib import Path
+from urllib.parse import quote, unquote, urlsplit
+from fastapi import APIRouter, Depends, HTTPException, Response, status
+from sqlalchemy import delete, desc, func, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
+import firebase_admin
+from firebase_admin import auth as firebase_auth
+from firebase_admin import firestore
+import httpx
 
-from auth import get_current_user
+from auth import _firebase_app, get_current_user
 from database import get_db
-from models import User, UserNotification, UsernameReservation
+from models import (
+    DeviceToken,
+    AdminMatchAlert,
+    EmailOTPChallenge,
+    FoundItem,
+    LostItem,
+    User,
+    UserNotification,
+    UsernameReservation,
+)
+from profile_service import update_profile_record
 from schemas import ProfileUpdate, UsernameRequest
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/users", tags=["users"])
+
+
+def _photo_is_still_referenced(session: Session, photo_url: str, uid: str) -> bool:
+    other_profile = session.scalar(
+        select(User.firebase_uid)
+        .where(User.firebase_uid != uid, User.profile_photo_url == photo_url)
+        .limit(1)
+    )
+    if other_profile:
+        return True
+
+    for report in session.execute(
+        select(LostItem.created_by, LostItem.image_url, LostItem.image_urls)
+    ).all():
+        if report[0] == uid:
+            continue
+        if photo_url == report[1] or (
+            isinstance(report[2], list) and photo_url in report[2]
+        ):
+            return True
+    for report in session.execute(
+        select(FoundItem.created_by, FoundItem.image_url, FoundItem.image_urls)
+    ).all():
+        if report[0] == uid:
+            continue
+        if photo_url == report[1] or (
+            isinstance(report[2], list) and photo_url in report[2]
+        ):
+            return True
+    return False
+
+
+def _delete_profile_photo_asset(photo_url: str) -> None:
+    parsed = urlsplit(photo_url)
+    filename_pattern = re.compile(r"[0-9a-f]{32}\.(?:jpg|png|webp)")
+
+    supabase_url = os.getenv("SUPABASE_URL", "").rstrip("/")
+    bucket = os.getenv("SUPABASE_STORAGE_BUCKET", "uploads")
+    service_role_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "")
+    if supabase_url:
+        storage_base = urlsplit(supabase_url)
+        segments = [unquote(part) for part in parsed.path.split("/") if part]
+        if (
+            parsed.scheme == storage_base.scheme
+            and parsed.netloc == storage_base.netloc
+            and len(segments) == 6
+            and segments[:4] == ["storage", "v1", "object", "public"]
+            and segments[4] == bucket
+            and filename_pattern.fullmatch(segments[5])
+        ):
+            if not service_role_key:
+                raise RuntimeError("Supabase storage credentials are required to delete the profile image")
+            endpoint = f"{supabase_url}/storage/v1/object/{quote(bucket, safe='')}/{quote(segments[5], safe='')}"
+            response = httpx.delete(
+                endpoint,
+                headers={
+                    "Authorization": f"Bearer {service_role_key}",
+                    "apikey": service_role_key,
+                },
+                timeout=15.0,
+            )
+            response.raise_for_status()
+            return
+
+    public_base_url = os.getenv(
+        "PUBLIC_BASE_URL",
+        "https://fendly-api.onrender.com",
+    ).rstrip("/")
+    if public_base_url:
+        public_base = urlsplit(public_base_url)
+        segments = [unquote(part) for part in parsed.path.split("/") if part]
+        if (
+            parsed.scheme == public_base.scheme
+            and parsed.netloc == public_base.netloc
+            and len(segments) == 3
+            and segments[:2] == ["static", "uploads"]
+            and filename_pattern.fullmatch(segments[2])
+        ):
+            upload_root = Path(os.getenv("UPLOAD_DIR", "static/uploads")).resolve()
+            asset_path = (upload_root / segments[2]).resolve()
+            if asset_path.parent != upload_root:
+                raise ValueError("Profile image path is outside the upload directory")
+            asset_path.unlink(missing_ok=True)
+
+    cloudinary_cloud_name = os.getenv("CLOUDINARY_CLOUD_NAME", "")
+    if parsed.hostname == "res.cloudinary.com":
+        segments = [unquote(part) for part in parsed.path.split("/") if part]
+        if len(segments) < 5 or segments[1:3] != ["image", "upload"]:
+            raise RuntimeError("Cloudinary profile image URL could not be safely parsed")
+        url_cloud_name = segments[0]
+        if not cloudinary_cloud_name:
+            raise RuntimeError("CLOUDINARY_CLOUD_NAME is required to delete this profile image")
+        if url_cloud_name != cloudinary_cloud_name:
+            return
+
+        api_key = os.getenv("CLOUDINARY_API_KEY", "")
+        api_secret = os.getenv("CLOUDINARY_API_SECRET", "")
+        if not api_key or not api_secret:
+            raise RuntimeError("Cloudinary API credentials are required to delete this profile image")
+
+        after_upload = segments[3:]
+        version_index = next(
+            (index for index, segment in enumerate(after_upload) if re.fullmatch(r"v\d+", segment)),
+            None,
+        )
+        if version_index is None or version_index == len(after_upload) - 1:
+            raise RuntimeError("Cloudinary profile image URL has no recognized versioned public ID")
+        public_id = "/".join(after_upload[version_index + 1 :])
+        public_id = re.sub(r"\.[A-Za-z0-9]+$", "", public_id)
+        if not re.fullmatch(r"[A-Za-z0-9_.\-/]+", public_id) or ".." in public_id.split("/"):
+            raise RuntimeError("Cloudinary profile image public ID is invalid")
+
+        timestamp = int(time.time())
+        signature_input = f"public_id={public_id}&timestamp={timestamp}{api_secret}"
+        signature = hashlib.sha1(signature_input.encode("utf-8")).hexdigest()
+        response = httpx.post(
+            f"https://api.cloudinary.com/v1_1/{quote(cloudinary_cloud_name, safe='')}/image/destroy",
+            data={
+                "public_id": public_id,
+                "timestamp": timestamp,
+                "api_key": api_key,
+                "signature": signature,
+            },
+            timeout=15.0,
+        )
+        response.raise_for_status()
+        result = response.json().get("result")
+        if result not in {"ok", "not found"}:
+            raise RuntimeError("Cloudinary did not confirm deletion of the profile image")
+
+
+def _delete_firestore_account_copies(app, uid: str, email: str | None) -> None:
+    db = firestore.client(app=app)
+    user_docs = {uid}
+    for document in db.collection("users").where("uid", "==", uid).stream():
+        user_docs.add(document.id)
+    for document_id in user_docs:
+        db.collection("users").document(document_id).delete()
+
+    if email:
+        email_ref = db.collection("verified_emails").document(email.lower())
+        email_doc = email_ref.get()
+        if email_doc.exists and email_doc.get("uid") == uid:
+            email_ref.delete()
+    for email_doc in db.collection("verified_emails").where("uid", "==", uid).stream():
+        email_doc.reference.delete()
+
+    for collection_name in ("found_items", "lost_items"):
+        collection = db.collection(collection_name)
+        report_ids = set()
+        for field in ("user_id", "created_by", "uid", "userId"):
+            for document in collection.where(field, "==", uid).stream():
+                report_ids.add(document.id)
+        for report_id in report_ids:
+            collection.document(report_id).delete()
+
+
+def _delete_supabase_account_alerts(report_ids: set[str]) -> None:
+    supabase_url = os.getenv("SUPABASE_URL", "").rstrip("/")
+    service_role_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "")
+    if not supabase_url or not service_role_key or not report_ids:
+        return
+
+    encoded_ids = ",".join(f'"{report_id}"' for report_id in sorted(report_ids))
+    response = httpx.delete(
+        f"{supabase_url}/rest/v1/admin_match_alerts",
+        params={
+            "or": (
+                f"(found_item_id.in.({encoded_ids}),"
+                f"lost_item_id.in.({encoded_ids}))"
+            )
+        },
+        headers={
+            "apikey": service_role_key,
+            "Authorization": f"******",
+        },
+        timeout=15.0,
+    )
+    response.raise_for_status()
+
+
+@router.delete("/account", status_code=status.HTTP_204_NO_CONTENT)
+def delete_account(
+    response: Response,
+    session: Session = Depends(get_db),
+    uid: str = Depends(get_current_user),
+) -> Response:
+    user = session.scalar(select(User).where(User.firebase_uid == uid))
+    email = user.email if user else None
+    profile_photo_url = user.profile_photo_url if user else None
+    try:
+        lost_reports = session.scalars(
+            select(LostItem).where(LostItem.created_by == uid)
+        ).all()
+        found_reports = session.scalars(
+            select(FoundItem).where(FoundItem.created_by == uid)
+        ).all()
+        report_ids = {item.id for item in (*lost_reports, *found_reports)}
+        image_urls = {
+            url
+            for item in (*lost_reports, *found_reports)
+            for url in [
+                item.image_url,
+                *(item.image_urls if isinstance(item.image_urls, list) else []),
+            ]
+            if url
+        }
+        if profile_photo_url:
+            image_urls.add(profile_photo_url)
+        for image_url in image_urls:
+            if not _photo_is_still_referenced(session, image_url, uid):
+                _delete_profile_photo_asset(image_url)
+
+        app = _firebase_app()
+        _delete_firestore_account_copies(app, uid, email)
+        _delete_supabase_account_alerts(report_ids)
+        if report_ids:
+            session.execute(
+                delete(AdminMatchAlert).where(
+                    or_(
+                        AdminMatchAlert.found_item_id.in_(report_ids),
+                        AdminMatchAlert.lost_item_id.in_(report_ids),
+                    )
+                )
+            )
+            session.execute(
+                delete(UserNotification).where(
+                    UserNotification.found_item_id.in_(report_ids)
+                )
+            )
+        session.execute(delete(LostItem).where(LostItem.created_by == uid))
+        session.execute(delete(FoundItem).where(FoundItem.created_by == uid))
+        session.execute(delete(UserNotification).where(UserNotification.firebase_uid == uid))
+        session.execute(delete(DeviceToken).where(DeviceToken.firebase_uid == uid))
+        session.execute(delete(EmailOTPChallenge).where(EmailOTPChallenge.firebase_uid == uid))
+        session.execute(delete(UsernameReservation).where(UsernameReservation.firebase_uid == uid))
+        session.execute(delete(User).where(User.firebase_uid == uid))
+        session.flush()
+
+        session.commit()
+        try:
+            firebase_auth.delete_user(uid, app=app)
+        except firebase_auth.UserNotFoundError:
+            logger.info("Firebase Auth user was already deleted")
+    except firebase_admin.exceptions.FirebaseError as exc:
+        session.rollback()
+        logger.exception("Firebase account data deletion failed")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Account deletion could not finish; please retry",
+        ) from exc
+    except Exception as exc:
+        session.rollback()
+        logger.exception("Account deletion failed")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Account deletion could not finish; please retry",
+        ) from exc
+
+    response.status_code = status.HTTP_204_NO_CONTENT
+    return response
 
 
 @router.get("/notifications")
@@ -166,37 +447,12 @@ def update_profile(
     payload: ProfileUpdate,
     session: Session = Depends(get_db),
     uid: str = Depends(get_current_user),
-) -> dict[str, str]:
+) -> dict[str, object]:
     try:
-        user = session.scalar(select(User).where(User.firebase_uid == uid))
-        if user is None:
-            user = User(firebase_uid=uid)
-            session.add(user)
-
-        if payload.username and payload.username.strip():
-            username_value = normalize_username(payload.username)
-            user.username = username_value
-
-        if payload.full_name is not None:
-            user.full_name = payload.full_name.strip()
-        if payload.email is not None:
-            user.email = payload.email.strip().lower()
-        if payload.mobile is not None:
-            user.mobile = payload.mobile.strip()
-        if payload.state is not None:
-            user.state = payload.state.strip()
-        if payload.city is not None:
-            user.city = payload.city.strip()
-        if hasattr(payload, "profile_photo_url") and payload.profile_photo_url is not None:
-            user.profile_photo_url = payload.profile_photo_url.strip()
-        if payload.email_verified is not None:
-            user.email_verified = payload.email_verified
-        if payload.mobile_verified is not None:
-            user.mobile_verified = payload.mobile_verified
-
-        session.commit()
+        update_profile_record(session, payload, uid)
         return {"status": "saved"}
     except HTTPException:
+        session.rollback()
         raise
     except Exception as exc:
         session.rollback()
