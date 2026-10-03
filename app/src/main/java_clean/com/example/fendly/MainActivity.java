@@ -12,6 +12,7 @@ import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.Paint;
 import android.graphics.Typeface;
+import android.graphics.drawable.BitmapDrawable;
 import android.graphics.drawable.ColorDrawable;
 import android.graphics.drawable.Drawable;
 import android.content.res.ColorStateList;
@@ -131,6 +132,11 @@ import com.cloudinary.android.MediaManager;
 import com.cloudinary.android.callback.ErrorInfo;
 import com.cloudinary.android.callback.UploadCallback;
 import com.bumptech.glide.Glide;
+import com.bumptech.glide.load.DataSource;
+import com.bumptech.glide.load.engine.DiskCacheStrategy;
+import com.bumptech.glide.load.engine.GlideException;
+import com.bumptech.glide.request.RequestListener;
+import com.bumptech.glide.request.target.Target;
 import android.net.Uri;
 import android.provider.MediaStore;
 import android.provider.Settings;
@@ -3773,6 +3779,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         account.edit()
                 .remove("profile_image_uri")
                 .remove("profile_image_url")
+            .remove("profile_image_cache_url")
                 .apply();
 
         FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
@@ -5241,20 +5248,10 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                         putIfPresent(editor, "mobile", document.getString("mobile"));
                         putIfPresent(editor, "state", document.getString("state"));
                         putIfPresent(editor, "city", document.getString("city"));
-                        String cloudImage = document.getString("imageUrl");
-                        if (cloudImage == null || cloudImage.trim().isEmpty()) {
-                            cloudImage = document.getString("profile_image_url");
-                        }
-                        if (profileImageExplicitlyRemoved) {
-                            editor.remove("profile_image_url");
-                        } else if (cloudImage != null && !cloudImage.trim().isEmpty()) {
-                            editor.putString("profile_image_url", cloudImage.trim());
-                        } else {
-                            editor.remove("profile_image_url");
-                        }
-                        boolean cloudImageChanged = cloudImage != null
-                                && !cloudImage.trim().isEmpty()
-                                && !cloudImage.trim().equals(previousImageUrl);
+                        String cloudImage = syncProfileImageFromDocument(editor, account, document,
+                                "imageUrl", "profile_image_url");
+                        boolean cloudImageChanged = !cloudImage.isEmpty()
+                                && !cloudImage.equals(previousImageUrl);
 
                         boolean cloudEmailVerified = parseBooleanValue(document.get("emailVerified"))
                                 || parseBooleanValue(document.get("isEmailVerified"))
@@ -5301,6 +5298,80 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
 
     private void putIfPresent(SharedPreferences.Editor editor, String key, String value) {
         if (value != null && !value.trim().isEmpty()) editor.putString(key, value.trim());
+    }
+
+    private String syncProfileImageFromDocument(SharedPreferences.Editor editor, SharedPreferences account,
+                                                DocumentSnapshot document, String... fields) {
+        if (profileImageExplicitlyRemoved) {
+            editor.remove("profile_image_url");
+            editor.remove("profile_image_uri");
+            editor.remove("profile_image_cache_url");
+            return "";
+        }
+        boolean hasExplicitValue = false;
+        if (document != null && document.exists()) {
+            for (String field : fields) {
+                Object value = document.get(field);
+                if (value instanceof String) {
+                    hasExplicitValue = true;
+                    String imageUrl = ((String) value).trim();
+                    if (!imageUrl.isEmpty()) {
+                        clearStaleCachedProfilePhoto(editor, account, imageUrl);
+                        editor.putString("profile_image_url", imageUrl);
+                        return imageUrl;
+                    }
+                }
+            }
+        }
+        if (hasExplicitValue) {
+            editor.remove("profile_image_url");
+            editor.remove("profile_image_uri");
+            editor.remove("profile_image_cache_url");
+            return "";
+        }
+        return account.getString("profile_image_url", "").trim();
+    }
+
+    private String syncProfileImageFromJson(SharedPreferences.Editor editor, SharedPreferences account,
+                                            JSONObject profile, String... fields) {
+        if (profileImageExplicitlyRemoved) {
+            editor.remove("profile_image_url");
+            editor.remove("profile_image_uri");
+            editor.remove("profile_image_cache_url");
+            return "";
+        }
+        boolean hasExplicitValue = false;
+        if (profile != null) {
+            for (String field : fields) {
+                if (profile.has(field) && !profile.isNull(field)) {
+                    hasExplicitValue = true;
+                    String imageUrl = profile.optString(field, "").trim();
+                    if (!imageUrl.isEmpty()) {
+                        clearStaleCachedProfilePhoto(editor, account, imageUrl);
+                        editor.putString("profile_image_url", imageUrl);
+                        return imageUrl;
+                    }
+                }
+            }
+        }
+        if (hasExplicitValue) {
+            editor.remove("profile_image_url");
+            editor.remove("profile_image_uri");
+            editor.remove("profile_image_cache_url");
+            return "";
+        }
+        return account.getString("profile_image_url", "").trim();
+    }
+
+    private void clearStaleCachedProfilePhoto(SharedPreferences.Editor editor, SharedPreferences account,
+                                              String newImageUrl) {
+        String previousImageUrl = account.getString("profile_image_url", "").trim();
+        String cachedImageUrl = account.getString("profile_image_cache_url", "").trim();
+        if (!previousImageUrl.equals(newImageUrl) && !cachedImageUrl.isEmpty()
+                && cachedImageUrl.equals(previousImageUrl)) {
+            editor.remove("profile_image_uri");
+            editor.remove("profile_image_cache_url");
+        }
     }
 
     private boolean parseBooleanValue(Object val) {
@@ -5430,9 +5501,87 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
 
         Glide.with(this)
                 .load(imageUrl)
+                .diskCacheStrategy(DiskCacheStrategy.ALL)
                 .placeholder(R.drawable.ic_field_person)
                 .error(R.drawable.ic_field_person)
+                .listener(new RequestListener<Drawable>() {
+                    @Override
+                    public boolean onLoadFailed(GlideException error, Object model,
+                                                Target<Drawable> target, boolean isFirstResource) {
+                        return false;
+                    }
+
+                    @Override
+                    public boolean onResourceReady(Drawable resource, Object model,
+                                                   Target<Drawable> target, DataSource dataSource,
+                                                   boolean isFirstResource) {
+                        cacheLoadedProfilePhoto(resource, imageUrl);
+                        return false;
+                    }
+                })
                 .into(avatar);
+    }
+
+    private void cacheLoadedProfilePhoto(Drawable sourceDrawable, String imageUrl) {
+        if (sourceDrawable == null) return;
+        Bitmap cachedBitmap = null;
+        if (sourceDrawable instanceof BitmapDrawable) {
+            Bitmap sourceBitmap = ((BitmapDrawable) sourceDrawable).getBitmap();
+            try {
+                cachedBitmap = sourceBitmap.copy(Bitmap.Config.ARGB_8888, false);
+            } catch (Exception ignored) {
+                int width = sourceBitmap.getWidth();
+                int height = sourceBitmap.getHeight();
+                if (width > 0 && height > 0) {
+                    cachedBitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888);
+                    new Canvas(cachedBitmap).drawBitmap(sourceBitmap, 0, 0, null);
+                }
+            }
+        } else {
+            int width = sourceDrawable.getIntrinsicWidth();
+            int height = sourceDrawable.getIntrinsicHeight();
+            if (width <= 0 || height <= 0) {
+                width = dp(118);
+                height = dp(118);
+            }
+            float scale = Math.min(1f, 400f / Math.max(width, height));
+            width = Math.max(1, Math.round(width * scale));
+            height = Math.max(1, Math.round(height * scale));
+            cachedBitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888);
+            int left = sourceDrawable.getBounds().left;
+            int top = sourceDrawable.getBounds().top;
+            int right = sourceDrawable.getBounds().right;
+            int bottom = sourceDrawable.getBounds().bottom;
+            sourceDrawable.setBounds(0, 0, width, height);
+            sourceDrawable.draw(new Canvas(cachedBitmap));
+            sourceDrawable.setBounds(left, top, right, bottom);
+        }
+        if (cachedBitmap == null) {
+            Log.w("PROFILE_PHOTO_CACHE", "Could not convert loaded avatar to a bitmap");
+            return;
+        }
+        Bitmap bitmapForSave = cachedBitmap;
+
+        network.execute(() -> {
+            String savedPath = saveProfileBitmapToInternalStorage(bitmapForSave, "profile_photo_cache.jpg");
+            bitmapForSave.recycle();
+            if (savedPath == null) {
+                Log.w("PROFILE_PHOTO_CACHE", "Could not write avatar cache file");
+                return;
+            }
+            runOnUiThread(() -> {
+                SharedPreferences account = getSharedPreferences("fendly_account", MODE_PRIVATE);
+                String currentImageUrl = account.getString("profile_image_url", "").trim();
+                if (imageUrl.equals(currentImageUrl)) {
+                    account.edit()
+                            .putString("profile_image_uri", savedPath)
+                            .putString("profile_image_cache_url", imageUrl)
+                            .apply();
+                } else {
+                    Log.d("PROFILE_PHOTO_CACHE", "Skipped stale avatar cache after cloud URL changed");
+                }
+            });
+        });
     }
 
     private void saveCloudProfile(String username, String fullName, String email, String mobile,
@@ -5537,9 +5686,13 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
     }
 
     private String saveProfileBitmapToInternalStorage(Bitmap sourceBitmap) {
+        return saveProfileBitmapToInternalStorage(sourceBitmap, "profile_photo.jpg");
+    }
+
+    private String saveProfileBitmapToInternalStorage(Bitmap sourceBitmap, String fileName) {
         if (sourceBitmap == null) return null;
         try {
-            File file = new File(getFilesDir(), "profile_photo.jpg");
+            File file = new File(getFilesDir(), fileName);
             int width = sourceBitmap.getWidth();
             int height = sourceBitmap.getHeight();
             int maxDim = 400;
@@ -5725,7 +5878,6 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                     String surname = "";
                     String state = "";
                     String city = "";
-                    String imageUrl = "";
 
                     if (document != null && document.exists()) {
                         emailVerified = parseBooleanValue(document.get("emailVerified"))
@@ -5741,13 +5893,6 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                         surname = document.getString("surname");
                         state = document.getString("state");
                         city = document.getString("city");
-                        imageUrl = document.getString("profile_photo_url");
-                        if (imageUrl == null || imageUrl.trim().isEmpty()) {
-                            imageUrl = document.getString("imageUrl");
-                        }
-                        if (imageUrl == null || imageUrl.trim().isEmpty()) {
-                            imageUrl = document.getString("profile_image_url");
-                        }
                     }
 
                     editor.putBoolean("email_verified", emailVerified);
@@ -5773,11 +5918,8 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                     if (city != null && !city.trim().isEmpty()) {
                         editor.putString("city", city.trim());
                     }
-                    if (imageUrl != null && !imageUrl.trim().isEmpty()) {
-                        editor.putString("profile_image_url", imageUrl.trim());
-                    } else {
-                        editor.remove("profile_image_url");
-                    }
+                    syncProfileImageFromDocument(editor, account, document,
+                            "profile_photo_url", "imageUrl", "profile_image_url");
                     editor.putBoolean("created", true);
                     editor.putString("username", formatUsernameDisplay(username));
                     editor.apply();
@@ -5812,21 +5954,15 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                                     String remoteEmail = profile.optString("email", "").trim();
                                     String remoteMobile = profile.optString("mobile", "").trim();
                                     String remoteFullName = profile.optString("full_name", "").trim();
-                                    String remotePhotoUrl = profile.optString("profile_photo_url", profile.optString("imageUrl", "")).trim();
-                                    if (remotePhotoUrl.isEmpty()) {
-                                        remotePhotoUrl = profile.optString("image_url", "").trim();
-                                    }
                                     SharedPreferences.Editor backendEditor = getSharedPreferences("fendly_account", MODE_PRIVATE).edit();
                                     if (remoteEmailVerified) backendEditor.putBoolean("email_verified", true);
                                     if (remoteMobileVerified) backendEditor.putBoolean("mobile_verified", true);
                                     if (!remoteEmail.isEmpty() && !remoteEmail.endsWith("@login.fendly.app")) backendEditor.putString("email", remoteEmail);
                                     if (!remoteMobile.isEmpty()) backendEditor.putString("mobile", remoteMobile);
                                     if (!remoteFullName.isEmpty()) backendEditor.putString("full_name", remoteFullName);
-                                    if (remotePhotoUrl.isEmpty()) {
-                                        backendEditor.remove("profile_image_url");
-                                    } else {
-                                        backendEditor.putString("profile_image_url", remotePhotoUrl);
-                                    }
+                                    syncProfileImageFromJson(backendEditor,
+                                            getSharedPreferences("fendly_account", MODE_PRIVATE), profile,
+                                            "profile_photo_url", "imageUrl", "image_url");
                                     backendEditor.apply();
                                 }
                             }
@@ -5887,14 +6023,8 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                 putIfPresent(editor, "mobile", document.getString("mobile"));
                 putIfPresent(editor, "state", document.getString("state"));
                 putIfPresent(editor, "city", document.getString("city"));
-                String cloudImage = document.getString("profile_photo_url");
-                if (cloudImage == null || cloudImage.trim().isEmpty()) cloudImage = document.getString("imageUrl");
-                if (cloudImage == null || cloudImage.trim().isEmpty()) cloudImage = document.getString("profile_image_url");
-                if (cloudImage == null || cloudImage.trim().isEmpty()) {
-                    editor.remove("profile_image_url");
-                } else {
-                    editor.putString("profile_image_url", cloudImage.trim());
-                }
+                syncProfileImageFromDocument(editor, account, document,
+                        "profile_photo_url", "imageUrl", "profile_image_url");
 
                 boolean cloudEmailVerified = parseBooleanValue(document.get("emailVerified"))
                         || parseBooleanValue(document.get("isEmailVerified"))
@@ -5977,10 +6107,6 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                         String mobile = profile.optString("mobile", account.getString("mobile", "")).trim();
                         String state = profile.optString("state", account.getString("state", "")).trim();
                         String city = profile.optString("city", account.getString("city", "")).trim();
-                        String photoUrl = profile.optString("profile_photo_url", profile.optString("imageUrl", account.getString("profile_image_url", ""))).trim();
-                        if (photoUrl.isEmpty()) {
-                            photoUrl = profile.optString("image_url", "").trim();
-                        }
                         boolean emailVerified = profile.optBoolean("email_verified", account.getBoolean("email_verified", false));
                         boolean mobileVerified = profile.optBoolean("mobile_verified", account.getBoolean("mobile_verified", false));
 
@@ -5991,11 +6117,8 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                         if (!mobile.isEmpty()) editor.putString("mobile", mobile);
                         if (!state.isEmpty()) editor.putString("state", state);
                         if (!city.isEmpty()) editor.putString("city", city);
-                        if (photoUrl.isEmpty()) {
-                            editor.remove("profile_image_url");
-                        } else {
-                            editor.putString("profile_image_url", photoUrl);
-                        }
+                        syncProfileImageFromJson(editor, account, profile,
+                                "profile_photo_url", "imageUrl", "image_url");
                         if (emailVerified) editor.putBoolean("email_verified", true);
                         if (mobileVerified) editor.putBoolean("mobile_verified", true);
                         editor.apply();
@@ -6141,14 +6264,6 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         }
         String cloudState = document.getString("state");
         String cloudCity = document.getString("city");
-        String cloudImage = document.getString("profile_photo_url");
-        if (cloudImage == null || cloudImage.trim().isEmpty()) {
-            cloudImage = document.getString("imageUrl");
-        }
-        if (cloudImage == null || cloudImage.trim().isEmpty()) {
-            cloudImage = document.getString("profile_image_url");
-        }
-
         if (isVerified) editor.putBoolean("email_verified", true);
         if (mobileVerified) editor.putBoolean("mobile_verified", true);
         if (cloudEmail != null && !cloudEmail.trim().isEmpty() && !cloudEmail.endsWith("@login.fendly.app")) {
@@ -6172,11 +6287,8 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         if (cloudCity != null && !cloudCity.trim().isEmpty()) {
             editor.putString("city", cloudCity.trim());
         }
-        if (cloudImage != null && !cloudImage.trim().isEmpty()) {
-            editor.putString("profile_image_url", cloudImage.trim());
-        } else {
-            editor.remove("profile_image_url");
-        }
+        syncProfileImageFromDocument(editor, account, document,
+                "profile_photo_url", "imageUrl", "profile_image_url");
         editor.apply();
     }
 
@@ -6233,21 +6345,14 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                             String remoteEmail = profile.optString("email", "").trim();
                             String remoteMobile = profile.optString("mobile", "").trim();
                             String remoteFullName = profile.optString("full_name", "").trim();
-                            String remotePhotoUrl = profile.optString("profile_photo_url", profile.optString("imageUrl", "")).trim();
-                            if (remotePhotoUrl.isEmpty()) {
-                                remotePhotoUrl = profile.optString("image_url", "").trim();
-                            }
                             SharedPreferences.Editor backendEditor = account.edit();
                             if (remoteEmailVerified) backendEditor.putBoolean("email_verified", true);
                             if (remoteMobileVerified) backendEditor.putBoolean("mobile_verified", true);
                             if (!remoteEmail.isEmpty() && !remoteEmail.endsWith("@login.fendly.app")) backendEditor.putString("email", remoteEmail);
                             if (!remoteMobile.isEmpty()) backendEditor.putString("mobile", remoteMobile);
                             if (!remoteFullName.isEmpty()) backendEditor.putString("full_name", remoteFullName);
-                            if (remotePhotoUrl.isEmpty()) {
-                                backendEditor.remove("profile_image_url");
-                            } else {
-                                backendEditor.putString("profile_image_url", remotePhotoUrl);
-                            }
+                            syncProfileImageFromJson(backendEditor, account, profile,
+                                    "profile_photo_url", "imageUrl", "image_url");
                             backendEditor.apply();
                         }
                     }
@@ -7902,7 +8007,10 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             String savedPath = saveProfileFileToInternalStorage(imageUri);
             if (savedPath != null) {
                 SharedPreferences account = getSharedPreferences("fendly_account", MODE_PRIVATE);
-                account.edit().putString("profile_image_uri", savedPath).apply();
+                account.edit()
+                    .putString("profile_image_uri", savedPath)
+                    .remove("profile_image_cache_url")
+                    .apply();
                 FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
                 if (user != null) {
                     user.getIdToken(false).addOnSuccessListener(token -> network.execute(() -> {
@@ -7944,7 +8052,10 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                     selectedProfileImage = null;
                     profileImageExplicitlyRemoved = false;
                     SharedPreferences account = getSharedPreferences("fendly_account", MODE_PRIVATE);
-                    account.edit().putString("profile_image_uri", savedPath).apply();
+                        account.edit()
+                            .putString("profile_image_uri", savedPath)
+                            .remove("profile_image_cache_url")
+                            .apply();
 
                     FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
                     if (user != null) {
