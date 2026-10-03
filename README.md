@@ -25,7 +25,9 @@ Required environment variables:
 - `CORS_ORIGINS`: Comma-separated allowed origins. Defaults to `*`.
 - `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, and `SUPABASE_STORAGE_BUCKET`:
 	configure these to store uploads permanently in a public Supabase Storage
-	bucket. The service-role key must remain server-side only.
+	bucket and clean up matching-index data when deleting reports. The
+	service-role key must remain server-side only; report-bearing account
+	deletion fails safely if the cleanup credentials are unavailable.
 - `CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_API_KEY`, and `CLOUDINARY_API_SECRET`
 	enable deletion of Fendly-managed Cloudinary images during account/report
 	cleanup. Keep the API secret server-side only.

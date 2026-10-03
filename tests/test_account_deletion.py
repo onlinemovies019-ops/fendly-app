@@ -127,6 +127,62 @@ def test_account_deletion_removes_supabase_visual_index_and_alerts(monkeypatch):
     )
 
 
+def test_supabase_matching_cleanup_fails_when_credentials_are_missing(monkeypatch):
+    monkeypatch.delenv("SUPABASE_URL", raising=False)
+    monkeypatch.delenv("SUPABASE_SERVICE_ROLE_KEY", raising=False)
+
+    with pytest.raises(RuntimeError, match="Supabase cleanup credentials"):
+        users._delete_supabase_account_matching_data({"report-1"})
+
+
+def test_delete_account_checks_supabase_before_deleting_report_data(
+    deletion_session,
+    monkeypatch,
+):
+    uid = "firebase-delete-user"
+    deletion_session.add(
+        LostItem(
+            id="lost-1",
+            created_by=uid,
+            title="Lost bag",
+            description="Black bag",
+            lat=1.0,
+            lng=2.0,
+            image_url="https://api.example.test/static/uploads/report.jpg",
+        )
+    )
+    deletion_session.commit()
+    monkeypatch.delenv("SUPABASE_URL", raising=False)
+    monkeypatch.delenv("SUPABASE_SERVICE_ROLE_KEY", raising=False)
+    side_effects = []
+    monkeypatch.setattr(
+        users,
+        "_delete_profile_photo_asset",
+        lambda _: side_effects.append("asset"),
+    )
+    monkeypatch.setattr(
+        users,
+        "_delete_firestore_account_copies",
+        lambda *args: side_effects.append("firestore"),
+    )
+    monkeypatch.setattr(
+        users,
+        "_firebase_app",
+        lambda: side_effects.append("firebase"),
+    )
+
+    with pytest.raises(users.HTTPException) as exc_info:
+        users.delete_account(
+            response=users.Response(),
+            session=deletion_session,
+            uid=uid,
+        )
+
+    assert exc_info.value.status_code == 500
+    assert side_effects == []
+    assert deletion_session.get(LostItem, "lost-1") is not None
+
+
 def test_account_deletion_removes_owned_cloudinary_profile_photo(monkeypatch):
     requested = {}
 
@@ -168,6 +224,8 @@ def test_delete_account_removes_reports_and_related_data(
     monkeypatch,
 ):
     uid = "firebase-delete-user"
+    monkeypatch.setenv("SUPABASE_URL", "https://supabase.example.test")
+    monkeypatch.setenv("SUPABASE_SERVICE_ROLE_KEY", "test-service-key")
     deletion_session.add_all(
         [
             User(firebase_uid=uid, email="person@example.com"),

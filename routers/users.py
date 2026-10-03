@@ -190,12 +190,24 @@ def _delete_firestore_account_copies(app, uid: str, email: str | None) -> None:
             collection.document(report_id).delete()
 
 
-def _delete_supabase_account_matching_data(report_ids: set[str]) -> None:
+def _require_supabase_cleanup_config() -> tuple[str, str]:
     supabase_url = os.getenv("SUPABASE_URL", "").rstrip("/")
     service_role_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "")
-    if not supabase_url or not service_role_key or not report_ids:
+    if not supabase_url or not service_role_key:
+        raise RuntimeError(
+            "Supabase cleanup credentials are required to delete report data"
+        )
+    parsed_url = urlsplit(supabase_url)
+    if parsed_url.scheme != "https" or not parsed_url.netloc:
+        raise RuntimeError("SUPABASE_URL must be a valid HTTPS URL")
+    return supabase_url, service_role_key
+
+
+def _delete_supabase_account_matching_data(report_ids: set[str]) -> None:
+    if not report_ids:
         return
 
+    supabase_url, service_role_key = _require_supabase_cleanup_config()
     encoded_ids = ",".join(f'"{report_id}"' for report_id in sorted(report_ids))
     headers = {
         "apikey": service_role_key,
@@ -250,6 +262,8 @@ def delete_account(
         }
         if profile_photo_url:
             image_urls.add(profile_photo_url)
+        if report_ids:
+            _require_supabase_cleanup_config()
         for image_url in image_urls:
             if not _photo_is_still_referenced(session, image_url, uid):
                 _delete_profile_photo_asset(image_url)
