@@ -92,6 +92,7 @@ fun FendlyTextField(
         autoCorrect = false,
         keyboardType = KeyboardType.Text,
     ),
+    singleLine: Boolean = false,
 ) {
     OutlinedTextField(
         value = value,
@@ -107,6 +108,7 @@ fun FendlyTextField(
         },
         trailingIcon = trailingIcon,
         keyboardOptions = keyboardOptions,
+        singleLine = singleLine,
         // CORE FIX: Removed forced English locale so text style respects active app language localization
         textStyle = MaterialTheme.typography.bodyLarge.copy(
             platformStyle = PlatformTextStyle(includeFontPadding = false),

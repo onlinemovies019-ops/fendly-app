@@ -22,11 +22,14 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -46,6 +49,9 @@ import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.viewinterop.AndroidView
+import com.example.fendly.ui.theme.FendlyCard
+import com.example.fendly.ui.theme.FendlySecondaryButton
+import com.example.fendly.ui.theme.FendlyTextField
 import com.google.mlkit.vision.barcode.BarcodeScanner
 import com.google.mlkit.vision.barcode.BarcodeScannerOptions
 import com.google.mlkit.vision.barcode.BarcodeScanning
@@ -95,7 +101,7 @@ private enum class VerificationState {
 }
 
 @Composable
-fun SafeTradeCheckScreen(onBack: () -> Unit) {
+fun SafeTradeCheckScreen(onBack: () -> Unit, darkMode: Boolean) {
     var imei by remember { mutableStateOf("") }
     var state by remember { mutableStateOf(VerificationState.IDLE) }
     var responseMessage by remember { mutableStateOf("") }
@@ -135,154 +141,197 @@ fun SafeTradeCheckScreen(onBack: () -> Unit) {
 
     Surface(
         modifier = Modifier.fillMaxSize(),
-        color = Color(0xFFF7F3EE),
+        color = MaterialTheme.colorScheme.background,
     ) {
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(horizontal = 22.dp, vertical = 16.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp),
-        ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                TextButton(onClick = onBack) { Text("Back") }
-                Text(
-                    text = "SafeTrade IMEI check",
-                    style = MaterialTheme.typography.titleLarge,
-                    fontWeight = FontWeight.SemiBold,
-                )
-            }
-
-            Text(
-                text = "Check before you buy",
-                style = MaterialTheme.typography.headlineSmall,
-                fontWeight = FontWeight.Bold,
-            )
-            Text(
-                text = "Enter the 15-digit IMEI shown on the device or its box.",
-                style = MaterialTheme.typography.bodyMedium,
-                color = Color(0xFF53565C),
-            )
-
-            OutlinedTextField(
-                value = imei,
-                onValueChange = { value ->
-                    imei = value.filter { it in '0'..'9' }.take(15)
-                    state = VerificationState.IDLE
-                    responseMessage = ""
-                },
-                modifier = Modifier.fillMaxWidth(),
-                label = { Text("15-digit IMEI") },
-                placeholder = { Text("Enter IMEI") },
-                supportingText = { Text("${imei.length}/15 digits") },
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                singleLine = true,
-            )
-
-            Text(
-                text = IMEI_DISCLAIMER,
-                style = MaterialTheme.typography.bodySmall,
-                color = Color(0xFF45474D),
-            )
-
-            Button(
-                onClick = {
-                    if (cameraGranted) {
-                        scanning = true
-                    } else {
-                        cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
-                    }
-                },
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Text("Scan IMEI barcode")
-            }
-
-            if (cameraPermissionDenied) {
-                Text(
-                    text = "Camera access was denied. You can still enter the IMEI manually.",
-                    color = Color(0xFF8A4B00),
-                    style = MaterialTheme.typography.bodySmall,
-                )
-            }
-
-            Button(
-                onClick = {
-                    state = VerificationState.LOADING
-                    responseMessage = ""
-                    SafeTradeApiClient.api.verifyImei(imei).enqueue(
-                        object : Callback<ImeiVerificationResponse> {
-                            override fun onResponse(
-                                call: Call<ImeiVerificationResponse>,
-                                response: Response<ImeiVerificationResponse>,
-                            ) {
-                                val result = response.body()
-                                if (response.isSuccessful && result != null) {
-                                    state = when {
-                                        result.is_flagged -> VerificationState.FLAGGED
-                                        result.status == "CLEAN" -> VerificationState.CLEAN
-                                        else -> VerificationState.ERROR
-                                    }
-                                    responseMessage = if (state == VerificationState.ERROR) {
-                                        "The verification service returned an unexpected result."
-                                    } else {
-                                        result.message
-                                    }
-                                } else {
-                                    state = VerificationState.ERROR
-                                    responseMessage = when (response.code()) {
-                                        429 -> "Too many checks. Please wait a moment and try again."
-                                        400 -> "Enter a valid 15-digit IMEI."
-                                        else -> "Could not verify this IMEI right now. Please try again."
-                                    }
-                                }
-                            }
-
-                            override fun onFailure(call: Call<ImeiVerificationResponse>, error: Throwable) {
-                                state = VerificationState.ERROR
-                                responseMessage = "Could not connect to SafeTrade. Check your connection and try again."
-                            }
-                        },
+        Scaffold(
+            containerColor = MaterialTheme.colorScheme.background,
+            topBar = {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(MaterialTheme.colorScheme.background)
+                        .padding(start = 8.dp, end = 20.dp, top = 8.dp, bottom = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    TextButton(onClick = onBack) { Text("Back") }
+                    Text(
+                        text = "SafeTrade IMEI check",
+                        style = MaterialTheme.typography.titleLarge,
+                        color = MaterialTheme.colorScheme.onBackground,
+                        fontWeight = FontWeight.SemiBold,
                     )
-                },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(52.dp),
-                enabled = imei.length == 15 && state != VerificationState.LOADING,
-            ) {
-                if (state == VerificationState.LOADING) {
-                    CircularProgressIndicator(
-                        modifier = Modifier.size(22.dp),
-                        color = MaterialTheme.colorScheme.onPrimary,
-                        strokeWidth = 2.dp,
-                    )
-                } else {
-                    Text("Verify IMEI")
                 }
             }
+        ) { contentPadding ->
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(contentPadding)
+                    .verticalScroll(rememberScrollState())
+                    .padding(horizontal = 22.dp, vertical = 16.dp),
+                verticalArrangement = Arrangement.spacedBy(18.dp),
+            ) {
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text(
+                        text = "Check before you buy",
+                        style = MaterialTheme.typography.headlineSmall,
+                        color = MaterialTheme.colorScheme.onBackground,
+                        fontWeight = FontWeight.Bold,
+                    )
+                    Text(
+                        text = "Enter the 15-digit IMEI shown on the device or its box.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
 
-            when (state) {
-                VerificationState.CLEAN -> VerificationBanner(
-                    message = responseMessage.ifBlank {
-                        "No active loss reports were found for this device."
+                FendlyCard(modifier = Modifier.fillMaxWidth()) {
+                    FendlyTextField(
+                        value = imei,
+                        onValueChange = { value ->
+                            imei = value.filter { it in '0'..'9' }.take(15)
+                            state = VerificationState.IDLE
+                            responseMessage = ""
+                        },
+                        label = "15-digit IMEI",
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    )
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 6.dp),
+                        horizontalArrangement = Arrangement.End,
+                    ) {
+                        Text(
+                            text = "${imei.length}/15 digits",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+
+                FendlyCard(modifier = Modifier.fillMaxWidth()) {
+                    Text(
+                        text = "ABOUT THIS CHECK",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.primary,
+                        fontWeight = FontWeight.Bold,
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = IMEI_DISCLAIMER,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+
+                FendlySecondaryButton(
+                    text = "Scan IMEI barcode",
+                    onClick = {
+                        if (cameraGranted) {
+                            scanning = true
+                        } else {
+                            cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
+                        }
                     },
-                    background = Color(0xFFE3F4E8),
-                    foreground = Color(0xFF14532D),
                 )
-                VerificationState.FLAGGED -> VerificationBanner(
-                    message = "This device is currently reported missing. Do not complete purchase.",
-                    background = Color(0xFFFFE8E6),
-                    foreground = Color(0xFF8B1E18),
-                )
-                VerificationState.ERROR -> VerificationBanner(
-                    message = responseMessage,
-                    background = Color(0xFFFFF1D6),
-                    foreground = Color(0xFF6D4600),
-                )
-                VerificationState.IDLE,
-                VerificationState.LOADING -> Unit
+
+                if (cameraPermissionDenied) {
+                    Text(
+                        text = "Camera access was denied. You can still enter the IMEI manually.",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+
+                Button(
+                    onClick = {
+                        state = VerificationState.LOADING
+                        responseMessage = ""
+                        SafeTradeApiClient.api.verifyImei(imei).enqueue(
+                            object : Callback<ImeiVerificationResponse> {
+                                override fun onResponse(
+                                    call: Call<ImeiVerificationResponse>,
+                                    response: Response<ImeiVerificationResponse>,
+                                ) {
+                                    val result = response.body()
+                                    if (response.isSuccessful && result != null) {
+                                        state = when {
+                                            result.is_flagged -> VerificationState.FLAGGED
+                                            result.status == "CLEAN" -> VerificationState.CLEAN
+                                            else -> VerificationState.ERROR
+                                        }
+                                        responseMessage = if (state == VerificationState.ERROR) {
+                                            "The verification service returned an unexpected result."
+                                        } else {
+                                            result.message
+                                        }
+                                    } else {
+                                        state = VerificationState.ERROR
+                                        responseMessage = when (response.code()) {
+                                            429 -> "Too many checks. Please wait a moment and try again."
+                                            400 -> "Enter a valid 15-digit IMEI."
+                                            else -> "Could not verify this IMEI right now. Please try again."
+                                        }
+                                    }
+                                }
+
+                                override fun onFailure(
+                                    call: Call<ImeiVerificationResponse>,
+                                    error: Throwable,
+                                ) {
+                                    state = VerificationState.ERROR
+                                    responseMessage =
+                                        "Could not connect to SafeTrade. Check your connection and try again."
+                                }
+                            },
+                        )
+                    },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(52.dp),
+                    enabled = imei.length == 15 && state != VerificationState.LOADING,
+                    shape = RoundedCornerShape(26.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.primary,
+                        contentColor = MaterialTheme.colorScheme.onPrimary,
+                    ),
+                    elevation = ButtonDefaults.buttonElevation(defaultElevation = 0.dp),
+                ) {
+                    if (state == VerificationState.LOADING) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(22.dp),
+                            color = MaterialTheme.colorScheme.onPrimary,
+                            strokeWidth = 2.dp,
+                        )
+                    } else {
+                        Text("Verify IMEI")
+                    }
+                }
+
+                when (state) {
+                    VerificationState.CLEAN -> VerificationBanner(
+                        message = responseMessage.ifBlank {
+                            "No active loss reports were found for this device."
+                        },
+                        background = if (darkMode) Color(0xFF18352B) else Color(0xFFE3F4E8),
+                        foreground = if (darkMode) Color(0xFFB9E6D0) else Color(0xFF14532D),
+                    )
+                    VerificationState.FLAGGED -> VerificationBanner(
+                        message = "This device is currently reported missing. Do not complete purchase.",
+                        background = if (darkMode) Color(0xFF452522) else Color(0xFFFFE8E6),
+                        foreground = if (darkMode) Color(0xFFFFC5BE) else Color(0xFF8B1E18),
+                    )
+                    VerificationState.ERROR -> VerificationBanner(
+                        message = responseMessage,
+                        background = if (darkMode) Color(0xFF42351E) else Color(0xFFFFF1D6),
+                        foreground = if (darkMode) Color(0xFFFFD88A) else Color(0xFF6D4600),
+                    )
+                    VerificationState.IDLE,
+                    VerificationState.LOADING -> Unit
+                }
             }
         }
     }
