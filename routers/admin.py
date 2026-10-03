@@ -3,11 +3,12 @@ import json
 import math
 import os
 import re
+import time
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
-from sqlalchemy import desc, or_, select
+from sqlalchemy import desc, func, or_, select
 from sqlalchemy.orm import Session
 
 from ai_matching import create_embedding, item_text
@@ -61,6 +62,10 @@ class NotifyRequest(BaseModel):
 
 class AlertReviewRequest(BaseModel):
     decision: str = Field(pattern="^(confirmed|rejected)$")
+
+
+class SubscriptionOverrideRequest(BaseModel):
+    action: str = Field(pattern="^(add|cancel)$")
 
 
 def _parse_admin_uids(raw_value: str | None) -> set[str]:
@@ -372,6 +377,35 @@ def review_match_alert(
     return {"review_status": payload.decision}
 
 
+@router.post("/users/{uid}/subscription")
+def override_user_subscription(
+    uid: str,
+    payload: SubscriptionOverrideRequest,
+    session: Session = Depends(get_db),
+    _: str = Depends(require_admin),
+) -> dict[str, object]:
+    user = session.scalar(select(User).where(User.firebase_uid == uid))
+    if user is None:
+        raise HTTPException(404, "User not found")
+
+    now_ms = int(time.time() * 1000)
+    if payload.action == "add":
+        user.annual_subscription_expires_at = now_ms + (365 * 24 * 60 * 60 * 1000)
+        user.annual_subscription_payment_id = f"admin_override:{now_ms}"
+    else:
+        user.annual_subscription_expires_at = None
+        user.annual_subscription_payment_id = None
+
+    session.commit()
+    session.refresh(user)
+    active = user.annual_subscription_expires_at is not None and user.annual_subscription_expires_at > now_ms
+    return {
+        "uid": user.firebase_uid,
+        "active": active,
+        "expires_at": user.annual_subscription_expires_at,
+    }
+
+
 @router.get("/search")
 async def search_users_and_reports(
     q: str,
@@ -381,8 +415,20 @@ async def search_users_and_reports(
     query = q.strip().lower()
     if len(query) < 2:
         return []
+    user_conditions = [
+        User.username.ilike(f"%{query}%"),
+        User.full_name.ilike(f"%{query}%"),
+        User.email.ilike(f"%{query}%"),
+        User.mobile.ilike(f"%{query}%"),
+    ]
+    mobile_query = re.sub(r"\D", "", query)
+    if len(mobile_query) >= 2:
+        normalized_mobile = User.mobile
+        for character in ("+", " ", "-", "(", ")"):
+            normalized_mobile = func.replace(normalized_mobile, character, "")
+        user_conditions.append(normalized_mobile.ilike(f"%{mobile_query}%"))
     users = session.scalars(select(User).where(
-        or_(User.username.ilike(f"%{query}%"), User.full_name.ilike(f"%{query}%"), User.email.ilike(f"%{query}%"), User.mobile.ilike(f"%{query}%"))
+        or_(*user_conditions)
     )).all()
     results = []
     for user in users:
@@ -409,8 +455,23 @@ async def search_users_and_reports(
             "created_at": item.created_at,
         } for item_type, item in report_items)
         reports.sort(key=lambda item: item["created_at"].timestamp() if item["created_at"] else 0, reverse=True)
+        subscription_active = (
+            user.annual_subscription_expires_at is not None
+            and user.annual_subscription_expires_at > int(time.time() * 1000)
+        )
         results.append({
-            "user": {"uid": user.firebase_uid, "username": user.username, "full_name": user.full_name, "email": user.email, "mobile": user.mobile},
+            "user": {
+                "uid": user.firebase_uid,
+                "username": user.username,
+                "full_name": user.full_name,
+                "email": user.email,
+                "mobile": user.mobile,
+                "email_verified": user.email_verified,
+                "mobile_verified": user.mobile_verified,
+                "is_verified": bool(user.email_verified or user.mobile_verified),
+                "subscription_active": subscription_active,
+                "subscription_expires_at": user.annual_subscription_expires_at,
+            },
             "reports": reports,
         })
     return results

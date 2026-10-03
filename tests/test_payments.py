@@ -6,7 +6,9 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
+from models import User
 from models import Base
+from routers import admin as admin_module
 from routers import payments
 from routers.payments import PaymentVerificationRequest
 
@@ -87,3 +89,50 @@ def test_legacy_captured_payment_restores_subscription(payment_sessions, monkeyp
     assert subscription["active"] is True
     assert subscription["payment_id"] == payment_id
     assert subscription["expires_at"] > int(time.time() * 1000)
+
+
+def test_admin_subscription_override_can_activate_and_cancel_user(payment_sessions):
+    uid = "firebase-admin-override-user"
+
+    with payment_sessions() as session:
+        user = User(firebase_uid=uid, username="override-user", full_name="Override User", mobile_verified=True)
+        session.add(user)
+        session.commit()
+
+        add_result = admin_module.override_user_subscription(
+            uid=uid,
+            payload=admin_module.SubscriptionOverrideRequest(action="add"),
+            session=session,
+            _="admin-1",
+        )
+
+        assert add_result["active"] is True
+        assert add_result["expires_at"] is not None
+        assert session.get(User, user.id).annual_subscription_expires_at is not None
+
+        cancel_result = admin_module.override_user_subscription(
+            uid=uid,
+            payload=admin_module.SubscriptionOverrideRequest(action="cancel"),
+            session=session,
+            _="admin-1",
+        )
+
+        assert cancel_result["active"] is False
+        assert cancel_result["expires_at"] is None
+        assert session.get(User, user.id).annual_subscription_expires_at is None
+
+
+@pytest.mark.asyncio
+async def test_admin_user_search_matches_formatted_mobile_number(payment_sessions):
+    with payment_sessions() as session:
+        session.add(User(firebase_uid="firebase-phone-search-user", username="phone-search", mobile="+91 98765-43210"))
+        session.commit()
+
+        results = await admin_module.search_users_and_reports(
+            q="9876543210",
+            session=session,
+            _="admin-1",
+        )
+
+    assert len(results) == 1
+    assert results[0]["user"]["uid"] == "firebase-phone-search-user"

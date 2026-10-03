@@ -9866,6 +9866,17 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             adminThemeParams.setMargins(dp(6), 0, 0, 0);
             adminSettings.addView(themeButton, adminThemeParams);
 
+            TextView subscriptionOverrideButton = text("±", 18, secondaryTextColor(), Typeface.NORMAL);
+            subscriptionOverrideButton.setGravity(Gravity.CENTER);
+            subscriptionOverrideButton.setTextAlignment(View.TEXT_ALIGNMENT_CENTER);
+            subscriptionOverrideButton.setIncludeFontPadding(false);
+            subscriptionOverrideButton.setBackground(roundWithStroke(surfaceColor(), 14, borderColor()));
+            subscriptionOverrideButton.setContentDescription("Manage subscription override");
+            subscriptionOverrideButton.setOnClickListener(view -> showAdminSubscriptionOverrideDialog());
+            LinearLayout.LayoutParams adminOverrideParams = new LinearLayout.LayoutParams(dp(42), dp(42));
+            adminOverrideParams.setMargins(dp(6), 0, 0, 0);
+            adminSettings.addView(subscriptionOverrideButton, adminOverrideParams);
+
             TextView fontButton = text("A", 17, secondaryTextColor(), Typeface.NORMAL);
             fontButton.setGravity(Gravity.CENTER);
             fontButton.setTextAlignment(View.TEXT_ALIGNMENT_CENTER);
@@ -10092,6 +10103,168 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             window.setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
             window.setLayout(Math.min(getResources().getDisplayMetrics().widthPixels - dp(36), dp(360)), -2);
         }
+    }
+
+    private void showAdminSubscriptionOverrideDialog() {
+        final Dialog dialog = new Dialog(this, android.R.style.Theme_Black_NoTitleBar_Fullscreen);
+        LinearLayout root = new LinearLayout(this);
+        root.setOrientation(LinearLayout.VERTICAL);
+        root.setBackgroundColor(backgroundColor());
+        root.setPadding(dp(18), dp(18), dp(18), dp(18));
+
+        TextView title = text("Manage paid access", 18, primaryTextColor(), Typeface.BOLD);
+        title.setPadding(0, 0, 0, dp(12));
+        root.addView(title, contentParams(-1, -2, 0));
+
+        EditText queryField = field("Search by mobile or username");
+        root.addView(queryField, contentParams(-1, dp(48), dp(10)));
+
+        ScrollView scroll = new ScrollView(this);
+        scroll.setFillViewport(true);
+        LinearLayout results = new LinearLayout(this);
+        results.setOrientation(LinearLayout.VERTICAL);
+        scroll.addView(results, new FrameLayout.LayoutParams(-1, -2));
+        root.addView(scroll, contentParams(-1, dp(240), dp(10)));
+
+        TextView searchButton = text("Search", 14, primaryTextColor(), Typeface.BOLD);
+        searchButton.setGravity(Gravity.CENTER);
+        searchButton.setPadding(dp(12), dp(10), dp(12), dp(10));
+        searchButton.setBackground(roundWithStroke(accentColor(), 14, accentColor()));
+        searchButton.setTextColor(Color.BLACK);
+        searchButton.setOnClickListener(view -> searchAdminSubscriptionUsers(queryField.getText().toString().trim(), results));
+        root.addView(searchButton, contentParams(-1, dp(42), dp(10)));
+
+        TextView close = text("Close", 14, secondaryTextColor(), Typeface.BOLD);
+        close.setGravity(Gravity.CENTER);
+        close.setPadding(dp(12), dp(10), dp(12), dp(10));
+        close.setBackground(roundWithStroke(surfaceColor(), 12, borderColor()));
+        close.setOnClickListener(view -> dialog.dismiss());
+        root.addView(close, contentParams(-1, dp(42), dp(8)));
+
+        dialog.setContentView(root);
+        sizeThemedDialog(dialog);
+        dialog.show();
+    }
+
+    private void searchAdminSubscriptionUsers(String query, LinearLayout results) {
+        if (query.length() < 2) {
+            Toast.makeText(this, "Enter at least 2 characters", Toast.LENGTH_SHORT).show();
+            return;
+        }
+
+        results.removeAllViews();
+        addField(results, text("Searching...", 13, secondaryTextColor(), Typeface.NORMAL));
+
+        FirebaseAuth.getInstance().getCurrentUser().getIdToken(false).addOnSuccessListener(token -> network.execute(() -> {
+            String response = fetchAdminSearch(query, token.getToken());
+            runOnUiThread(() -> {
+                results.removeAllViews();
+                if (response == null) {
+                    addField(results, text("Search unavailable.", 14, secondaryTextColor(), Typeface.NORMAL));
+                    return;
+                }
+                try {
+                    JSONArray users = new JSONArray(response);
+                    if (users.length() == 0) {
+                        addField(results, text("No matching verified users found.", 14, secondaryTextColor(), Typeface.NORMAL));
+                        return;
+                    }
+
+                    for (int index = 0; index < users.length(); index++) {
+                        JSONObject result = users.getJSONObject(index);
+                        JSONObject user = result.optJSONObject("user");
+                        if (user == null) continue;
+                        boolean verified = user.optBoolean("mobile_verified", false)
+                                || user.optBoolean("email_verified", false)
+                                || user.optBoolean("is_verified", false);
+
+                        String userId = user.optString("uid", "");
+                        String displayName = user.optString("full_name", user.optString("username", "User"));
+                        String mobile = user.optString("mobile", "");
+                        String username = user.optString("username", "");
+                        String label = displayName + (username.isEmpty() ? "" : " · @" + username)
+                                + (mobile.isEmpty() ? "" : " · " + mobile)
+                                + (verified ? " · Verified" : " · Not verified");
+
+                        TextView userRow = text(label, 14, primaryTextColor(), Typeface.NORMAL);
+                        userRow.setPadding(dp(12), dp(12), dp(12), dp(12));
+                        userRow.setBackground(roundWithStroke(surfaceColor(), 14, borderColor()));
+                        if (verified && !userId.isEmpty()) {
+                            userRow.setOnClickListener(view -> showAdminSubscriptionActionDialog(userId, label, token.getToken()));
+                        } else {
+                            userRow.setAlpha(0.65f);
+                        }
+                        addField(results, userRow);
+                    }
+
+                    if (results.getChildCount() == 0) {
+                        addField(results, text("No matching verified users found.", 14, secondaryTextColor(), Typeface.NORMAL));
+                    }
+                } catch (Exception ignored) {
+                    addField(results, text("Search failed. Try again.", 14, secondaryTextColor(), Typeface.NORMAL));
+                }
+            });
+        }));
+    }
+
+    private void showAdminSubscriptionActionDialog(String userId, String label, String idToken) {
+        final Dialog dialog = new Dialog(this, android.R.style.Theme_Black_NoTitleBar_Fullscreen);
+        LinearLayout root = new LinearLayout(this);
+        root.setOrientation(LinearLayout.VERTICAL);
+        root.setBackgroundColor(backgroundColor());
+        root.setPadding(dp(18), dp(18), dp(18), dp(18));
+
+        TextView title = text("Paid subscription", 18, primaryTextColor(), Typeface.BOLD);
+        root.addView(title, contentParams(-1, -2, dp(8)));
+
+        TextView details = text(label, 14, secondaryTextColor(), Typeface.NORMAL);
+        details.setPadding(0, 0, 0, dp(18));
+        root.addView(details, contentParams(-1, -2, dp(8)));
+
+        LinearLayout actions = new LinearLayout(this);
+        actions.setOrientation(LinearLayout.HORIZONTAL);
+        actions.setGravity(Gravity.CENTER_VERTICAL);
+
+        TextView addButton = text("Add", 14, Color.BLACK, Typeface.BOLD);
+        addButton.setGravity(Gravity.CENTER);
+        addButton.setBackground(roundWithStroke(accentColor(), 12, accentColor()));
+        addButton.setPadding(dp(18), dp(10), dp(18), dp(10));
+        addButton.setOnClickListener(view -> {
+            dialog.dismiss();
+            updateAdminSubscriptionOverride(userId, "add", idToken);
+        });
+
+        TextView cancelButton = text("Cancel", 14, primaryTextColor(), Typeface.BOLD);
+        cancelButton.setGravity(Gravity.CENTER);
+        cancelButton.setBackground(roundWithStroke(surfaceColor(), 12, borderColor()));
+        cancelButton.setPadding(dp(18), dp(10), dp(18), dp(10));
+        cancelButton.setOnClickListener(view -> {
+            dialog.dismiss();
+            updateAdminSubscriptionOverride(userId, "cancel", idToken);
+        });
+
+        actions.addView(addButton, new LinearLayout.LayoutParams(0, -2, 1f));
+        actions.addView(cancelButton, new LinearLayout.LayoutParams(0, -2, 1f));
+        root.addView(actions, contentParams(-1, -2, dp(12)));
+
+        dialog.setContentView(root);
+        sizeThemedDialog(dialog);
+        dialog.show();
+    }
+
+    private void updateAdminSubscriptionOverride(String userId, String action, String idToken) {
+        final String encodedUid = URLEncoder.encode(userId, StandardCharsets.UTF_8);
+        final String body = "{\"action\":\"" + action + "\"}";
+        network.execute(() -> {
+            boolean success = postAuthorized("/api/admin/users/" + encodedUid + "/subscription", idToken, body);
+            runOnUiThread(() -> {
+                if (success) {
+                    Toast.makeText(this, "Subscription " + ("add".equals(action) ? "added" : "cancelled") + ".", Toast.LENGTH_LONG).show();
+                } else {
+                    Toast.makeText(this, "Unable to update subscription.", Toast.LENGTH_LONG).show();
+                }
+            });
+        });
     }
 
     private void showHowToReportDialog() {
