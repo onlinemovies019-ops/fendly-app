@@ -117,6 +117,45 @@ def _validate_media_delete_config(image_urls: set[str]) -> None:
         )
 
 
+def _validate_runtime_config(*, apply: bool) -> None:
+    if os.getenv("ENVIRONMENT", "").lower() != "production":
+        raise SystemExit("Refusing to run: ENVIRONMENT must be set to production.")
+
+    database_url = os.getenv("DATABASE_URL", "").strip()
+    parsed_database_url = urlsplit(database_url)
+    if (
+        parsed_database_url.scheme
+        not in {
+            "postgres",
+            "postgresql",
+            "postgresql+psycopg",
+            "postgresql+psycopg2",
+        }
+        or not parsed_database_url.hostname
+    ):
+        raise SystemExit(
+            "Refusing to run: set DATABASE_URL to the production PostgreSQL database."
+        )
+
+    if not apply:
+        return
+
+    missing = []
+    if not os.getenv("SUPABASE_URL") or not os.getenv("SUPABASE_SERVICE_ROLE_KEY"):
+        missing.append("SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY")
+    firebase_credentials_path = os.getenv("GOOGLE_APPLICATION_CREDENTIALS", "")
+    if not os.getenv("FIREBASE_SERVICE_ACCOUNT_JSON") and not (
+        firebase_credentials_path and os.path.isfile(firebase_credentials_path)
+    ):
+        missing.append(
+            "FIREBASE_SERVICE_ACCOUNT_JSON or a valid GOOGLE_APPLICATION_CREDENTIALS file"
+        )
+    if missing:
+        raise SystemExit(
+            "Refusing to apply purge: configure " + "; ".join(missing) + "."
+        )
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Purge historical reports retained after account deletion."
@@ -127,8 +166,7 @@ def main() -> None:
         help="perform the irreversible purge; without this flag only counts are shown",
     )
     args = parser.parse_args()
-    if os.getenv("ENVIRONMENT", "").lower() != "production":
-        raise SystemExit("Refusing to run: ENVIRONMENT must be set to production.")
+    _validate_runtime_config(apply=args.apply)
 
     from auth import _firebase_app
     from database import SessionLocal
@@ -177,11 +215,6 @@ def main() -> None:
             if image_url
         }
         _validate_media_delete_config(image_urls)
-        if not os.getenv("SUPABASE_URL") or not os.getenv("SUPABASE_SERVICE_ROLE_KEY"):
-            raise SystemExit(
-                "Refusing to purge: production Supabase cleanup credentials are missing."
-            )
-
         actual_counts = purge_account_deleted_reports(
             session,
             delete_supabase_data=_delete_supabase_account_matching_data,

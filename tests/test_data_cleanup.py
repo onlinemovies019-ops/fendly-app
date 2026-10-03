@@ -11,6 +11,7 @@ from models import (
     UserNotification,
 )
 from scripts.purge_account_deleted_reports import (
+    _validate_runtime_config,
     _validate_media_delete_config,
     purge_account_deleted_reports,
 )
@@ -131,3 +132,37 @@ def test_cloudinary_purge_requires_server_side_delete_credentials(monkeypatch):
         _validate_media_delete_config(
             {"https://res.cloudinary.com/fendly/image/upload/report.jpg"}
         )
+
+
+def test_cleanup_requires_production_environment(monkeypatch):
+    monkeypatch.delenv("ENVIRONMENT", raising=False)
+
+    with pytest.raises(SystemExit, match="ENVIRONMENT"):
+        _validate_runtime_config(apply=False)
+
+
+@pytest.mark.parametrize(
+    "database_url",
+    ["", "sqlite:///./fendly.db", "https://database.example.test"],
+)
+def test_cleanup_refuses_non_postgres_database_targets(monkeypatch, database_url):
+    monkeypatch.setenv("ENVIRONMENT", "production")
+    monkeypatch.setenv("DATABASE_URL", database_url)
+
+    with pytest.raises(SystemExit, match="production PostgreSQL"):
+        _validate_runtime_config(apply=False)
+
+
+def test_cleanup_apply_requires_provider_credentials(monkeypatch):
+    monkeypatch.setenv("ENVIRONMENT", "production")
+    monkeypatch.setenv(
+        "DATABASE_URL",
+        "postgresql://user:password@db.example.test:5432/fendly",
+    )
+    monkeypatch.delenv("SUPABASE_URL", raising=False)
+    monkeypatch.delenv("SUPABASE_SERVICE_ROLE_KEY", raising=False)
+    monkeypatch.delenv("FIREBASE_SERVICE_ACCOUNT_JSON", raising=False)
+    monkeypatch.delenv("GOOGLE_APPLICATION_CREDENTIALS", raising=False)
+
+    with pytest.raises(SystemExit, match="SUPABASE_URL"):
+        _validate_runtime_config(apply=True)

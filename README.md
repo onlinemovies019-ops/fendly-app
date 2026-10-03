@@ -84,10 +84,14 @@ moderation; without it, the backend uses its local safety blocklist.
 
 ## Purge reports retained for previously deleted accounts
 
-After deploying, run the following from the production Render Shell. The first
-command only reports counts. The second permanently removes legacy reports
-marked `account-deleted`, linked SQL/Supabase match data and notifications,
-Firestore report copies, and unshared images stored by configured providers:
+After deploying, run the following from the production Render Shell or an
+authorized local terminal configured with production credentials. The first
+command only reports counts. It requires `ENVIRONMENT=production` and a
+PostgreSQL `DATABASE_URL`; `--apply` additionally requires Firebase and
+Supabase cleanup credentials. The script refuses to use its local SQLite
+fallback. The second command permanently removes legacy reports marked
+`account-deleted`, linked SQL/Supabase match data and notifications, Firestore
+report copies, and unshared images stored by configured providers:
 
 ```bash
 python -m scripts.purge_account_deleted_reports
@@ -96,5 +100,6 @@ python -m scripts.purge_account_deleted_reports --apply
 
 The purge requires production database, Firebase, and Supabase credentials. If
 any report image is hosted in Cloudinary, configure its cloud name, API key,
-and API secret in Render before running `--apply`; the script refuses to start
-the purge when those Cloudinary credentials are missing.
+and API secret before running `--apply`; the script refuses to start the purge
+when those Cloudinary credentials are missing. Do not set only
+`ENVIRONMENT=production`, and do not use development database credentials.
