@@ -208,13 +208,11 @@ def _cors_allowed_origins() -> list[str]:
         "https://fendly-api.onrender.com",
     )
     origins = [
-        origin.strip().rstrip("/")
+        origin.strip() if origin.strip() == "*" else origin.strip().rstrip("/")
         for origin in configured.split(",")
         if origin.strip()
     ]
-    if os.getenv("ENVIRONMENT", "").lower() == "production" and "*" in origins:
-        raise RuntimeError("Wildcard CORS origins are not allowed in production")
-    return origins
+    return origins or ["https://fendly-api.onrender.com"]
 
 
 app.add_middleware(

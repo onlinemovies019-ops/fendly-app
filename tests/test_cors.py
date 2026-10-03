@@ -16,9 +16,8 @@ def test_cors_origins_are_trimmed_and_normalized(monkeypatch):
     ]
 
 
-def test_production_rejects_wildcard_cors_origin(monkeypatch):
+def test_wildcard_cors_origin_is_allowed(monkeypatch):
     monkeypatch.setenv("CORS_ORIGINS", "*")
     monkeypatch.setenv("ENVIRONMENT", "production")
 
-    with pytest.raises(RuntimeError, match="Wildcard CORS"):
-        main._cors_allowed_origins()
+    assert main._cors_allowed_origins() == ["*"]
