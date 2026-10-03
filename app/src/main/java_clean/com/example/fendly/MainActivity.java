@@ -713,7 +713,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         }
         if (currentPage == PAGE_PROFILE) {
             if (visibleFirstName != null || visibleAvatar != null || visibleEmail != null) {
-                refreshProfileViewInPlace();
+                refreshProfileViewInPlace(false);
             } else {
                 showProfile();
             }
@@ -6182,7 +6182,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
 
     private void showProfile() {
         if (currentPage == PAGE_PROFILE && (visibleFirstName != null || visibleAvatar != null || visibleEmail != null)) {
-            refreshProfileViewInPlace();
+            refreshProfileViewInPlace(true);
             return;
         }
 
@@ -6255,12 +6255,12 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                 } finally {
                     if (connection != null) connection.disconnect();
                     runOnUiThread(() -> {
-                        if (currentPage == PAGE_PROFILE) refreshProfileViewInPlace();
+                        if (currentPage == PAGE_PROFILE) refreshProfileViewInPlace(false);
                     });
                 }
             })).addOnFailureListener(err -> {
                 runOnUiThread(() -> {
-                    if (currentPage == PAGE_PROFILE) refreshProfileViewInPlace();
+                    if (currentPage == PAGE_PROFILE) refreshProfileViewInPlace(false);
                 });
             });
         };
@@ -6296,9 +6296,9 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                 });
     }
 
-    private void refreshProfileViewInPlace() {
+    private void refreshProfileViewInPlace(boolean refreshAvatar) {
         SharedPreferences account = getSharedPreferences("fendly_account", MODE_PRIVATE);
-        if (visibleAvatar != null) {
+        if (refreshAvatar && visibleAvatar != null) {
             if (profileImageExplicitlyRemoved) {
                 visibleAvatar.setImageResource(R.drawable.ic_field_person);
                 visibleAvatar.setColorFilter(accentColor());
@@ -8009,7 +8009,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             imeiScanTarget = null;
             serialScanTarget = null;
             if (currentPage == PAGE_PROFILE && visibleAvatar != null) {
-                refreshProfileViewInPlace();
+                refreshProfileViewInPlace(false);
             }
             if (currentReportType != null) {
                 showReport(currentReportType);
