@@ -712,21 +712,10 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                     .apply();
         }
         if (currentPage == PAGE_PROFILE) {
-            SharedPreferences account = getSharedPreferences("fendly_account", MODE_PRIVATE);
-            if (visibleAvatar != null) {
-                bindProfilePhoto(visibleAvatar, account);
-                if (!profileImageExplicitlyRemoved) {
-                    String imageUrl = account.getString("profile_image_url", "").trim();
-                    if (!imageUrl.isEmpty()) {
-                        loadCloudProfileImage(visibleAvatar);
-                    } else {
-                        visibleAvatar.setImageResource(R.drawable.ic_field_person);
-                        visibleAvatar.setColorFilter(accentColor());
-                        visibleAvatar.setScaleType(ImageView.ScaleType.FIT_CENTER);
-                        int pad = dp(24);
-                        visibleAvatar.setPadding(pad, pad, pad, pad);
-                    }
-                }
+            if (visibleFirstName != null || visibleAvatar != null || visibleEmail != null) {
+                refreshProfileViewInPlace();
+            } else {
+                showProfile();
             }
             return;
         }
@@ -2764,6 +2753,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
 
     private void showHome() {
         currentPage = PAGE_HOME;
+        profileScrollY = 0;
         advancedSettingsExpanded = false;
         screenRenderer = this::showHome;
         LinearLayout root = screenBase("Home");
@@ -3921,12 +3911,14 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         } else if (capturedProfileImage != null) {
             avatar.setImageBitmap(capturedProfileImage);
             hasCustomPhoto = true;
-        } else if (savedProfileUri != null && !savedProfileUri.trim().isEmpty()) {
+        }
+        if (!hasCustomPhoto && savedProfileUri != null && !savedProfileUri.trim().isEmpty()) {
             Uri uri = savedProfileUri.startsWith("/") ? Uri.fromFile(new File(savedProfileUri)) : Uri.parse(savedProfileUri);
             if (setImageFromUri(avatar, uri)) {
                 hasCustomPhoto = true;
             }
-        } else if (!cloudImageUrl.isEmpty()) {
+        }
+        if (!hasCustomPhoto && !cloudImageUrl.isEmpty()) {
             loadCloudProfileImage(avatar);
             hasCustomPhoto = true;
         }
@@ -5233,7 +5225,9 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                         return;
                     }
                     if (document != null && document.exists()) {
-                        SharedPreferences.Editor editor = getSharedPreferences("fendly_account", MODE_PRIVATE).edit();
+                        SharedPreferences account = getSharedPreferences("fendly_account", MODE_PRIVATE);
+                        String previousImageUrl = account.getString("profile_image_url", "").trim();
+                        SharedPreferences.Editor editor = account.edit();
                         String cloudUsername = document.getString("username");
                         if (cloudUsername != null && !cloudUsername.trim().isEmpty()) {
                             editor.putString("username", formatUsernameDisplay(cloudUsername));
@@ -5258,6 +5252,9 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                         } else {
                             editor.remove("profile_image_url");
                         }
+                        boolean cloudImageChanged = cloudImage != null
+                                && !cloudImage.trim().isEmpty()
+                                && !cloudImage.trim().equals(previousImageUrl);
 
                         boolean cloudEmailVerified = parseBooleanValue(document.get("emailVerified"))
                                 || parseBooleanValue(document.get("isEmailVerified"))
@@ -5288,7 +5285,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                         }
                         editor.putBoolean("mobile_verified", mobileVerifiedFinal);
                         editor.apply();
-                        if (visibleAvatar != null) {
+                        if (visibleAvatar != null && cloudImageChanged) {
                             runOnUiThread(() -> loadCloudProfileImage(visibleAvatar));
                         }
                     }
@@ -6184,6 +6181,12 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
     }
 
     private void showProfile() {
+        if (currentPage == PAGE_PROFILE && (visibleFirstName != null || visibleAvatar != null || visibleEmail != null)) {
+            refreshProfileViewInPlace();
+            return;
+        }
+
+        profileScrollY = 0;
         selectedLanguage = getSharedPreferences("fendly_language", MODE_PRIVATE)
                 .getInt("selected_language_index", 0);
         FirebaseUser currentUser = FirebaseAuth.getInstance().getCurrentUser();
@@ -6196,12 +6199,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             return;
         }
 
-        boolean alreadyShowingProfile = currentPage == PAGE_PROFILE && screenRenderer != null;
-        if (profileHydrated || alreadyShowingProfile) {
-            renderProfileContent();
-        } else {
-            showProfileLoading();
-        }
+        renderProfileContent();
         FirebaseFirestore db = FirebaseFirestore.getInstance();
         String primaryKey = getProfileDocumentKey();
         String fallbackKey = currentUser.getUid();
@@ -6256,10 +6254,14 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                 } catch (Exception ignored) {
                 } finally {
                     if (connection != null) connection.disconnect();
-                    runOnUiThread(this::renderProfileContent);
+                    runOnUiThread(() -> {
+                        if (currentPage == PAGE_PROFILE) refreshProfileViewInPlace();
+                    });
                 }
             })).addOnFailureListener(err -> {
-                runOnUiThread(this::renderProfileContent);
+                runOnUiThread(() -> {
+                    if (currentPage == PAGE_PROFILE) refreshProfileViewInPlace();
+                });
             });
         };
 
@@ -6294,10 +6296,53 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                 });
     }
 
+    private void refreshProfileViewInPlace() {
+        SharedPreferences account = getSharedPreferences("fendly_account", MODE_PRIVATE);
+        if (visibleAvatar != null) {
+            if (profileImageExplicitlyRemoved) {
+                visibleAvatar.setImageResource(R.drawable.ic_field_person);
+                visibleAvatar.setColorFilter(accentColor());
+                visibleAvatar.setScaleType(ImageView.ScaleType.FIT_CENTER);
+                int pad = dp(24);
+                visibleAvatar.setPadding(pad, pad, pad, pad);
+            } else {
+                bindProfilePhoto(visibleAvatar, account);
+            }
+        }
+
+        String firstName = account.getString("profile_first_name", "");
+        String surname = account.getString("profile_surname", "");
+        String fullName = account.getString("full_name", "");
+        if (!firstName.isEmpty() && visibleFirstName != null) {
+            setVisibleText(visibleFirstName, localizeProfileName(firstName));
+        }
+        if (visibleSurname != null) {
+            if (!surname.isEmpty()) {
+                setVisibleText(visibleSurname, localizeProfileName(surname));
+            } else if (!fullName.isEmpty()) {
+                String[] parts = getCanonicalEnglishName(fullName).split("\\s+", 2);
+                if (parts.length > 1) {
+                    setVisibleText(visibleSurname, localizeProfileName(parts[1]));
+                }
+            }
+        }
+        if (visibleEmail != null) {
+            String email = account.getString("email", "");
+            if (!email.endsWith("@login.fendly.app")) {
+                setVisibleText(visibleEmail, email);
+            }
+        }
+        if (visibleMobileCells != null) {
+            String mobile = account.getString("mobile", "").trim();
+            if (!mobile.isEmpty() && visibleMobileCells.length > 0) {
+                setMobileCells(visibleMobileCells, mobile);
+            }
+        }
+    }
+
     private void renderProfileContent() {
         FirebaseUser currentUser = FirebaseAuth.getInstance().getCurrentUser();
         SharedPreferences account = getSharedPreferences("fendly_account", MODE_PRIVATE);
-        hydrateCloudProfile(null);
         profileHydrated = true;
         cloudProfileLoaded = true;
         inRenewalPaymentFlow = false;
@@ -6334,9 +6379,6 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
 
         FrameLayout.LayoutParams avatarParams = new FrameLayout.LayoutParams(dp(118), dp(118), Gravity.CENTER);
         avatarWrap.addView(avatar, avatarParams);
-        if (!profileImageExplicitlyRemoved && !hasProfilePicture()) {
-            loadCloudProfileImage(avatar);
-        }
         LinearLayout.LayoutParams avatarLayout = new LinearLayout.LayoutParams(dp(118), dp(118));
         avatarLayout.gravity = Gravity.CENTER_HORIZONTAL;
         root.addView(avatarWrap, avatarLayout);
@@ -6805,7 +6847,6 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         scroll.setHorizontalScrollBarEnabled(false);
         if (currentPage == PAGE_PROFILE) {
             scroll.setOnScrollChangeListener((View view, int scrollX, int scrollY, int oldScrollX, int oldScrollY) -> profileScrollY = scrollY);
-            scroll.post(() -> scroll.scrollTo(0, profileScrollY));
         }
         activeContent = new LinearLayout(this);
         activeContent.setOrientation(LinearLayout.VERTICAL);
@@ -7967,6 +8008,9 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             }
             imeiScanTarget = null;
             serialScanTarget = null;
+            if (currentPage == PAGE_PROFILE && visibleAvatar != null) {
+                refreshProfileViewInPlace();
+            }
             if (currentReportType != null) {
                 showReport(currentReportType);
             }
