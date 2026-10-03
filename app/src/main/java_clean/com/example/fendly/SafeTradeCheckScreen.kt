@@ -45,6 +45,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.compose.ui.platform.LocalLifecycleOwner
@@ -146,20 +147,25 @@ fun SafeTradeCheckScreen(onBack: () -> Unit, darkMode: Boolean) {
         Scaffold(
             containerColor = MaterialTheme.colorScheme.background,
             topBar = {
-                Row(
+                Box(
                     modifier = Modifier
                         .fillMaxWidth()
                         .background(MaterialTheme.colorScheme.background)
-                        .padding(start = 8.dp, end = 20.dp, top = 8.dp, bottom = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
+                        .padding(horizontal = 8.dp, vertical = 8.dp),
                 ) {
-                    TextButton(onClick = onBack) { Text("Back") }
                     Text(
                         text = "SafeTrade IMEI check",
+                        modifier = Modifier.align(Alignment.Center),
                         style = MaterialTheme.typography.titleLarge,
                         color = MaterialTheme.colorScheme.onBackground,
                         fontWeight = FontWeight.SemiBold,
                     )
+                    TextButton(
+                        onClick = onBack,
+                        modifier = Modifier.align(Alignment.CenterStart),
+                    ) {
+                        Text("Back")
+                    }
                 }
             }
         ) { contentPadding ->
@@ -174,9 +180,11 @@ fun SafeTradeCheckScreen(onBack: () -> Unit, darkMode: Boolean) {
                 Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     Text(
                         text = "Check before you buy",
+                        modifier = Modifier.fillMaxWidth(),
                         style = MaterialTheme.typography.headlineSmall,
                         color = MaterialTheme.colorScheme.onBackground,
                         fontWeight = FontWeight.Bold,
+                        textAlign = TextAlign.Center,
                     )
                     Text(
                         text = "Enter the 15-digit IMEI shown on the device or its box.",
