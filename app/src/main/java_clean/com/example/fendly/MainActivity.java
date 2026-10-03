@@ -204,6 +204,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
     private String phoneVerificationId;
     private boolean phoneVerificationHandled;
     private String currentReportType;
+    private boolean adminEnglishUi;
 
     private String normalizePhoneNumber(String raw) {
         if (raw == null) return "";
@@ -270,6 +271,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
     private static final int PAGE_PROFILE_SETUP = 5;
     private static final int PAGE_SUBSCRIPTION = 6;
     private static final int PAGE_ADMIN = 7;
+    private static final int PAGE_ADMIN_SUBSCRIPTIONS = 8;
     private Handler adminPressHandler = new Handler();
     private boolean adminAlertsAutoShownThisVisit;
     private int pendingNotificationCount = 0;
@@ -807,6 +809,10 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
 
     @Override
     public void onBackPressed() {
+        if (currentPage == PAGE_ADMIN_SUBSCRIPTIONS) {
+            showAdminDashboard();
+            return;
+        }
         if (currentPage == PAGE_ADMIN) {
             buildScreen();
             return;
@@ -7065,6 +7071,16 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         addField(activeContent, subtitleView);
     }
 
+    private void addAdminEnglishHeading(String title, String subtitle) {
+        TextView titleView = text(title, 20, primaryTextColor(), Typeface.NORMAL);
+        titleView.setGravity(Gravity.CENTER);
+        titleView.setTypeface(localizedScriptTypeface(titleView.getText(), Typeface.NORMAL));
+        activeContent.addView(titleView, new LinearLayout.LayoutParams(-1, dp(32)));
+        TextView subtitleView = text(subtitle, 11, secondaryTextColor(), Typeface.NORMAL);
+        subtitleView.setGravity(Gravity.CENTER);
+        addField(activeContent, subtitleView);
+    }
+
     private EditText field(String hint) {
         EditText input = new EditText(this);
         if (Build.VERSION.SDK_INT >= 29) input.setForceDarkAllowed(false);
@@ -8236,6 +8252,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
 
     private void showAdminDashboard() {
         currentPage = PAGE_ADMIN;
+        adminEnglishUi = true;
         screenRenderer = this::showAdminDashboard;
         LinearLayout root = screenBase("");
         root.setGravity(Gravity.CENTER_HORIZONTAL);
@@ -8248,7 +8265,8 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         TextView adminSubtitle = text("System suggests a match. Compare reports, then confirm or reject.", 11, secondaryTextColor(), Typeface.NORMAL);
         adminSubtitle.setGravity(Gravity.CENTER_HORIZONTAL);
         adminSubtitle.setTextAlignment(View.TEXT_ALIGNMENT_CENTER);
-        root.addView(adminSubtitle, contentParams(-1, dp(22), dp(14)));
+        adminSubtitle.setMaxLines(2);
+        root.addView(adminSubtitle, contentParams(-1, dp(38), dp(14)));
 
         LinearLayout overview = new LinearLayout(this);
         overview.setOrientation(LinearLayout.HORIZONTAL);
@@ -9013,8 +9031,10 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
     }
 
     private void showAdminLoginDialog() {
+        adminEnglishUi = true;
         Dialog dialog = new Dialog(this);
         dialog.requestWindowFeature(Window.FEATURE_NO_TITLE);
+        dialog.setOnDismissListener(dialogInterface -> adminEnglishUi = false);
         EditText username = field("Admin username");
         EditText[] adminPinCells = pinCells();
         LinearLayout form = new LinearLayout(this);
@@ -9536,9 +9556,13 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         }
     }
 
+    private boolean shouldKeepAdminUiInEnglish() {
+        return adminEnglishUi || currentPage == PAGE_ADMIN || currentPage == PAGE_ADMIN_SUBSCRIPTIONS;
+    }
+
     private TextView text(String value, float size, int color, int style) {
         TextView view = new TextView(this);
-        String resolvedText = translate(value);
+        String resolvedText = shouldKeepAdminUiInEnglish() ? value : translate(value);
         view.setText(resolvedText);
         view.setTextSize(responsiveTextSize(size));
         view.setTag(Float.valueOf(size));
@@ -9872,21 +9896,10 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             subscriptionOverrideButton.setIncludeFontPadding(false);
             subscriptionOverrideButton.setBackground(roundWithStroke(surfaceColor(), 14, borderColor()));
             subscriptionOverrideButton.setContentDescription("Manage subscription override");
-            subscriptionOverrideButton.setOnClickListener(view -> showAdminSubscriptionOverrideDialog());
+            subscriptionOverrideButton.setOnClickListener(view -> showAdminSubscriptionOverridePage());
             LinearLayout.LayoutParams adminOverrideParams = new LinearLayout.LayoutParams(dp(42), dp(42));
             adminOverrideParams.setMargins(dp(6), 0, 0, 0);
             adminSettings.addView(subscriptionOverrideButton, adminOverrideParams);
-
-            TextView fontButton = text("A", 17, secondaryTextColor(), Typeface.NORMAL);
-            fontButton.setGravity(Gravity.CENTER);
-            fontButton.setTextAlignment(View.TEXT_ALIGNMENT_CENTER);
-            fontButton.setIncludeFontPadding(false);
-            fontButton.setBackground(roundWithStroke(surfaceColor(), 14, borderColor()));
-            fontButton.setContentDescription("Adjust text size");
-            fontButton.setOnClickListener(view -> showFontScaleDialog());
-            LinearLayout.LayoutParams adminFontParams = new LinearLayout.LayoutParams(dp(42), dp(42));
-            adminFontParams.setMargins(dp(6), 0, 0, 0);
-            adminSettings.addView(fontButton, adminFontParams);
 
             gearButton.setOnClickListener(view -> {
                 isExpanded[0] = !isExpanded[0];
@@ -9896,6 +9909,16 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             });
             controls.addView(gearButton, new LinearLayout.LayoutParams(dp(42), dp(42)));
             controls.addView(adminSettings, new LinearLayout.LayoutParams(-2, -2));
+        } else if (currentPage == PAGE_ADMIN_SUBSCRIPTIONS) {
+            ImageView backButton = new ImageView(this);
+            backButton.setImageResource(R.drawable.material_ic_keyboard_arrow_left_black_24dp);
+            backButton.setScaleType(ImageView.ScaleType.CENTER_INSIDE);
+            backButton.setBackground(roundWithStroke(surfaceColor(), 14, borderColor()));
+            backButton.setPadding(dp(10), dp(10), dp(10), dp(10));
+            backButton.setColorFilter(accentColor());
+            backButton.setContentDescription("Back to admin dashboard");
+            backButton.setOnClickListener(view -> showAdminDashboard());
+            controls.addView(backButton, new LinearLayout.LayoutParams(dp(42), dp(42)));
         } else {
             TextView font = text("A", 17, secondaryTextColor(), Typeface.NORMAL);
             font.setGravity(Gravity.CENTER);
@@ -10018,7 +10041,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             rightContainer.addView(linkButton, new LinearLayout.LayoutParams(dp(42), dp(42)));
 
             controls.addView(rightContainer, new LinearLayout.LayoutParams(-2, -2));
-        } else if (currentPage == PAGE_ADMIN) {
+        } else if (currentPage == PAGE_ADMIN || currentPage == PAGE_ADMIN_SUBSCRIPTIONS) {
                 View notificationIconButton = createNotificationIconButton(
                     pendingNotificationCount, true, view -> loadAdminAlerts(false));
             controls.addView(notificationIconButton, new LinearLayout.LayoutParams(-2, dp(42)));
@@ -10105,45 +10128,27 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         }
     }
 
-    private void showAdminSubscriptionOverrideDialog() {
-        final Dialog dialog = new Dialog(this, android.R.style.Theme_Black_NoTitleBar_Fullscreen);
-        LinearLayout root = new LinearLayout(this);
-        root.setOrientation(LinearLayout.VERTICAL);
-        root.setBackgroundColor(backgroundColor());
-        root.setPadding(dp(18), dp(18), dp(18), dp(18));
+    private void showAdminSubscriptionOverridePage() {
+        currentPage = PAGE_ADMIN_SUBSCRIPTIONS;
+        screenRenderer = this::showAdminSubscriptionOverridePage;
+        LinearLayout root = screenBase("");
+        addAdminEnglishHeading("Manage paid access", "Search registered users by mobile number or username");
 
-        TextView title = text("Manage paid access", 18, primaryTextColor(), Typeface.BOLD);
-        title.setPadding(0, 0, 0, dp(12));
-        root.addView(title, contentParams(-1, -2, 0));
-
-        EditText queryField = field("Search by mobile or username");
+        EditText queryField = field("Mobile number or username");
         root.addView(queryField, contentParams(-1, dp(48), dp(10)));
 
-        ScrollView scroll = new ScrollView(this);
-        scroll.setFillViewport(true);
+        TextView searchButton = actionButton("Search", true);
+        root.addView(searchButton, contentParams(-1, dp(44), dp(14)));
+
         LinearLayout results = new LinearLayout(this);
         results.setOrientation(LinearLayout.VERTICAL);
-        scroll.addView(results, new FrameLayout.LayoutParams(-1, -2));
-        root.addView(scroll, contentParams(-1, dp(240), dp(10)));
-
-        TextView searchButton = text("Search", 14, primaryTextColor(), Typeface.BOLD);
-        searchButton.setGravity(Gravity.CENTER);
-        searchButton.setPadding(dp(12), dp(10), dp(12), dp(10));
-        searchButton.setBackground(roundWithStroke(accentColor(), 14, accentColor()));
-        searchButton.setTextColor(Color.BLACK);
-        searchButton.setOnClickListener(view -> searchAdminSubscriptionUsers(queryField.getText().toString().trim(), results));
-        root.addView(searchButton, contentParams(-1, dp(42), dp(10)));
-
-        TextView close = text("Close", 14, secondaryTextColor(), Typeface.BOLD);
-        close.setGravity(Gravity.CENTER);
-        close.setPadding(dp(12), dp(10), dp(12), dp(10));
-        close.setBackground(roundWithStroke(surfaceColor(), 12, borderColor()));
-        close.setOnClickListener(view -> dialog.dismiss());
-        root.addView(close, contentParams(-1, dp(42), dp(8)));
-
-        dialog.setContentView(root);
-        sizeThemedDialog(dialog);
-        dialog.show();
+        root.addView(results, contentParams(-1, -2, 0));
+        searchButton.setOnClickListener(view -> searchAdminSubscriptionUsers(
+                queryField.getText().toString().trim(), results));
+        queryField.setOnEditorActionListener((textView, actionId, event) -> {
+            searchButton.performClick();
+            return true;
+        });
     }
 
     private void searchAdminSubscriptionUsers(String query, LinearLayout results) {
@@ -10179,6 +10184,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                                 || user.optBoolean("is_verified", false);
 
                         String userId = user.optString("uid", "");
+                        boolean paidSubscriber = user.optBoolean("subscription_active", false);
                         String displayName = user.optString("full_name", user.optString("username", "User"));
                         String mobile = user.optString("mobile", "");
                         String username = user.optString("username", "");
@@ -10190,7 +10196,8 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                         userRow.setPadding(dp(12), dp(12), dp(12), dp(12));
                         userRow.setBackground(roundWithStroke(surfaceColor(), 14, borderColor()));
                         if (verified && !userId.isEmpty()) {
-                            userRow.setOnClickListener(view -> showAdminSubscriptionActionDialog(userId, label, token.getToken()));
+                            userRow.setOnClickListener(view -> showAdminSubscriptionActionDialog(
+                                    userId, label, paidSubscriber, token.getToken()));
                         } else {
                             userRow.setAlpha(0.65f);
                         }
@@ -10207,19 +10214,35 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         }));
     }
 
-    private void showAdminSubscriptionActionDialog(String userId, String label, String idToken) {
-        final Dialog dialog = new Dialog(this, android.R.style.Theme_Black_NoTitleBar_Fullscreen);
+    private void showAdminSubscriptionActionDialog(String userId, String label, boolean paidSubscriber, String idToken) {
+        final Dialog dialog = new Dialog(this);
+        dialog.requestWindowFeature(Window.FEATURE_NO_TITLE);
+        dialog.setCanceledOnTouchOutside(true);
+
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
-        root.setBackgroundColor(backgroundColor());
-        root.setPadding(dp(18), dp(18), dp(18), dp(18));
+        root.setPadding(dp(22), dp(20), dp(22), dp(20));
+        root.setBackground(roundWithStroke(surfaceColor(), 24, borderColor()));
 
-        TextView title = text("Paid subscription", 18, primaryTextColor(), Typeface.BOLD);
-        root.addView(title, contentParams(-1, -2, dp(8)));
+        LinearLayout header = new LinearLayout(this);
+        header.setGravity(Gravity.CENTER_VERTICAL);
+        TextView title = text(paidSubscriber ? "Paid subscriber" : "Unpaid subscriber",
+            18, primaryTextColor(), Typeface.BOLD);
+        header.addView(title, new LinearLayout.LayoutParams(0, -2, 1f));
 
-        TextView details = text(label, 14, secondaryTextColor(), Typeface.NORMAL);
-        details.setPadding(0, 0, 0, dp(18));
-        root.addView(details, contentParams(-1, -2, dp(8)));
+        ImageView closeButton = new ImageView(this);
+        closeButton.setImageResource(android.R.drawable.ic_menu_close_clear_cancel);
+        closeButton.setColorFilter(primaryTextColor());
+        closeButton.setPadding(dp(8), dp(8), dp(8), dp(8));
+        closeButton.setBackground(roundWithStroke(backgroundColor(), 18, borderColor()));
+        closeButton.setContentDescription("Close");
+        closeButton.setOnClickListener(view -> dialog.dismiss());
+        header.addView(closeButton, new LinearLayout.LayoutParams(dp(38), dp(38)));
+        root.addView(header, new LinearLayout.LayoutParams(-1, -2));
+
+        TextView details = text("Manage paid access for " + label, 14, secondaryTextColor(), Typeface.NORMAL);
+        details.setPadding(0, dp(12), 0, dp(20));
+        root.addView(details, new LinearLayout.LayoutParams(-1, -2));
 
         LinearLayout actions = new LinearLayout(this);
         actions.setOrientation(LinearLayout.HORIZONTAL);
@@ -10243,13 +10266,19 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             updateAdminSubscriptionOverride(userId, "cancel", idToken);
         });
 
-        actions.addView(addButton, new LinearLayout.LayoutParams(0, -2, 1f));
-        actions.addView(cancelButton, new LinearLayout.LayoutParams(0, -2, 1f));
-        root.addView(actions, contentParams(-1, -2, dp(12)));
+        LinearLayout.LayoutParams addParams = new LinearLayout.LayoutParams(0, dp(44), 1f);
+        addParams.setMargins(0, 0, dp(8), 0);
+        actions.addView(addButton, addParams);
+        actions.addView(cancelButton, new LinearLayout.LayoutParams(0, dp(44), 1f));
+        root.addView(actions, new LinearLayout.LayoutParams(-1, -2));
 
         dialog.setContentView(root);
-        sizeThemedDialog(dialog);
         dialog.show();
+        Window window = dialog.getWindow();
+        if (window != null) {
+            window.setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
+            window.setLayout(Math.min(getResources().getDisplayMetrics().widthPixels - dp(36), dp(360)), -2);
+        }
     }
 
     private void updateAdminSubscriptionOverride(String userId, String action, String idToken) {
