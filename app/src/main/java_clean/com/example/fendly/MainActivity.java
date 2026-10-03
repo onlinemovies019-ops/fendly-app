@@ -60,6 +60,10 @@ import android.widget.ArrayAdapter;
 import android.widget.AdapterView;
 import android.widget.ListView;
 import android.widget.Toast;
+import android.webkit.WebResourceRequest;
+import android.webkit.WebSettings;
+import android.webkit.WebView;
+import android.webkit.WebViewClient;
 import android.speech.tts.TextToSpeech;
 import android.text.Editable;
 import android.text.InputType;
@@ -6591,24 +6595,103 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         root.addView(deleteAccount, contentParams(-1, dp(44), dp(4)));
 
         TextView privacyPolicy = actionButton("Privacy policy and data deletion", false);
-        privacyPolicy.setOnClickListener(view -> {
-            Intent intent = new Intent(
-                    Intent.ACTION_VIEW,
-                    Uri.parse(API_BASE + "/static/privacy-policy.html")
-            );
-            try {
-                startActivity(intent);
-            } catch (ActivityNotFoundException error) {
-                Log.e("PRIVACY_POLICY", "No browser is available to open the privacy policy", error);
-                Toast.makeText(this, "Could not open the privacy policy", Toast.LENGTH_LONG).show();
-            }
-        });
+        privacyPolicy.setOnClickListener(view -> showPrivacyPolicyDialog());
         root.addView(privacyPolicy, contentParams(-1, dp(44), dp(4)));
 
         TextView home = actionButton(getString(R.string.profile_back_home), false);
         home.setOnClickListener(view -> showHome());
         addField(root, home);
         applyProfileFont(root);
+    }
+
+    private void showPrivacyPolicyDialog() {
+        Dialog dialog = new Dialog(this);
+        dialog.requestWindowFeature(Window.FEATURE_NO_TITLE);
+        LinearLayout content = themedDialogContent(
+                0,
+                "Privacy policy and data deletion",
+                "Current policy and data deletion information."
+        );
+
+        FrameLayout policyContainer = new FrameLayout(this);
+        policyContainer.setBackground(roundWithStroke(surfaceColor(), 12, borderColor()));
+        WebView policyView = new WebView(this);
+        policyView.setBackgroundColor(surfaceColor());
+        WebSettings settings = policyView.getSettings();
+        settings.setJavaScriptEnabled(false);
+        settings.setAllowFileAccess(false);
+        settings.setAllowContentAccess(false);
+        settings.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);
+        policyContainer.addView(policyView, new FrameLayout.LayoutParams(-1, -1));
+
+        TextView loadError = text(
+                "Could not load the policy. Check your internet connection and try again.",
+                13,
+                secondaryTextColor(),
+                Typeface.NORMAL
+        );
+        loadError.setGravity(Gravity.CENTER);
+        loadError.setVisibility(View.GONE);
+        policyContainer.addView(loadError, new FrameLayout.LayoutParams(-1, -1));
+        policyView.setWebViewClient(new WebViewClient() {
+            @Override
+            public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
+                return handlePrivacyPolicyNavigation(request.getUrl());
+            }
+
+            @Override
+            public boolean shouldOverrideUrlLoading(WebView view, String url) {
+                return handlePrivacyPolicyNavigation(Uri.parse(url));
+            }
+
+            @Override
+            public void onReceivedError(
+                    WebView view,
+                    WebResourceRequest request,
+                    android.webkit.WebResourceError error
+            ) {
+                if (request.isForMainFrame()) {
+                    policyView.setVisibility(View.GONE);
+                    loadError.setVisibility(View.VISIBLE);
+                }
+            }
+        });
+
+        int availableHeight = getResources().getDisplayMetrics().heightPixels - dp(250);
+        int policyHeight = Math.max(dp(280), Math.min(dp(520), availableHeight));
+        LinearLayout.LayoutParams policyParams = new LinearLayout.LayoutParams(-1, policyHeight);
+        policyParams.setMargins(0, dp(8), 0, dp(10));
+        content.addView(policyContainer, policyParams);
+
+        TextView close = actionButton("Close", true);
+        close.setOnClickListener(view -> dialog.dismiss());
+        content.addView(close, new LinearLayout.LayoutParams(-1, dp(44)));
+
+        dialog.setContentView(content);
+        dialog.setCanceledOnTouchOutside(true);
+        dialog.show();
+        sizeThemedDialog(dialog);
+        policyView.loadUrl(API_BASE + "/static/privacy-policy.html");
+    }
+
+    private boolean handlePrivacyPolicyNavigation(Uri uri) {
+        if ("https".equalsIgnoreCase(uri.getScheme())
+                && "fendly-api.onrender.com".equalsIgnoreCase(uri.getHost())) {
+            return false;
+        }
+        if (!"https".equalsIgnoreCase(uri.getScheme())
+                && !"mailto".equalsIgnoreCase(uri.getScheme())
+                && !"tel".equalsIgnoreCase(uri.getScheme())) {
+            Log.w("PRIVACY_POLICY", "Blocked unsupported policy link scheme");
+            return true;
+        }
+        try {
+            startActivity(new Intent(Intent.ACTION_VIEW, uri));
+        } catch (ActivityNotFoundException error) {
+            Log.e("PRIVACY_POLICY", "No app is available to open the policy link", error);
+            Toast.makeText(this, "Could not open this link", Toast.LENGTH_LONG).show();
+        }
+        return true;
     }
 
     private LinearLayout screenBase(String title) {
