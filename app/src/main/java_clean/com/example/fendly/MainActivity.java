@@ -286,6 +286,9 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
     private TextView visibleEmailVerify;
     private ImageView visibleAvatar;
     private TextToSpeech ttsEngine;
+    private boolean ttsReady;
+    private String pendingGuideSpeech;
+    private ImageView pendingGuidePlayButton;
     private EditText[] visibleMobileCells;
     private final Handler realtimeProfileHandler = new Handler(Looper.getMainLooper());
     private Runnable realtimeProfileSave;
@@ -483,8 +486,10 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         if (cloudProfileListener != null) cloudProfileListener.remove();
         if (realtimeProfileSave != null) realtimeProfileHandler.removeCallbacks(realtimeProfileSave);
         if (ttsEngine != null) {
-            ttsEngine.stop();
+            stopGuideSpeech();
             ttsEngine.shutdown();
+            ttsEngine = null;
+            ttsReady = false;
         }
         network.shutdownNow();
         super.onDestroy();
@@ -493,8 +498,27 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
     private void initTts() {
         if (ttsEngine == null) {
             ttsEngine = new TextToSpeech(this, status -> {
+                if (isFinishing() || isDestroyed()) return;
                 if (status == TextToSpeech.SUCCESS) {
-                    ttsEngine.setLanguage(Locale.getDefault());
+                    ttsReady = true;
+                    String pendingText = pendingGuideSpeech;
+                    ImageView pendingButton = pendingGuidePlayButton;
+                    pendingGuideSpeech = null;
+                    pendingGuidePlayButton = null;
+                    if (pendingText != null && pendingButton != null) {
+                        speakGuideNow(pendingText, pendingButton);
+                    }
+                } else {
+                    ttsReady = false;
+                    pendingGuideSpeech = null;
+                    if (pendingGuidePlayButton != null) {
+                        pendingGuidePlayButton.setImageResource(android.R.drawable.ic_media_play);
+                        pendingGuidePlayButton = null;
+                    }
+                    if (ttsEngine != null) {
+                        ttsEngine.shutdown();
+                        ttsEngine = null;
+                    }
                 }
             });
         }
@@ -516,31 +540,59 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
     }
 
     private void speakOrStop(String textToSpeak, ImageView playPauseIcon) {
-        initTts();
-        if (ttsEngine == null) return;
+        if (!ttsReady) {
+            if (pendingGuidePlayButton == playPauseIcon) {
+                stopGuideSpeech();
+                playPauseIcon.setImageResource(android.R.drawable.ic_media_play);
+                return;
+            }
+            if (pendingGuidePlayButton != null) {
+                pendingGuidePlayButton.setImageResource(android.R.drawable.ic_media_play);
+            }
+            pendingGuideSpeech = textToSpeak;
+            pendingGuidePlayButton = playPauseIcon;
+            playPauseIcon.setImageResource(android.R.drawable.ic_media_pause);
+            initTts();
+            return;
+        }
         if (ttsEngine.isSpeaking()) {
             ttsEngine.stop();
             playPauseIcon.setImageResource(android.R.drawable.ic_media_play);
-        } else {
-            Locale targetLocale = getTtsLocaleForSelectedLanguage();
-            int result = ttsEngine.setLanguage(targetLocale);
-            if (result == TextToSpeech.LANG_MISSING_DATA || result == TextToSpeech.LANG_NOT_SUPPORTED) {
-                ttsEngine.setLanguage(Locale.ENGLISH);
-            }
-            ttsEngine.speak(textToSpeak, TextToSpeech.QUEUE_FLUSH, null, "GuideVoice");
-            playPauseIcon.setImageResource(android.R.drawable.ic_media_pause);
-            if (Build.VERSION.SDK_INT >= 21) {
-                ttsEngine.setOnUtteranceProgressListener(new UtteranceProgressListener() {
-                    @Override public void onStart(String utteranceId) {}
-                    @Override public void onDone(String utteranceId) {
-                        runOnUiThread(() -> playPauseIcon.setImageResource(android.R.drawable.ic_media_play));
-                    }
-                    @Override public void onError(String utteranceId) {
-                        runOnUiThread(() -> playPauseIcon.setImageResource(android.R.drawable.ic_media_play));
-                    }
-                });
-            }
+            return;
         }
+        speakGuideNow(textToSpeak, playPauseIcon);
+    }
+
+    private void speakGuideNow(String textToSpeak, ImageView playPauseIcon) {
+        if (ttsEngine == null || !ttsReady) return;
+        Locale targetLocale = getTtsLocaleForSelectedLanguage();
+        int result = ttsEngine.setLanguage(targetLocale);
+        if (result == TextToSpeech.LANG_MISSING_DATA || result == TextToSpeech.LANG_NOT_SUPPORTED) {
+            ttsEngine.setLanguage(Locale.ENGLISH);
+        }
+        if (Build.VERSION.SDK_INT >= 21) {
+            ttsEngine.setOnUtteranceProgressListener(new UtteranceProgressListener() {
+                @Override public void onStart(String utteranceId) {}
+                @Override public void onDone(String utteranceId) {
+                    runOnUiThread(() -> playPauseIcon.setImageResource(android.R.drawable.ic_media_play));
+                }
+                @Override public void onError(String utteranceId) {
+                    runOnUiThread(() -> playPauseIcon.setImageResource(android.R.drawable.ic_media_play));
+                }
+            });
+        }
+        int speakResult = ttsEngine.speak(textToSpeak, TextToSpeech.QUEUE_FLUSH, null, "GuideVoice");
+        playPauseIcon.setImageResource(speakResult == TextToSpeech.ERROR
+                ? android.R.drawable.ic_media_play : android.R.drawable.ic_media_pause);
+    }
+
+    private void stopGuideSpeech() {
+        if (pendingGuidePlayButton != null) {
+            pendingGuidePlayButton.setImageResource(android.R.drawable.ic_media_play);
+        }
+        pendingGuidePlayButton = null;
+        pendingGuideSpeech = null;
+        if (ttsEngine != null) ttsEngine.stop();
     }
 
     private String translateHowToReportTitle() {
@@ -659,7 +711,26 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                     .remove("draft_city")
                     .apply();
         }
-        if ((currentPage == PAGE_PROFILE || currentPage == PAGE_PROFILE_SETUP) && screenRenderer != null) {
+        if (currentPage == PAGE_PROFILE) {
+            SharedPreferences account = getSharedPreferences("fendly_account", MODE_PRIVATE);
+            if (visibleAvatar != null) {
+                bindProfilePhoto(visibleAvatar, account);
+                if (!profileImageExplicitlyRemoved) {
+                    String imageUrl = account.getString("profile_image_url", "").trim();
+                    if (!imageUrl.isEmpty()) {
+                        loadCloudProfileImage(visibleAvatar);
+                    } else {
+                        visibleAvatar.setImageResource(R.drawable.ic_field_person);
+                        visibleAvatar.setColorFilter(accentColor());
+                        visibleAvatar.setScaleType(ImageView.ScaleType.FIT_CENTER);
+                        int pad = dp(24);
+                        visibleAvatar.setPadding(pad, pad, pad, pad);
+                    }
+                }
+            }
+            return;
+        }
+        if (currentPage == PAGE_PROFILE_SETUP && screenRenderer != null) {
             screenRenderer.run();
         }
     }
@@ -5640,6 +5711,9 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             return;
         }
 
+        if (onSuccess != null) onSuccess.run();
+        refreshAnnualSubscription(null);
+
         FirebaseFirestore db = FirebaseFirestore.getInstance();
         db.collection("users").document(getProfileDocumentKey())
                 .get(Source.SERVER)
@@ -5767,14 +5841,12 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
 
                     profileHydrated = true;
                     cloudProfileLoaded = true;
-                    refreshAnnualSubscription(onSuccess);
                 })
                 .addOnFailureListener(e -> {
                     SharedPreferences.Editor editor = getSharedPreferences("fendly_account", MODE_PRIVATE).edit();
                     editor.putBoolean("created", true);
                     editor.putString("username", formatUsernameDisplay(username));
                     editor.apply();
-                    refreshAnnualSubscription(onSuccess);
                 });
     }
 
@@ -6124,7 +6196,12 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             return;
         }
 
-        showProfileLoading();
+        boolean alreadyShowingProfile = currentPage == PAGE_PROFILE && screenRenderer != null;
+        if (profileHydrated || alreadyShowingProfile) {
+            renderProfileContent();
+        } else {
+            showProfileLoading();
+        }
         FirebaseFirestore db = FirebaseFirestore.getInstance();
         String primaryKey = getProfileDocumentKey();
         String fallbackKey = currentUser.getUid();
@@ -9742,7 +9819,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         close.setGravity(Gravity.CENTER);
         close.setBackground(goldButton());
         close.setOnClickListener(view -> {
-            if (ttsEngine != null) ttsEngine.stop();
+            stopGuideSpeech();
             dialog.dismiss();
         });
         actionsRow.addView(close, new LinearLayout.LayoutParams(0, dp(44), 1f));
@@ -9761,11 +9838,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         form.addView(actionsRow, new LinearLayout.LayoutParams(-1, -2));
 
         dialog.setContentView(form);
-        dialog.setOnDismissListener(d -> {
-            if (ttsEngine != null) {
-                ttsEngine.stop();
-            }
-        });
+        dialog.setOnDismissListener(d -> stopGuideSpeech());
         dialog.show();
         Window window = dialog.getWindow();
         if (window != null) {
@@ -9802,7 +9875,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         close.setGravity(Gravity.CENTER);
         close.setBackground(goldButton());
         close.setOnClickListener(view -> {
-            if (ttsEngine != null) ttsEngine.stop();
+            stopGuideSpeech();
             dialog.dismiss();
         });
         actionsRow.addView(close, new LinearLayout.LayoutParams(0, dp(44), 1f));
@@ -9821,11 +9894,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         form.addView(actionsRow, new LinearLayout.LayoutParams(-1, -2));
 
         dialog.setContentView(form);
-        dialog.setOnDismissListener(d -> {
-            if (ttsEngine != null) {
-                ttsEngine.stop();
-            }
-        });
+        dialog.setOnDismissListener(d -> stopGuideSpeech());
         dialog.show();
         Window window = dialog.getWindow();
         if (window != null) {
