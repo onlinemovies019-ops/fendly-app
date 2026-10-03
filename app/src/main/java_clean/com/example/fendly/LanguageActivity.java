@@ -28,6 +28,7 @@ import java.util.List;
 import java.util.Locale;
 
 public final class LanguageActivity extends AppCompatActivity {
+    private static final String STATE_SELECTED_LANGUAGE = "selected_language";
 
     @Override
     protected void attachBaseContext(Context newBase) {
@@ -71,17 +72,29 @@ public final class LanguageActivity extends AppCompatActivity {
 
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
-        root.setPadding(dp(22), dp(22), dp(22), dp(20));
+        int windowWidthDp = WindowInsetsHelper.windowWidthDp(this);
+        int windowHeightDp = WindowInsetsHelper.windowHeightDp(this);
+        boolean compactHeight = windowHeightDp > 0 && windowHeightDp < 500;
+        int horizontalPadding = windowWidthDp > 760
+                ? dp((windowWidthDp - 760) / 2)
+                : dp(22);
+        root.setPadding(
+                horizontalPadding,
+                dp(compactHeight ? 12 : 22),
+                horizontalPadding,
+                dp(compactHeight ? 12 : 20));
         root.setBackgroundColor(backgroundColor());
         if (Build.VERSION.SDK_INT >= 29) root.setForceDarkAllowed(false);
+        WindowInsetsHelper.applySafeArea(root);
 
         ImageView logo = new ImageView(this);
         logo.setImageResource(R.drawable.fendly_logo);
         logo.setScaleType(ImageView.ScaleType.FIT_CENTER);
         logo.setContentDescription("Fendly logo");
-        LinearLayout.LayoutParams logoParams = new LinearLayout.LayoutParams(dp(112), dp(112));
+        int logoSize = dp(compactHeight ? 72 : 112);
+        LinearLayout.LayoutParams logoParams = new LinearLayout.LayoutParams(logoSize, logoSize);
         logoParams.gravity = Gravity.CENTER_HORIZONTAL;
-        logoParams.setMargins(0, 0, 0, dp(12));
+        logoParams.setMargins(0, 0, 0, dp(compactHeight ? 4 : 12));
         root.addView(logo, logoParams);
 
         TextView title = text("Choose your language", 23, primaryTextColor(), Typeface.NORMAL);
@@ -120,11 +133,15 @@ public final class LanguageActivity extends AppCompatActivity {
         root.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1f));
 
         // Load saved language index
-        String currentCode = LanguageManager.getSavedLanguage(this);
-        for (int i = 0; i < languages.length; i++) {
-            if (languages[i][2].equalsIgnoreCase(currentCode)) {
-                selectedLanguage = i;
-                break;
+        if (savedInstanceState != null) {
+            selectedLanguage = savedInstanceState.getInt(STATE_SELECTED_LANGUAGE, 0);
+        } else {
+            String currentCode = LanguageManager.getSavedLanguage(this);
+            for (int i = 0; i < languages.length; i++) {
+                if (languages[i][2].equalsIgnoreCase(currentCode)) {
+                    selectedLanguage = i;
+                    break;
+                }
             }
         }
 
@@ -151,6 +168,12 @@ public final class LanguageActivity extends AppCompatActivity {
         root.addView(continueButton, buttonParams);
 
         setContentView(root);
+    }
+
+    @Override
+    protected void onSaveInstanceState(Bundle outState) {
+        outState.putInt(STATE_SELECTED_LANGUAGE, selectedLanguage);
+        super.onSaveInstanceState(outState);
     }
 
     private void addLanguageCard(int index) {

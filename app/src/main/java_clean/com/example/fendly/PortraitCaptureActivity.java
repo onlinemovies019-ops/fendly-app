@@ -2,7 +2,6 @@ package com.example.fendly;
 
 import android.app.Activity;
 import android.content.Context;
-import android.content.pm.ActivityInfo;
 import android.os.Bundle;
 import android.view.KeyEvent;
 import android.widget.TextView;
@@ -22,8 +21,8 @@ public class PortraitCaptureActivity extends Activity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_PORTRAIT);
         setContentView(R.layout.zxing_custom_capture);
+        WindowInsetsHelper.applySafeArea(findViewById(android.R.id.content));
 
         TextView scannerInstruction = findViewById(R.id.scanner_instruction);
         scannerInstruction.setText(LanguageManager.profileText(this, "align_barcode"));

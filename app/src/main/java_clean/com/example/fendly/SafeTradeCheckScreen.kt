@@ -16,11 +16,15 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
@@ -38,6 +42,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -46,6 +51,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.compose.ui.platform.LocalLifecycleOwner
@@ -103,11 +109,11 @@ private enum class VerificationState {
 
 @Composable
 fun SafeTradeCheckScreen(onBack: () -> Unit, darkMode: Boolean) {
-    var imei by remember { mutableStateOf("") }
-    var state by remember { mutableStateOf(VerificationState.IDLE) }
-    var responseMessage by remember { mutableStateOf("") }
-    var scanning by remember { mutableStateOf(false) }
-    var cameraPermissionDenied by remember { mutableStateOf(false) }
+    var imei by rememberSaveable { mutableStateOf("") }
+    var state by rememberSaveable { mutableStateOf(VerificationState.IDLE) }
+    var responseMessage by rememberSaveable { mutableStateOf("") }
+    var scanning by rememberSaveable { mutableStateOf(false) }
+    var cameraPermissionDenied by rememberSaveable { mutableStateOf(false) }
     val context = LocalContext.current
     val hasCameraPermission = remember {
         ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) ==
@@ -141,7 +147,9 @@ fun SafeTradeCheckScreen(onBack: () -> Unit, darkMode: Boolean) {
     }
 
     Surface(
-        modifier = Modifier.fillMaxSize(),
+        modifier = Modifier
+            .fillMaxSize()
+            .windowInsetsPadding(WindowInsets.safeDrawing),
         color = MaterialTheme.colorScheme.background,
     ) {
         Scaffold(
@@ -155,10 +163,15 @@ fun SafeTradeCheckScreen(onBack: () -> Unit, darkMode: Boolean) {
                 ) {
                     Text(
                         text = "SafeTrade IMEI check",
-                        modifier = Modifier.align(Alignment.Center),
-                        style = MaterialTheme.typography.titleLarge,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .align(Alignment.Center),
+                        style = MaterialTheme.typography.titleMedium,
                         color = MaterialTheme.colorScheme.onBackground,
                         fontWeight = FontWeight.SemiBold,
+                        textAlign = TextAlign.Center,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
                     )
                     TextButton(
                         onClick = onBack,
@@ -169,15 +182,21 @@ fun SafeTradeCheckScreen(onBack: () -> Unit, darkMode: Boolean) {
                 }
             }
         ) { contentPadding ->
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(contentPadding)
-                    .verticalScroll(rememberScrollState())
-                    .padding(horizontal = 22.dp, vertical = 16.dp),
-                verticalArrangement = Arrangement.spacedBy(18.dp),
+            Box(
+                modifier = Modifier.fillMaxSize(),
+                contentAlignment = Alignment.TopCenter,
             ) {
-                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Column(
+                    modifier = Modifier
+                        .widthIn(max = 640.dp)
+                        .fillMaxWidth()
+                        .fillMaxSize()
+                        .padding(contentPadding)
+                        .verticalScroll(rememberScrollState())
+                        .padding(horizontal = 22.dp, vertical = 16.dp),
+                    verticalArrangement = Arrangement.spacedBy(18.dp),
+                    ) {
+                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     Text(
                         text = "Check before you buy",
                         modifier = Modifier.fillMaxWidth(),
@@ -340,6 +359,7 @@ fun SafeTradeCheckScreen(onBack: () -> Unit, darkMode: Boolean) {
                     VerificationState.IDLE,
                     VerificationState.LOADING -> Unit
                 }
+                }
             }
         }
     }
@@ -468,6 +488,7 @@ private fun ImeiCameraScanner(
                     .align(Alignment.TopCenter)
                     .fillMaxWidth()
                     .background(Color(0x99000000))
+                    .windowInsetsPadding(WindowInsets.safeDrawing)
                     .padding(18.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {

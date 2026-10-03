@@ -5,7 +5,6 @@ import android.app.Activity;
 import android.content.ActivityNotFoundException;
 import android.content.Intent;
 import android.content.Context;
-import android.content.pm.ActivityInfo;
 import android.content.pm.PackageManager;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
@@ -13,12 +12,14 @@ import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.Matrix;
 import android.graphics.Paint;
+import android.graphics.Rect;
 import android.graphics.Typeface;
 import android.graphics.drawable.ColorDrawable;
 import android.graphics.drawable.Drawable;
 import android.content.res.ColorStateList;
 import android.graphics.drawable.LayerDrawable;
 import androidx.appcompat.app.AppCompatDelegate;
+import androidx.activity.OnBackPressedCallback;
 import androidx.core.os.LocaleListCompat;
 import android.os.Build;
 import android.os.Bundle;
@@ -357,8 +358,13 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         LanguageManager.restoreSavedLanguage(this);
         int savedLanguage = LanguageManager.getSavedLanguageIndex(this);
         super.onCreate(savedInstanceState);
+        getOnBackPressedDispatcher().addCallback(this, new OnBackPressedCallback(true) {
+            @Override
+            public void handleOnBackPressed() {
+                handleAppBack();
+            }
+        });
         initializeCloudinary();
-        setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_PORTRAIT);
         getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
         if (Build.VERSION.SDK_INT >= 33 && ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
             ActivityCompat.requestPermissions(this, new String[]{Manifest.permission.POST_NOTIFICATIONS}, 100);
@@ -794,8 +800,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         buildScreen();
     }
 
-    @Override
-    public void onBackPressed() {
+    private void handleAppBack() {
         if (currentPage == PAGE_ADMIN_SUBSCRIPTIONS) {
             showAdminDashboard();
             return;
@@ -829,7 +834,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             showLogoutConfirmationDialog();
             return;
         }
-        super.onBackPressed();
+        showLogoutConfirmationDialog();
     }
 
     private void showLogoutConfirmationDialog() {
@@ -942,17 +947,27 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
     }
 
     private int responsiveHorizontalPadding() {
-        int widthPx = getResources().getDisplayMetrics().widthPixels;
-        int maxContentWidthPx = dp(520);
-        if (widthPx > maxContentWidthPx) {
-            return (widthPx - maxContentWidthPx) / 2;
-        }
-        return dp(18);
+        int widthDp = WindowInsetsHelper.windowWidthDp(this);
+        int maxContentWidthDp = widthDp >= 600 ? 720 : 520;
+        return widthDp > maxContentWidthDp
+                ? dp((widthDp - maxContentWidthDp) / 2)
+                : dp(18);
     }
 
-    private boolean isLargeScreen() {
-        int smallestWidth = getResources().getConfiguration().smallestScreenWidthDp;
-        return smallestWidth >= 600 || getResources().getDisplayMetrics().widthPixels >= 900;
+    private void scrollAuthFieldIntoView(ScrollView scroll, View field) {
+        scroll.post(() -> {
+            if (!field.isFocused() || scroll.getHeight() == 0) return;
+
+            Rect fieldBounds = new Rect(0, 0, field.getWidth(), field.getHeight());
+            scroll.offsetDescendantRectToMyCoords(field, fieldBounds);
+            int visibleTop = scroll.getScrollY();
+            int visibleBottom = visibleTop + scroll.getHeight();
+            if (fieldBounds.bottom > visibleBottom) {
+                scroll.smoothScrollBy(0, fieldBounds.bottom - visibleBottom + dp(20));
+            } else if (fieldBounds.top < visibleTop) {
+                scroll.smoothScrollBy(0, fieldBounds.top - visibleTop - dp(20));
+            }
+        });
     }
 
     private void buildScreen() {
@@ -965,6 +980,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         root.setPadding(responsiveHorizontalPadding(), dp(16), responsiveHorizontalPadding(), dp(30));
         root.setBackgroundColor(backgroundColor());
         if (Build.VERSION.SDK_INT >= 29) root.setForceDarkAllowed(false);
+        WindowInsetsHelper.applySafeArea(root);
 
         addAppControls(root, true);
 
@@ -976,6 +992,11 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         ScrollView authScroll = new ScrollView(this);
         authScroll.setFillViewport(true);
         authScroll.addView(centerArea, new ScrollView.LayoutParams(-1, -2));
+        authScroll.addOnLayoutChangeListener((view, left, top, right, bottom,
+                                               oldLeft, oldTop, oldRight, oldBottom) -> {
+            View focused = authScroll.findFocus();
+            if (focused != null) scrollAuthFieldIntoView(authScroll, focused);
+        });
         root.addView(authScroll, centerParams);
 
         ImageView standaloneF = new ImageView(this);
@@ -1051,6 +1072,13 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         username.setTextColor(darkMode ? primaryTextColor() : LIGHT_TEXT);
         username.setLayerType(View.LAYER_TYPE_SOFTWARE, null);
         username.setImeOptions(EditorInfo.IME_ACTION_NEXT);
+        View.OnFocusChangeListener revealAuthField = (view, hasFocus) -> {
+            if (hasFocus) {
+                scrollAuthFieldIntoView(authScroll, view);
+                authScroll.postDelayed(() -> scrollAuthFieldIntoView(authScroll, view), 250);
+            }
+        };
+        username.setOnFocusChangeListener(revealAuthField);
         authCard.addView(username, new LinearLayout.LayoutParams(-1, dp(44)));
 
         LinearLayout pinLabelRow = new LinearLayout(this);
@@ -1074,6 +1102,9 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         pinCells[0].setNextFocusForwardId(pinCells[1].getId());
         pinCells[1].setNextFocusForwardId(pinCells[2].getId());
         pinCells[2].setNextFocusForwardId(pinCells[3].getId());
+        for (EditText pinCell : pinCells) {
+            pinCell.setOnFocusChangeListener(revealAuthField);
+        }
         LinearLayout pinRow = new LinearLayout(this);
         pinRow.setOrientation(LinearLayout.HORIZONTAL);
         for (int index = 0; index < pinCells.length; index++) {
@@ -1310,18 +1341,6 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
 
         SharedPreferences account = getSharedPreferences("fendly_account", MODE_PRIVATE);
         account.edit()
-                .remove("created")
-                .remove("username")
-                .remove("full_name")
-                .remove("email")
-                .remove("mobile")
-                .remove("state")
-                .remove("city")
-                .remove("profile_image_uri")
-                .remove("account_pin")
-                .remove("mobile_verified")
-                .remove("email_verified")
-                .remove("email_verify_cooldown_until")
                 .remove("draft_full_name")
                 .remove("draft_email")
                 .remove("draft_mobile")
@@ -6036,6 +6055,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         screenRenderer = this::showProfile;
         FrameLayout loading = new FrameLayout(this);
         loading.setBackgroundColor(backgroundColor());
+        WindowInsetsHelper.applySafeArea(loading);
         ProgressBar progress = new ProgressBar(this);
         FrameLayout.LayoutParams progressParams = new FrameLayout.LayoutParams(dp(40), dp(40), Gravity.CENTER);
         loading.addView(progress, progressParams);
@@ -6726,6 +6746,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         root.setPadding(responsiveHorizontalPadding(), dp(16), responsiveHorizontalPadding(), dp(30));
         root.setBackgroundColor(backgroundColor());
         if (Build.VERSION.SDK_INT >= 29) root.setForceDarkAllowed(false);
+        WindowInsetsHelper.applySafeArea(root);
         addAppControls(root, false);
         ScrollView scroll = new ScrollView(this);
         scroll.setFillViewport(true);

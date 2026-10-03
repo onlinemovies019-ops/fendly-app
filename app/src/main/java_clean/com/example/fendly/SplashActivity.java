@@ -40,6 +40,7 @@ public final class SplashActivity extends Activity {
         if (Build.VERSION.SDK_INT >= 29) {
             root.setForceDarkAllowed(false);
         }
+        WindowInsetsHelper.applySafeArea(root);
         
         getWindow().getDecorView().setSystemUiVisibility(darkMode ? 0 : View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR | View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR);
         getWindow().setStatusBarColor(background);
