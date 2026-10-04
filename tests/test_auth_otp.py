@@ -126,6 +126,48 @@ async def test_sms_otp_send_exposes_safe_fast2sms_rejection_reason(monkeypatch, 
     assert profile_session.query(SmsOTPChallenge).count() == 0
 
 
+@pytest.mark.asyncio
+async def test_sms_otp_send_explains_fast2sms_website_verification_requirement(monkeypatch, profile_session):
+    class FakeResponse:
+        status_code = 400
+        is_success = False
+
+        def json(self):
+            return {
+                "return": False,
+                "message": "Before using OTP Message API, complete website verification. Visit OTP Message menu or use DLT SMS API.",
+            }
+
+    class FakeClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, traceback):
+            return False
+
+        async def post(self, *args, **kwargs):
+            return FakeResponse()
+
+    monkeypatch.setattr(auth, "FAST2SMS_API_KEY", "private-test-key")
+    monkeypatch.setattr(auth.httpx, "AsyncClient", FakeClient)
+    monkeypatch.setenv("APP_SECRET_KEY", "test-app-secret-0123456789abcdef")
+    request = SimpleNamespace(client=SimpleNamespace(host="203.0.113.4"))
+
+    with pytest.raises(HTTPException) as exc:
+        await auth.send_otp(
+            SendOTPRequest(mobile="9876543210"),
+            request,
+            session=profile_session,
+        )
+
+    assert exc.value.status_code == 502
+    assert "HTTP 400" in exc.value.detail
+    assert "website verification" in exc.value.detail.lower()
+    assert "DLT SMS API" in exc.value.detail
+    assert "private-test-key" not in exc.value.detail
+    assert profile_session.query(SmsOTPChallenge).count() == 0
+
+
 def test_sms_otp_send_enforces_persistent_phone_and_ip_limits(monkeypatch, profile_session):
     monkeypatch.setenv("APP_SECRET_KEY", "test-app-secret-0123456789abcdef")
     now = 1_700_000_000

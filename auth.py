@@ -398,6 +398,21 @@ def _fast2sms_failure_detail(
             provider_message = provider_message.replace(sensitive_value, "[redacted]")
     provider_message = provider_message[:240]
 
+    normalized_message = provider_message.lower()
+    if (
+        "before using otp message api" in normalized_message
+        or "complete website verification" in normalized_message
+        or "visit otp message menu" in normalized_message
+    ):
+        guidance = (
+            "Fast2SMS requires website verification before OTP messages can be "
+            "sent. Complete the verification in the Fast2SMS dashboard or use "
+            "the DLT SMS API instead."
+        )
+        if response.status_code >= 400:
+            return f"Fast2SMS rejected the request (HTTP {response.status_code}): {guidance}"
+        return guidance
+
     if response.status_code >= 400:
         reason = f"Fast2SMS rejected the request (HTTP {response.status_code})"
     else:
