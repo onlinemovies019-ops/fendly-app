@@ -6,13 +6,14 @@ import re
 import secrets
 import time
 from typing import Any
-from urllib.parse import quote
+from uuid import uuid4
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 import firebase_admin
 from firebase_admin import auth as firebase_auth
 from firebase_admin import credentials as firebase_credentials
 import httpx
+import jwt
 from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy import delete, select
 from sqlalchemy.exc import SQLAlchemyError
@@ -25,7 +26,8 @@ from schemas import ProfileUpdate
 
 router = APIRouter(prefix="/api/auth", tags=["Authentication"])
 
-TWO_FACTOR_API_KEY = os.getenv("TWO_FACTOR_API_KEY") or os.getenv("TWOFACTOR_API_KEY", "")
+FAST2SMS_API_KEY = os.getenv("FAST2SMS_API_KEY", "")
+FAST2SMS_BULK_URL = "https://www.fast2sms.com/dev/bulkV2"
 RESEND_API_KEY = os.getenv("RESEND_API_KEY", "")
 RESEND_FROM_EMAIL = (
     os.getenv("RESEND_FROM_EMAIL")
@@ -46,7 +48,7 @@ SMS_OTP_TTL_SECONDS = 600
 SMS_OTP_MAX_VERIFY_ATTEMPTS = 5
 
 print(f"=== AUTH ROUTER LOADED ===", flush=True)
-print(f"TWO_FACTOR_API_KEY present: {bool(TWO_FACTOR_API_KEY)}, length: {len(TWO_FACTOR_API_KEY)}", flush=True)
+print(f"FAST2SMS_API_KEY present: {bool(FAST2SMS_API_KEY)}", flush=True)
 print(f"RESEND_API_KEY present: {bool(RESEND_API_KEY)}, length: {len(RESEND_API_KEY)}", flush=True)
 
 security = HTTPBearer(auto_error=False)
@@ -188,11 +190,11 @@ def update_profile_compat(
 # — Schemas —
 
 class SendOTPRequest(BaseModel):
-    phone_number: str = Field(min_length=10, max_length=16)
+    mobile: str = Field(pattern=r"^[6-9][0-9]{9}$")
 
 class VerifyOTPRequest(BaseModel):
-    session_id: str = Field(min_length=1, max_length=256)
-    otp: str = Field(min_length=6, max_length=6, pattern=r"^\d{6}$")
+    mobile: str = Field(pattern=r"^[6-9][0-9]{9}$")
+    otp: str = Field(min_length=6, max_length=6, pattern=r"^[0-9]{6}$")
 
 class EmailOTPRequest(BaseModel):
     email: EmailStr
@@ -209,21 +211,11 @@ async def send_otp(
     request: Request,
     session: Session = Depends(get_db),
 ) -> dict[str, str | bool]:
-    if not TWO_FACTOR_API_KEY or TWO_FACTOR_API_KEY == "your_2factor_api_key":
+    if not FAST2SMS_API_KEY:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="SMS verification is not configured",
         )
-
-    raw_phone = re.sub(r"[\s()+-]", "", payload.phone_number)
-    if raw_phone.startswith("91") and len(raw_phone) == 12:
-        local_phone = raw_phone[2:]
-    elif len(raw_phone) == 10:
-        local_phone = raw_phone
-    else:
-        local_phone = ""
-    if not re.fullmatch(r"[6-9]\d{9}", local_phone):
-        raise HTTPException(status_code=422, detail="Enter a valid Indian mobile number")
 
     if request.client is None or not request.client.host:
         raise HTTPException(
@@ -231,7 +223,8 @@ async def send_otp(
             detail="SMS verification is temporarily unavailable",
         )
     now = int(time.time())
-    phone_digest = _sms_otp_digest("phone", local_phone)
+    phone_digest = _sms_otp_digest("phone", payload.mobile)
+    otp = f"{secrets.randbelow(1_000_000):06d}"
     try:
         _reserve_sms_otp_quota(
             session,
@@ -248,12 +241,18 @@ async def send_otp(
             detail="SMS verification is temporarily unavailable",
         ) from exc
 
-    clean_phone = f"91{local_phone}"
-    url = f"https://2factor.in/API/V1/{TWO_FACTOR_API_KEY}/SMS/{clean_phone}/AUTOGEN"
-
     async with httpx.AsyncClient() as client:
         try:
-            response = await client.get(url, timeout=15.0)
+            response = await client.post(
+                FAST2SMS_BULK_URL,
+                headers={"authorization": FAST2SMS_API_KEY},
+                json={
+                    "route": "otp",
+                    "variables_values": otp,
+                    "numbers": payload.mobile,
+                },
+                timeout=15.0,
+            )
             response.raise_for_status()
             data = response.json()
         except (httpx.HTTPError, ValueError) as exc:
@@ -262,24 +261,20 @@ async def send_otp(
                 detail="Could not send SMS verification code",
             ) from exc
 
-    session_id = (
-        data.get("Details")
-        if isinstance(data, dict) and data.get("Status") == "Success"
-        else None
-    )
-    if not isinstance(session_id, str) or not session_id or len(session_id) > 256:
+    if not isinstance(data, dict) or data.get("return") is not True:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="Could not send SMS verification code",
         )
-    session_digest = _sms_otp_digest("session", session_id)
+
+    session_digest = _sms_otp_digest("sms-code", f"{payload.mobile}:{otp}")
     try:
         session.execute(
             delete(SmsOTPChallenge).where(SmsOTPChallenge.phone_digest == phone_digest)
         )
         session.add(
             SmsOTPChallenge(
-                session_digest=session_digest,
+                otp_digest=session_digest,
                 phone_digest=phone_digest,
                 sent_at=now,
                 expires_at=now + SMS_OTP_TTL_SECONDS,
@@ -296,7 +291,6 @@ async def send_otp(
     return {
         "success": True,
         "status": "success",
-        "session_id": session_id,
         "message": "OTP sent successfully",
     }
 
@@ -304,19 +298,17 @@ async def send_otp(
 async def verify_otp(
     payload: VerifyOTPRequest,
     session: Session = Depends(get_db),
-) -> dict[str, str | bool]:
-    if not TWO_FACTOR_API_KEY or TWO_FACTOR_API_KEY == "your_2factor_api_key":
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="SMS verification is not configured",
-        )
-
+) -> dict[str, str | bool | int]:
     now = int(time.time())
-    session_digest = _sms_otp_digest("session", payload.session_id)
+    phone_digest = _sms_otp_digest("phone", payload.mobile)
+    submitted_digest = _sms_otp_digest(
+        "sms-code", f"{payload.mobile}:{payload.otp}"
+    )
     try:
         challenge = session.scalar(
             select(SmsOTPChallenge)
-            .where(SmsOTPChallenge.session_digest == session_digest)
+            .where(SmsOTPChallenge.phone_digest == phone_digest)
+            .order_by(SmsOTPChallenge.sent_at.desc())
             .with_for_update()
         )
         if challenge is None or challenge.expires_at < now:
@@ -335,50 +327,11 @@ async def verify_otp(
                 detail="Too many verification attempts; request a new code",
             )
         challenge.attempts += 1
-        session.commit()
-    except HTTPException:
-        raise
-    except SQLAlchemyError as exc:
-        session.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="SMS verification is temporarily unavailable",
-        ) from exc
-
-    url = (
-        f"https://2factor.in/API/V1/{TWO_FACTOR_API_KEY}/SMS/VERIFY/"
-        f"{quote(payload.session_id, safe='')}/{payload.otp}"
-    )
-
-    async with httpx.AsyncClient() as client:
-        try:
-            response = await client.get(url, timeout=15.0)
-            response.raise_for_status()
-            data = response.json()
-        except (httpx.HTTPError, ValueError) as exc:
-            raise HTTPException(
-                status_code=status.HTTP_502_BAD_GATEWAY,
-                detail="Could not verify SMS code",
-            ) from exc
-
-    verified = isinstance(data, dict) and data.get("Status") == "Success" and (
-        data.get("Details") == "OTP Matched"
-        or "Matched" in str(data.get("Details"))
-    )
-    try:
-        challenge = session.get(SmsOTPChallenge, session_digest)
-        if challenge is None:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Invalid or expired verification session",
-            )
-        if verified:
-            session.delete(challenge)
-        elif challenge.attempts >= SMS_OTP_MAX_VERIFY_ATTEMPTS:
+        verified = hmac.compare_digest(challenge.otp_digest, submitted_digest)
+        if verified or challenge.attempts >= SMS_OTP_MAX_VERIFY_ATTEMPTS:
             session.delete(challenge)
         session.commit()
     except HTTPException:
-        session.rollback()
         raise
     except SQLAlchemyError as exc:
         session.rollback()
@@ -389,7 +342,28 @@ async def verify_otp(
 
     if not verified:
         return {"success": False, "status": "error", "message": "Invalid or expired OTP"}
-    return {"success": True, "status": "success", "message": "OTP verified successfully"}
+    token_expiration = now + SMS_OTP_TTL_SECONDS
+    verification_token = jwt.encode(
+        {
+            "sub": payload.mobile,
+            "scope": "mobile_verification",
+            "iss": "fendly-api",
+            "aud": "fendly-mobile-verification",
+            "iat": now,
+            "exp": token_expiration,
+            "jti": uuid4().hex,
+        },
+        os.getenv("APP_SECRET_KEY", ""),
+        algorithm="HS256",
+    )
+    return {
+        "success": True,
+        "status": "success",
+        "message": "OTP verified successfully",
+        "verification_token": verification_token,
+        "token_type": "Bearer",
+        "expires_in": token_expiration - now,
+    }
 
 
 def _sms_otp_digest(purpose: str, value: str) -> str:

@@ -45,7 +45,7 @@ services:
         value: gemini-3.8-flash
       - key: GEMINI_TRANSLATION_FALLBACK_MODEL
         value: gemini-3.1-flash-lite
-      - key: TWO_FACTOR_API_KEY
+      - key: FAST2SMS_API_KEY
         sync: false
       - key: SMTP_HOST
         sync: false

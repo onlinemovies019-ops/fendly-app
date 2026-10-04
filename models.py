@@ -74,7 +74,7 @@ class SmsOTPRateLimit(Base):
 class SmsOTPChallenge(Base):
     __tablename__ = "sms_otp_challenges"
 
-    session_digest: Mapped[str] = mapped_column(String(64), primary_key=True)
+    otp_digest: Mapped[str] = mapped_column("session_digest", String(64), primary_key=True)
     phone_digest: Mapped[str] = mapped_column(String(64), index=True)
     sent_at: Mapped[int] = mapped_column(BigInteger)
     expires_at: Mapped[int] = mapped_column(BigInteger, index=True)

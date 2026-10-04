@@ -117,10 +117,6 @@ import com.google.firebase.auth.FirebaseAuth;
 import com.google.firebase.auth.FirebaseUser;
 import com.google.firebase.auth.EmailAuthProvider;
 import com.google.firebase.auth.AuthResult;
-import com.google.firebase.auth.PhoneAuthProvider;
-import com.google.firebase.auth.PhoneAuthOptions;
-import com.google.firebase.auth.PhoneAuthCredential;
-import com.google.firebase.FirebaseException;
 import java.util.concurrent.TimeUnit;
 import com.google.firebase.firestore.FirebaseFirestore;
 import com.google.firebase.firestore.ListenerRegistration;
@@ -205,7 +201,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
     private TextView locationStatus;
     private TextView locationToggleStatus;
     private LocationListener activeLocationListener;
-    private String phoneVerificationId;
+    private String phoneVerificationMobile;
     private boolean phoneVerificationHandled;
     private String currentReportType;
     private boolean adminEnglishUi;
@@ -217,6 +213,15 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         if (digits.length() == 10) return "+91" + digits;
         if (digits.startsWith("91") && digits.length() > 10) return "+" + digits;
         return "+" + digits;
+    }
+
+    private String normalizeIndianMobileDigits(String raw) {
+        if (raw == null) return "";
+        String digits = raw.replaceAll("\\D", "");
+        if (digits.startsWith("91") && digits.length() == 12) {
+            return digits.substring(2);
+        }
+        return digits;
     }
 
     private void stopActiveLocationUpdates() {
@@ -1729,14 +1734,14 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         phoneVerificationHandled = false;
         save.setText(translate("Sending verification code..."));
         save.setEnabled(false);
-        String phoneNumber = normalizePhoneNumber(mobile);
+        phoneVerificationMobile = normalizeIndianMobileDigits(mobile);
         network.execute(() -> {
             try {
                 JSONObject payload = new JSONObject();
-                payload.put("phone_number", phoneNumber);
+                payload.put("mobile", phoneVerificationMobile);
                 JSONObject response = postJson("/api/auth/send-otp", payload.toString(), null);
-                String sessionId = response != null ? response.optString("session_id", "") : "";
-                if (sessionId == null || sessionId.trim().isEmpty()) {
+                boolean sent = response != null && response.optBoolean("success", false);
+                if (!sent) {
                     runOnUiThread(() -> {
                         save.setText(translate("SMS verification unavailable"));
                         save.setEnabled(true);
@@ -1744,7 +1749,6 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                     });
                     return;
                 }
-                phoneVerificationId = sessionId;
                 runOnUiThread(() -> {
                     save.setText(translate("Enter SMS code"));
                     showOtpDialog(username, pin, save);
@@ -1766,7 +1770,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
     private void showOtpDialog(String username, String pin, TextView save) {
         showThemedOtpDialog(translate("Verify your mobile"), translate("Enter the code sent to your mobile number."), translate("6-digit SMS code"),
             (value, dialog, verifyInDialog, codeCells) -> {
-                if (phoneVerificationId == null || value.length() != 6) {
+                if (phoneVerificationMobile == null || value.length() != 6) {
                     save.setText(translate("Invalid SMS code"));
                     save.setEnabled(true);
                     Toast.makeText(this, translate("Enter a valid 6-digit code"), Toast.LENGTH_LONG).show();
@@ -1774,7 +1778,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                 }
                 verifyInDialog.setText(translate("Verifying..."));
                 verifyInDialog.setEnabled(false);
-                completePhoneVerification(phoneVerificationId, username, pin, save, value, dialog, verifyInDialog, codeCells);
+                completePhoneVerification(phoneVerificationMobile, username, pin, save, value, dialog, verifyInDialog, codeCells);
             }, () -> {
                 save.setText(translate("Save and continue"));
                 save.setEnabled(true);
@@ -1882,7 +1886,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         }
     }
 
-    private void completePhoneVerification(String sessionId, String username, String pin, TextView save, String otpValue,
+    private void completePhoneVerification(String mobile, String username, String pin, TextView save, String otpValue,
                                            Dialog dialog, TextView verifyInDialog, EditText[] codeCells) {
         if (phoneVerificationHandled) return;
         phoneVerificationHandled = true;
@@ -1891,7 +1895,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         network.execute(() -> {
             try {
                 JSONObject payload = new JSONObject();
-                payload.put("session_id", sessionId);
+                payload.put("mobile", mobile);
                 payload.put("otp", otpValue);
                 JSONObject response = postJson("/api/auth/verify-otp", payload.toString(), null);
                 boolean verified = response != null && (response.optBoolean("success", false) || "success".equalsIgnoreCase(response.optString("status", "")));
@@ -2397,21 +2401,20 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
 
     private void startForgotPinPhoneVerification(String username, String mobile, String temporaryPin, Dialog parentDialog) {
         phoneVerificationHandled = false;
-        String phoneNumber = normalizePhoneNumber(mobile);
+        phoneVerificationMobile = normalizeIndianMobileDigits(mobile);
         network.execute(() -> {
             try {
                 JSONObject payload = new JSONObject();
-                payload.put("phone_number", phoneNumber);
+                payload.put("mobile", phoneVerificationMobile);
                 JSONObject response = postJson("/api/auth/send-otp", payload.toString(), null);
-                String sessionId = response != null ? response.optString("session_id", "") : "";
-                if (sessionId == null || sessionId.trim().isEmpty()) {
+                boolean sent = response != null && response.optBoolean("success", false);
+                if (!sent) {
                     runOnUiThread(() -> {
                         parentDialog.dismiss();
                         Toast.makeText(MainActivity.this, translate("Could not send OTP"), Toast.LENGTH_LONG).show();
                     });
                     return;
                 }
-                phoneVerificationId = sessionId;
                 runOnUiThread(() -> showForgotOtpDialog(username, mobile, temporaryPin, parentDialog));
             } catch (Exception error) {
                 runOnUiThread(() -> {
@@ -2425,7 +2428,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
     private void showForgotOtpDialog(String username, String mobile, String pin, Dialog parentDialog) {
         showThemedOtpDialog(translate("Enter OTP"), translate("Enter the 6-digit code sent to your mobile number."), translate("6-digit OTP"),
             (value, dialog, verifyInDialog, codeCells) -> {
-                if (phoneVerificationId == null || value.length() != 6) {
+                if (phoneVerificationMobile == null || value.length() != 6) {
                     Toast.makeText(this, translate("Enter the 6-digit OTP"), Toast.LENGTH_LONG).show();
                     return;
                 }
@@ -2442,7 +2445,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         network.execute(() -> {
             try {
                 JSONObject payload = new JSONObject();
-                payload.put("session_id", phoneVerificationId);
+                payload.put("mobile", phoneVerificationMobile);
                 payload.put("otp", otpValue);
                 JSONObject response = postJson("/api/auth/verify-otp", payload.toString(), null);
                 boolean verified = response != null && (response.optBoolean("success", false) || "success".equalsIgnoreCase(response.optString("status", "")));
@@ -4316,40 +4319,36 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         }
         verifyButton.setText(translate("Sending..."));
         verifyButton.setEnabled(false);
-        String phoneNumber = normalizePhoneNumber(mobileValue);
-        sendBackendMobileOtp(phoneNumber, mobileValue, mobile, verifyButton);
+        sendBackendMobileOtp(mobileValue, mobile, verifyButton);
     }
 
-    private void sendBackendMobileOtp(String phoneNumber, String mobileValue, Object mobileTarget, TextView verifyButton) {
+    private void sendBackendMobileOtp(String mobileValue, Object mobileTarget, TextView verifyButton) {
         network.execute(() -> {
-            String sessionId = "";
             String errorMessage = "Could not send SMS verification code";
             boolean sent = false;
             try {
                 JSONObject payload = new JSONObject();
-                payload.put("phone_number", phoneNumber);
+                payload.put("mobile", normalizeIndianMobileDigits(mobileValue));
                 JSONObject response = postJson("/api/auth/send-otp", payload.toString(), null);
                 if (response != null) {
                     sent = response.optBoolean("success", false);
-                    sessionId = response.optString("session_id", "");
                     errorMessage = response.optString("message", errorMessage);
                 }
             } catch (Exception error) {
                 Log.e("AUTH", "Could not request SMS verification code", error);
             }
 
-            final String finalSessionId = sessionId;
-            final boolean finalSent = sent && sessionId != null && !sessionId.trim().isEmpty();
+            final boolean finalSent = sent;
             final String finalErrorMessage = errorMessage;
             runOnUiThread(() -> {
                 verifyButton.setText(translate("Enter OTP"));
                 verifyButton.setEnabled(true);
                 if (!finalSent) {
-                    phoneVerificationId = null;
+                    phoneVerificationMobile = null;
                     Toast.makeText(MainActivity.this, finalErrorMessage, Toast.LENGTH_LONG).show();
                     return;
                 }
-                phoneVerificationId = finalSessionId;
+                phoneVerificationMobile = normalizeIndianMobileDigits(mobileValue);
                 showOtpDialogForProfile(mobileValue, mobileTarget, verifyButton);
             });
         });
@@ -4361,11 +4360,11 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             "Enter 6-digit code sent to " + normalizePhoneNumber(mobileValue),
             "6-digit OTP",
             (otpValue, dialog, verifyInDialog, codeCells) -> {
-                if (phoneVerificationId == null || otpValue.length() != 6) {
+                if (phoneVerificationMobile == null || otpValue.length() != 6) {
                     Toast.makeText(this, "Enter a valid 6-digit code", Toast.LENGTH_LONG).show();
                     return;
                 }
-                verifyProfileOtp(phoneVerificationId, otpValue, mobileValue, mobileTarget, verifyButton, dialog, verifyInDialog, codeCells);
+                verifyProfileOtp(mobileValue, otpValue, mobileTarget, verifyButton, dialog, verifyInDialog, codeCells);
             }, () -> {
                 verifyButton.setText(translate("Enter OTP"));
                 verifyButton.setEnabled(true);
@@ -4374,7 +4373,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             });
     }
 
-    private void verifyProfileOtp(String sessionId, String otpValue, String mobileValue, Object mobileTarget, TextView verifyButton,
+    private void verifyProfileOtp(String mobileValue, String otpValue, Object mobileTarget, TextView verifyButton,
                                    Dialog dialog, TextView verifyInDialog, EditText[] codeCells) {
         verifyButton.setText(translate("Verifying..."));
         verifyButton.setEnabled(false);
@@ -4383,43 +4382,16 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             verifyInDialog.setEnabled(false);
         }
 
-        if (sessionId != null && !sessionId.startsWith("sess_") && !sessionId.startsWith("2f_") && !sessionId.startsWith("f2s_")) {
-            try {
-                PhoneAuthCredential credential = PhoneAuthProvider.getCredential(sessionId, otpValue);
-                FirebaseAuth.getInstance().signInWithCredential(credential)
-                        .addOnSuccessListener(authResult -> {
-                            if (dialog != null && dialog.isShowing()) dialog.dismiss();
-                            getSharedPreferences("fendly_account", MODE_PRIVATE).edit()
-                                    .putString("mobile", mobileValue)
-                                    .putBoolean("mobile_verified", true)
-                                    .apply();
-                            saveVerifiedMobileToCloud(mobileValue);
-                            lockVerifiedMobileField(mobileTarget, verifyButton);
-                            if (mobileTarget instanceof EditText) {
-                                ((EditText) mobileTarget).setText(mobileValue);
-                            } else if (mobileTarget instanceof EditText[]) {
-                                setMobileCells((EditText[]) mobileTarget, mobileValue);
-                            }
-                            Toast.makeText(this, "Mobile verified via SMS OTP", Toast.LENGTH_SHORT).show();
-                        })
-                        .addOnFailureListener(e -> {
-                            verifyBackendMobileOtp(sessionId, otpValue, mobileValue, mobileTarget, verifyButton, dialog, verifyInDialog, codeCells);
-                        });
-                return;
-            } catch (Exception ignored) {
-            }
-        }
-
-        verifyBackendMobileOtp(sessionId, otpValue, mobileValue, mobileTarget, verifyButton, dialog, verifyInDialog, codeCells);
+        verifyBackendMobileOtp(mobileValue, otpValue, mobileTarget, verifyButton, dialog, verifyInDialog, codeCells);
     }
 
-    private void verifyBackendMobileOtp(String sessionId, String otpValue, String mobileValue, Object mobileTarget, TextView verifyButton,
+    private void verifyBackendMobileOtp(String mobileValue, String otpValue, Object mobileTarget, TextView verifyButton,
                                          Dialog dialog, TextView verifyInDialog, EditText[] codeCells) {
         network.execute(() -> {
             boolean verified = false;
             try {
                 JSONObject payload = new JSONObject();
-                payload.put("session_id", sessionId);
+                payload.put("mobile", normalizeIndianMobileDigits(mobileValue));
                 payload.put("otp", otpValue);
                 JSONObject response = postJson("/api/auth/verify-otp", payload.toString(), null);
                 if (response != null) {
@@ -7357,8 +7329,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         }
         verifyButton.setText(translate("Sending..."));
         verifyButton.setEnabled(false);
-        String phoneNumber = normalizePhoneNumber(mobileValue);
-        sendBackendMobileOtp(phoneNumber, mobileValue, mobileTarget, verifyButton);
+        sendBackendMobileOtp(mobileValue, mobileTarget, verifyButton);
     }
 
     private void blinkVerificationRequired(TextView verifyButton) {

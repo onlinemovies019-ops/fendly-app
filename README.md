@@ -6,11 +6,15 @@ service.
 
 ## Local development
 
+Copy `.env.example` to `.env` and set the local secrets there. The API loads
+`.env` at startup; deployment secrets should be configured in the hosting
+provider instead.
+
 ```bash
 python3.11 -m venv .venv
 ./.venv/bin/python -m pip install -r requirements.txt
 ./.venv/bin/python -c "import email_validator; print('email-validator is installed')"
-./.venv/bin/python -m uvicorn main:app --reload --no-access-log
+./.venv/bin/python -m uvicorn main:app --env-file .env --reload --no-access-log
 ```
 
 Required environment variables:
@@ -38,9 +42,12 @@ Required environment variables:
 - `IMAGE_MATCHING_FUNCTION_URL` points the API to the authenticated Firebase
   Cloud Function that indexes Cloudinary report images and performs CLIP visual
   matching. Deploy it with `firebase deploy --only functions:matchReportImages`.
-- Set `TWO_FACTOR_API_KEY` to enable Indian SMS verification. Requests are
-  limited per phone and source IP; challenge sessions expire after 10 minutes
-  and verification attempts are capped.
+- Set `FAST2SMS_API_KEY` to enable Indian SMS verification through Fast2SMS's
+  `bulkV2` OTP route. Keep the key server-side in `.env` locally and in the
+  deployment environment. OTPs are generated and verified by the backend,
+  stored as keyed digests, limited per phone and source IP, and expire after
+  10 minutes. Verification attempts are capped. Successful verification
+  returns a short-lived phone-verification JWT, not an account-login token.
 - Matching is local and free: keyword similarity is combined with location
 	proximity. OpenAI is optional; if absent, the app falls back to a local
 	free sentence-transformers model.

@@ -3,6 +3,8 @@ import re
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from types import SimpleNamespace
+import jwt
+from pydantic import ValidationError
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
@@ -18,12 +20,12 @@ from routers.users import get_profile, update_profile
 
 @pytest.mark.asyncio
 async def test_sms_otp_send_and_verify_use_short_lived_hashed_challenge(monkeypatch, profile_session):
-    responses = [
-        {"Status": "Success", "Details": "session-id-123"},
-        {"Status": "Success", "Details": "OTP Matched"},
-    ]
+    responses = [{"return": True, "request_id": "request-id-123"}]
+    calls = []
 
     class FakeResponse:
+        status_code = 200
+
         def raise_for_status(self):
             return None
 
@@ -37,32 +39,51 @@ async def test_sms_otp_send_and_verify_use_short_lived_hashed_challenge(monkeypa
         async def __aexit__(self, exc_type, exc, traceback):
             return False
 
-        async def get(self, *args, **kwargs):
+        async def post(self, *args, **kwargs):
+            calls.append((args, kwargs))
             return FakeResponse()
 
-    monkeypatch.setattr(auth, "TWO_FACTOR_API_KEY", "test-key")
+    monkeypatch.setattr(auth, "FAST2SMS_API_KEY", "test-key")
+    monkeypatch.setattr(auth.secrets, "randbelow", lambda upper: 123456)
     monkeypatch.setenv("APP_SECRET_KEY", "test-app-secret-0123456789abcdef")
     monkeypatch.setattr(auth.httpx, "AsyncClient", FakeClient)
     request = SimpleNamespace(client=SimpleNamespace(host="203.0.113.4"))
 
     sent = await auth.send_otp(
-        SendOTPRequest(phone_number="+91 98765 43210"),
+        SendOTPRequest(mobile="9876543210"),
         request,
         session=profile_session,
     )
 
     assert sent["success"] is True
-    assert sent["session_id"] == "session-id-123"
+    assert calls[0][0] == (auth.FAST2SMS_BULK_URL,)
+    assert calls[0][1]["headers"] == {"authorization": "test-key"}
+    assert calls[0][1]["json"] == {
+        "route": "otp",
+        "variables_values": "123456",
+        "numbers": "9876543210",
+    }
+    assert "params" not in calls[0][1]
     challenge = profile_session.query(SmsOTPChallenge).one()
-    assert challenge.session_digest != "session-id-123"
+    assert challenge.otp_digest == auth._sms_otp_digest("sms-code", "9876543210:123456")
     assert challenge.phone_digest != "9876543210"
     assert profile_session.query(SmsOTPRateLimit).count() == 3
 
     verified = await auth.verify_otp(
-        VerifyOTPRequest(session_id="session-id-123", otp="123456"),
+        VerifyOTPRequest(mobile="9876543210", otp="123456"),
         session=profile_session,
     )
     assert verified["success"] is True
+    claims = jwt.decode(
+        verified["verification_token"],
+        "test-app-secret-0123456789abcdef",
+        algorithms=["HS256"],
+        audience="fendly-mobile-verification",
+        issuer="fendly-api",
+    )
+    assert claims["sub"] == "9876543210"
+    assert claims["scope"] == "mobile_verification"
+    assert len(calls) == 1
     assert profile_session.query(SmsOTPChallenge).count() == 0
 
 
@@ -91,30 +112,20 @@ def test_sms_otp_send_enforces_persistent_phone_and_ip_limits(monkeypatch, profi
 
 @pytest.mark.asyncio
 async def test_sms_otp_send_rejects_invalid_indian_number(monkeypatch, profile_session):
-    monkeypatch.setattr(auth, "TWO_FACTOR_API_KEY", "test-key")
-    request = SimpleNamespace(client=SimpleNamespace(host="203.0.113.4"))
-
-    with pytest.raises(HTTPException) as exc:
-        await auth.send_otp(
-            SendOTPRequest(phone_number="1234567890"),
-            request,
-            session=profile_session,
-        )
-
-    assert exc.value.status_code == 422
+    with pytest.raises(ValidationError):
+        SendOTPRequest(mobile="1234567890")
     assert profile_session.query(SmsOTPRateLimit).count() == 0
 
 
 @pytest.mark.asyncio
 async def test_sms_otp_verification_is_bound_to_server_challenge_and_limited(monkeypatch, profile_session):
-    monkeypatch.setattr(auth, "TWO_FACTOR_API_KEY", "test-key")
     monkeypatch.setenv("APP_SECRET_KEY", "test-app-secret-0123456789abcdef")
     monkeypatch.setattr(auth.time, "time", lambda: 1_700_000_000)
-    session_id = "session-with-guess-limit"
-    session_digest = auth._sms_otp_digest("session", session_id)
+    challenge_id = "challenge-with-guess-limit"
+    session_digest = auth._sms_otp_digest("sms-code", f"9876543210:{challenge_id}")
     profile_session.add(
         SmsOTPChallenge(
-            session_digest=session_digest,
+            otp_digest=session_digest,
             phone_digest=auth._sms_otp_digest("phone", "9876543210"),
             sent_at=1_700_000_000,
             expires_at=1_700_000_600,
@@ -123,27 +134,9 @@ async def test_sms_otp_verification_is_bound_to_server_challenge_and_limited(mon
     )
     profile_session.commit()
 
-    class FakeResponse:
-        def raise_for_status(self):
-            return None
-
-        def json(self):
-            return {"Status": "Error", "Details": "OTP Mismatch"}
-
-    class FakeClient:
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, exc_type, exc, traceback):
-            return False
-
-        async def get(self, *args, **kwargs):
-            return FakeResponse()
-
-    monkeypatch.setattr(auth.httpx, "AsyncClient", FakeClient)
     for _ in range(auth.SMS_OTP_MAX_VERIFY_ATTEMPTS):
         result = await auth.verify_otp(
-            VerifyOTPRequest(session_id=session_id, otp="123456"),
+            VerifyOTPRequest(mobile="9876543210", otp="123456"),
             session=profile_session,
         )
         assert result["success"] is False
@@ -151,7 +144,7 @@ async def test_sms_otp_verification_is_bound_to_server_challenge_and_limited(mon
 
     with pytest.raises(HTTPException) as exc:
         await auth.verify_otp(
-            VerifyOTPRequest(session_id=session_id, otp="123456"),
+            VerifyOTPRequest(mobile="9876543210", otp="123456"),
             session=profile_session,
         )
     assert exc.value.status_code == 400
