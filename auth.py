@@ -249,8 +249,8 @@ async def send_otp(
                 FAST2SMS_BULK_URL,
                 headers={"authorization": FAST2SMS_API_KEY},
                 data={
-                    "route": "otp",
-                    "variables_values": otp,
+                    "route": "q",
+                    "message": f"Your Fendly verification code is {otp}",
                     "numbers": payload.mobile,
                 },
                 timeout=15.0,

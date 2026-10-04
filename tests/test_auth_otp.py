@@ -60,8 +60,8 @@ async def test_sms_otp_send_and_verify_use_short_lived_hashed_challenge(monkeypa
     assert calls[0][0] == (auth.FAST2SMS_BULK_URL,)
     assert calls[0][1]["headers"] == {"authorization": "test-key"}
     assert calls[0][1]["data"] == {
-        "route": "otp",
-        "variables_values": "123456",
+        "route": "q",
+        "message": "Your Fendly verification code is 123456",
         "numbers": "9876543210",
     }
     assert "params" not in calls[0][1]
