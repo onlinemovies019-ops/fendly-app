@@ -8,7 +8,7 @@ from pathlib import Path
 from urllib.parse import quote, unquote, urlsplit
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy import delete, desc, func, or_, select, update
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 import firebase_admin
 from firebase_admin import auth as firebase_auth
@@ -379,6 +379,58 @@ def normalize_username(value: str) -> str:
     return base.strip("_")
 
 
+def _username_is_taken(session: Session, normalized: str) -> bool:
+    try:
+        reserved = session.get(UsernameReservation, normalized)
+        existing_profile = session.scalar(
+            select(User.id)
+            .where(func.lower(User.username) == normalized)
+            .limit(1)
+        )
+    except SQLAlchemyError as exc:
+        session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Username availability is temporarily unavailable",
+        ) from exc
+    return reserved is not None or existing_profile is not None
+
+
+def _username_exists_in_firebase_auth(normalized: str) -> bool:
+    email = f"{normalized}@login.fendly.app"
+    try:
+        firebase_auth.get_user_by_email(email, app=_firebase_app())
+        return True
+    except firebase_auth.UserNotFoundError:
+        return False
+    except firebase_admin.exceptions.FirebaseError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Username availability is temporarily unavailable",
+        ) from exc
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Username availability is temporarily unavailable",
+        ) from exc
+
+
+@router.get("/username-availability/{username}")
+def check_registration_username(
+    username: str,
+    session: Session = Depends(get_db),
+) -> dict[str, object]:
+    normalized = normalize_username(username)
+    if len(normalized) < 3 or len(normalized) > 32 or not normalized.replace("_", "").isalnum():
+        return {"username": normalized, "available": False}
+    if _username_exists_in_firebase_auth(normalized):
+        return {"username": normalized, "available": False}
+    return {
+        "username": normalized,
+        "available": not _username_is_taken(session, normalized),
+    }
+
+
 @router.get("/username/{username}")
 def check_username(
     username: str,
@@ -388,10 +440,7 @@ def check_username(
     normalized = normalize_username(username)
     if len(normalized) < 3 or len(normalized) > 32 or not normalized.replace("_", "").isalnum():
         return {"username": normalized, "available": False}
-    try:
-        taken = session.get(UsernameReservation, normalized) is not None
-    except Exception:
-        taken = False
+    taken = _username_is_taken(session, normalized)
     return {"username": normalized, "available": not taken}
 
 

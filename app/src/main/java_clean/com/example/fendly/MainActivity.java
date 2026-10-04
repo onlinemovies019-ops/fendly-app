@@ -3,8 +3,10 @@ package com.example.fendly;
 import android.Manifest;
 import android.app.Activity;
 import android.content.ActivityNotFoundException;
+import android.content.BroadcastReceiver;
 import android.content.Intent;
 import android.content.Context;
+import android.content.IntentFilter;
 import android.content.pm.PackageManager;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
@@ -114,9 +116,12 @@ import android.app.AlertDialog;
 import android.content.SharedPreferences;
 import com.example.fendly.notifications.FcmRegistration;
 import com.google.firebase.auth.FirebaseAuth;
+import com.google.firebase.auth.FirebaseAuthException;
 import com.google.firebase.auth.FirebaseUser;
+import com.google.firebase.auth.FirebaseAuthUserCollisionException;
 import com.google.firebase.auth.EmailAuthProvider;
 import com.google.firebase.auth.AuthResult;
+import com.google.android.gms.auth.api.phone.SmsRetriever;
 import java.util.concurrent.TimeUnit;
 import com.google.firebase.firestore.FirebaseFirestore;
 import com.google.firebase.firestore.ListenerRegistration;
@@ -310,6 +315,12 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
     private String pendingGuideSpeech;
     private ImageView pendingGuidePlayButton;
     private EditText[] visibleMobileCells;
+    private static final int REQUEST_SMS_USER_CONSENT = 913;
+    private BroadcastReceiver smsUserConsentReceiver;
+    private boolean smsUserConsentReceiverRegistered;
+    private Intent pendingSmsUserConsentIntent;
+    private EditText[] activeSmsOtpCells;
+    private Dialog activeSmsOtpDialog;
     private final Handler realtimeProfileHandler = new Handler(Looper.getMainLooper());
     private Runnable realtimeProfileSave;
     private boolean applyingCloudProfile;
@@ -489,6 +500,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
     @Override
     protected void onDestroy() {
         stopActiveLocationUpdates();
+        stopSmsUserConsent();
         if (cloudProfileListener != null) cloudProfileListener.remove();
         if (realtimeProfileSave != null) realtimeProfileHandler.removeCallbacks(realtimeProfileSave);
         if (ttsEngine != null) {
@@ -764,6 +776,12 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
     }
 
     private void restoreScreenState() {
+        SharedPreferences account = getSharedPreferences("fendly_account", MODE_PRIVATE);
+        if (FirebaseAuth.getInstance().getCurrentUser() != null
+                && account.getBoolean("pin_setup_pending", false)) {
+            showProfileSetup();
+            return;
+        }
         if (currentPage == PAGE_HOME) {
             showHome();
             return;
@@ -806,6 +824,11 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
     }
 
     private void handleAppBack() {
+        if (FirebaseAuth.getInstance().getCurrentUser() != null
+                && getSharedPreferences("fendly_account", MODE_PRIVATE).getBoolean("pin_setup_pending", false)) {
+            showProfileSetup();
+            return;
+        }
         if (currentPage == PAGE_ADMIN_SUBSCRIPTIONS) {
             showAdminDashboard();
             return;
@@ -867,10 +890,12 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         content.addView(actions, new LinearLayout.LayoutParams(-1, dp(44)));
         yes.setOnClickListener(view -> {
             dialog.dismiss();
+            clearAllLocalAccountData();
             try {
                 FirebaseAuth.getInstance().signOut();
             } catch (Exception ignored) {}
-            finishAffinity();
+            Toast.makeText(MainActivity.this, translate("Signed out successfully"), Toast.LENGTH_SHORT).show();
+            buildScreen();
         });
 
         dialog.setContentView(content);
@@ -935,9 +960,12 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             runOnUiThread(() -> {
                 if (finalResponseCode == 204) {
                     dialog.dismiss();
-                    getSharedPreferences("fendly_account", MODE_PRIVATE).edit().clear().apply();
-                    FirebaseAuth.getInstance().signOut();
-                    finishAffinity();
+                    clearAllLocalAccountData();
+                    try {
+                        FirebaseAuth.getInstance().signOut();
+                    } catch (Exception ignored) {}
+                    Toast.makeText(MainActivity.this, translate("Account deleted successfully"), Toast.LENGTH_LONG).show();
+                    buildScreen();
                 } else {
                     deleteButton.setEnabled(true);
                     deleteButton.setText("Delete account");
@@ -1190,26 +1218,55 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         if (Build.VERSION.SDK_INT >= 29) createAccount.setForceDarkAllowed(false);
         createAccount.setTextColor(primaryTextColor());
         createAccount.setLayerType(View.LAYER_TYPE_SOFTWARE, null);
+        username.addTextChangedListener(new TextWatcher() {
+            @Override public void beforeTextChanged(CharSequence value, int start, int count, int after) { }
+            @Override public void onTextChanged(CharSequence value, int start, int before, int count) {
+                username.setError(null);
+            }
+            @Override public void afterTextChanged(Editable value) { }
+        });
         createAccount.setOnClickListener(view -> {
-            resetFreshAccountDrafts();
             String name = username.getText().toString().trim();
-            String code = pinValue(pinCells);
-            if (name.length() < 3 || code.length() != 4) {
-                Toast.makeText(this, "Enter a valid username and 4-digit PIN", Toast.LENGTH_LONG).show();
+            if (!name.matches("^[a-zA-Z0-9_]{3,32}$")) {
+                username.setError("Enter a valid username (3-32 letters, numbers, or underscores)");
+                username.requestFocus();
                 return;
             }
             FirebaseAuth auth = FirebaseAuth.getInstance();
-            auth.signOut();
-            profileHydrated = false;
             createAccount.setEnabled(false);
             createAccount.setText(translate("Creating account..."));
-            auth.createUserWithEmailAndPassword(credentialEmail(name), credentialPassword(name, code))
+            checkRegistrationUsername(name, (available, checked) -> {
+                String currentName = username.getText().toString().trim();
+                if (!name.equalsIgnoreCase(currentName)) {
+                    createAccount.setEnabled(true);
+                    createAccount.setText(loginText("create"));
+                    return;
+                }
+                if (checked && !available) {
+                    createAccount.setEnabled(true);
+                    createAccount.setText(loginText("create"));
+                    username.setError("User already exists");
+                    username.requestFocus();
+                    return;
+                }
+                if (!checked) {
+                    createAccount.setEnabled(true);
+                    createAccount.setText(loginText("create"));
+                    username.setError("Could not check username. Please try again.");
+                    username.requestFocus();
+                    return;
+                }
+                resetFreshAccountDrafts();
+                auth.signOut();
+                profileHydrated = false;
+                String initialPassword = java.util.UUID.randomUUID().toString();
+                auth.createUserWithEmailAndPassword(credentialEmail(name), initialPassword)
                     .addOnSuccessListener(result -> {
                         clearAllLocalAccountData();
                         accountCreated = true;
-                        saveStoredAccountPin(code);
                         getSharedPreferences("fendly_account", MODE_PRIVATE).edit()
                                 .putBoolean("created", true)
+                                .putBoolean("pin_setup_pending", true)
                                 .putString("username", name)
                                 .apply();
                         FcmRegistration.registerCurrentToken();
@@ -1218,14 +1275,15 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                     .addOnFailureListener(error -> {
                         createAccount.setEnabled(true);
                         createAccount.setText(loginText("create"));
-                        String message = error.getMessage();
-                        if (message != null && message.toLowerCase(Locale.US).contains("already in use")) {
-                            message = "Username already exists";
+                        if (isUsernameAlreadyTaken(error)) {
+                            username.setError("User already exists");
+                            username.requestFocus();
                         } else {
-                            message = "Could not create account";
+                            username.setError("Could not create account. Please try again.");
+                            username.requestFocus();
                         }
-                        Toast.makeText(this, message, Toast.LENGTH_LONG).show();
                     });
+            });
         });
         authCard.addView(createAccount, new LinearLayout.LayoutParams(-1, dp(58)));
 
@@ -1239,6 +1297,59 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             for (EditText pinCell : pinCells) pinCell.setTextColor(authTextColor);
             createAccount.setTextColor(authTextColor);
         }, 150);
+    }
+
+    private boolean isUsernameAlreadyTaken(Exception error) {
+        if (error instanceof FirebaseAuthUserCollisionException) return true;
+        if (error instanceof FirebaseAuthException) {
+            String errorCode = ((FirebaseAuthException) error).getErrorCode();
+            if ("ERROR_EMAIL_ALREADY_IN_USE".equalsIgnoreCase(errorCode)
+                    || "ERROR_ACCOUNT_EXISTS_WITH_DIFFERENT_CREDENTIAL".equalsIgnoreCase(errorCode)) {
+                return true;
+            }
+        }
+        String message = error == null ? "" : String.valueOf(error.getMessage()).toLowerCase(Locale.US);
+        return message.contains("email-already-in-use")
+                || message.contains("email_exists")
+                || message.contains("email exists")
+                || message.contains("account-exists-with-different-credential")
+                || message.contains("credential already in use")
+                || message.contains("email address is already in use")
+                || message.contains("already in use");
+    }
+
+    private interface UsernameAvailabilityCallback {
+        void onResult(boolean available, boolean checked);
+    }
+
+    private void checkRegistrationUsername(String username, UsernameAvailabilityCallback callback) {
+        network.execute(() -> {
+            HttpURLConnection connection = null;
+            boolean available = false;
+            boolean checked = false;
+            try {
+                String encoded = URLEncoder.encode(username, StandardCharsets.UTF_8.toString());
+                connection = (HttpURLConnection) new URL(
+                        API_BASE + "/api/users/username-availability/" + encoded).openConnection();
+                connection.setRequestMethod("GET");
+                connection.setConnectTimeout(10000);
+                connection.setReadTimeout(10000);
+                if (connection.getResponseCode() >= 200 && connection.getResponseCode() < 300) {
+                    String response = readStream(connection.getInputStream());
+                    if (response != null) {
+                        available = new JSONObject(response).optBoolean("available", false);
+                        checked = true;
+                    }
+                }
+            } catch (Exception error) {
+                Log.w("AUTH", "Could not check username availability before registration", error);
+            } finally {
+                if (connection != null) connection.disconnect();
+            }
+            boolean finalAvailable = available;
+            boolean finalChecked = checked;
+            runOnUiThread(() -> callback.onResult(finalAvailable, finalChecked));
+        });
     }
 
     private boolean isPhoneVerified() {
@@ -1488,6 +1599,18 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                     email.setError("Email invalid");
                 } else {
                     email.setError(null);
+                }
+            }
+        });
+
+        EditText mobileField = mobileCells[0];
+        mobileField.setOnFocusChangeListener((view, hasFocus) -> {
+            if (!hasFocus) {
+                String mobileValue = normalizeLocalizedDigits(mobileField.getText().toString().trim());
+                if (!mobileValue.isEmpty() && !mobileValue.matches("^\\d{10}$")) {
+                    mobileField.setError("Mobile number must be 10 digits");
+                } else {
+                    mobileField.setError(null);
                 }
             }
         });
@@ -1795,6 +1918,12 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
 
     private void showThemedOtpDialog(String titleText, String subtitleText, String hintText,
                                      OtpVerificationHandler verifyHandler, Runnable cancelAction, Runnable resendAction) {
+        showThemedOtpDialog(titleText, subtitleText, hintText, verifyHandler, cancelAction, resendAction, false);
+    }
+
+    private void showThemedOtpDialog(String titleText, String subtitleText, String hintText,
+                                     OtpVerificationHandler verifyHandler, Runnable cancelAction,
+                                     Runnable resendAction, boolean smsConsent) {
         Dialog dialog = new Dialog(this);
         dialog.requestWindowFeature(Window.FEATURE_NO_TITLE);
         LinearLayout content = new LinearLayout(this);
@@ -1823,6 +1952,11 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         content.addView(subtitle, new LinearLayout.LayoutParams(-1, dp(34)));
 
         EditText[] codeCells = otpCells();
+        if (smsConsent) {
+            activeSmsOtpCells = codeCells;
+            activeSmsOtpDialog = dialog;
+            dialog.setOnDismissListener(ignored -> stopSmsUserConsent());
+        }
         LinearLayout codeRow = new LinearLayout(this);
         codeRow.setOrientation(LinearLayout.HORIZONTAL);
         for (int index = 0; index < codeCells.length; index++) {
@@ -1881,6 +2015,11 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         dialog.setContentView(content);
         dialog.setCanceledOnTouchOutside(false);
         dialog.show();
+        if (smsConsent && pendingSmsUserConsentIntent != null) {
+            Intent consentIntent = pendingSmsUserConsentIntent;
+            pendingSmsUserConsentIntent = null;
+            launchSmsUserConsent(consentIntent);
+        }
         Window window = dialog.getWindow();
         if (window != null) {
             window.setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
@@ -2087,7 +2226,6 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
     private void saveFirebaseCredential(String username, String pin, TextView save) {
         String email = credentialEmail(username);
         String password = credentialPassword(username, pin);
-        saveStoredAccountPin(pin);
         FirebaseUser currentUser = FirebaseAuth.getInstance().getCurrentUser();
         if (currentUser == null) {
             save.setText("Could not secure account");
@@ -2102,14 +2240,20 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                 break;
             }
         }
-        Task<AuthResult> accountTask = passwordProviderLinked
-                ? Tasks.forResult(null)
+        SharedPreferences account = getSharedPreferences("fendly_account", MODE_PRIVATE);
+        boolean pinSetupPending = account.getBoolean("pin_setup_pending", false);
+        Task<?> accountTask = passwordProviderLinked
+                ? (pinSetupPending ? currentUser.updatePassword(password) : Tasks.forResult(null))
                 : currentUser.linkWithCredential(EmailAuthProvider.getCredential(email, password));
         accountTask
                 .addOnSuccessListener(result -> {
-                    SharedPreferences account = getSharedPreferences("fendly_account", MODE_PRIVATE);
+                    saveStoredAccountPin(pin);
                     String formattedUsername = formatUsernameDisplay(username);
-                    account.edit().putBoolean("created", true).putString("username", formattedUsername).apply();
+                    account.edit()
+                            .putBoolean("created", true)
+                            .putBoolean("pin_setup_pending", false)
+                            .putString("username", formattedUsername)
+                            .apply();
                     accountCreated = true;
                     saveCloudProfile(formattedUsername, account.getString("full_name", ""), account.getString("email", ""),
                             account.getString("mobile", ""), account.getString("state", ""), account.getString("city", ""), null);
@@ -2703,6 +2847,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             hideKeyboardAfterLocationSelection(stateSearch, citySearch);
         });
         dialog.setOnShowListener(shown -> {
+            styleLocationPickerDialog(dialog);
             if (dialog.getWindow() != null) {
                 dialog.getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_STATE_VISIBLE);
             }
@@ -2787,6 +2932,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             hideKeyboardAfterLocationSelection(citySearch);
         });
         dialog.setOnShowListener(shown -> {
+            styleLocationPickerDialog(dialog);
             if (dialog.getWindow() != null) {
                 dialog.getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_STATE_VISIBLE);
             }
@@ -2799,6 +2945,16 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             });
         });
         dialog.show();
+    }
+
+    private void styleLocationPickerDialog(AlertDialog dialog) {
+        TextView title = dialog.findViewById(androidx.appcompat.R.id.alertTitle);
+        if (title != null) {
+            title.setTextColor(primaryTextColor());
+            title.setTypeface(localizedScriptTypeface(title.getText(), Typeface.NORMAL));
+        }
+        TextView negativeButton = dialog.getButton(AlertDialog.BUTTON_NEGATIVE);
+        if (negativeButton != null) negativeButton.setTextColor(primaryTextColor());
     }
 
     private ArrayAdapter<String> localizedLocationAdapter(String[] values) {
@@ -4329,6 +4485,86 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
     }
 
     private void sendBackendMobileOtp(String mobileValue, Object mobileTarget, TextView verifyButton) {
+        prepareSmsUserConsent();
+        try {
+            SmsRetriever.getClient(this).startSmsUserConsent(null)
+                    .addOnCompleteListener(task -> {
+                        if (!task.isSuccessful()) {
+                            Log.w("AUTH", "SMS User Consent could not start; OTP autofill may be unavailable",
+                                    task.getException());
+                        }
+                        sendBackendMobileOtpRequest(mobileValue, mobileTarget, verifyButton);
+                    });
+        } catch (RuntimeException error) {
+            Log.w("AUTH", "SMS User Consent is unavailable; continuing without OTP autofill", error);
+            sendBackendMobileOtpRequest(mobileValue, mobileTarget, verifyButton);
+        }
+    }
+
+    private void prepareSmsUserConsent() {
+        stopSmsUserConsent();
+        smsUserConsentReceiver = new BroadcastReceiver() {
+            @Override
+            public void onReceive(Context context, Intent intent) {
+                if (intent == null || !SmsRetriever.SMS_RETRIEVED_ACTION.equals(intent.getAction())) return;
+                Bundle extras = intent.getExtras();
+                if (extras == null) return;
+                com.google.android.gms.common.api.Status status =
+                        extras.getParcelable(SmsRetriever.EXTRA_STATUS);
+                if (status == null || status.getStatusCode() != com.google.android.gms.common.api.CommonStatusCodes.SUCCESS) {
+                    if (status != null && status.getStatusCode() == com.google.android.gms.common.api.CommonStatusCodes.TIMEOUT) {
+                        Log.i("AUTH", "Timed out waiting for OTP SMS consent");
+                    }
+                    return;
+                }
+                Intent consentIntent = extras.getParcelable(SmsRetriever.EXTRA_CONSENT_INTENT);
+                if (consentIntent == null) return;
+                if (activeSmsOtpDialog != null && activeSmsOtpDialog.isShowing()) {
+                    launchSmsUserConsent(consentIntent);
+                } else {
+                    pendingSmsUserConsentIntent = consentIntent;
+                }
+            }
+        };
+        try {
+            ContextCompat.registerReceiver(
+                    this,
+                    smsUserConsentReceiver,
+                    new IntentFilter(SmsRetriever.SMS_RETRIEVED_ACTION),
+                    SmsRetriever.SEND_PERMISSION,
+                    null,
+                    ContextCompat.RECEIVER_EXPORTED);
+            smsUserConsentReceiverRegistered = true;
+        } catch (RuntimeException error) {
+            smsUserConsentReceiver = null;
+            Log.w("AUTH", "Could not register SMS User Consent receiver; OTP autofill may be unavailable", error);
+        }
+    }
+
+    private void launchSmsUserConsent(Intent consentIntent) {
+        try {
+            startActivityForResult(consentIntent, REQUEST_SMS_USER_CONSENT);
+        } catch (ActivityNotFoundException | SecurityException error) {
+            Log.w("AUTH", "Could not open SMS User Consent prompt", error);
+        }
+    }
+
+    private void stopSmsUserConsent() {
+        if (smsUserConsentReceiverRegistered && smsUserConsentReceiver != null) {
+            try {
+                unregisterReceiver(smsUserConsentReceiver);
+            } catch (IllegalArgumentException error) {
+                Log.w("AUTH", "SMS User Consent receiver was already unregistered", error);
+            }
+        }
+        smsUserConsentReceiver = null;
+        smsUserConsentReceiverRegistered = false;
+        pendingSmsUserConsentIntent = null;
+        activeSmsOtpCells = null;
+        activeSmsOtpDialog = null;
+    }
+
+    private void sendBackendMobileOtpRequest(String mobileValue, Object mobileTarget, TextView verifyButton) {
         network.execute(() -> {
             String errorMessage = "Could not send SMS verification code";
             boolean sent = false;
@@ -4351,6 +4587,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                 verifyButton.setEnabled(true);
                 if (!finalSent) {
                     phoneVerificationMobile = null;
+                    stopSmsUserConsent();
                     Toast.makeText(MainActivity.this, finalErrorMessage, Toast.LENGTH_LONG).show();
                     return;
                 }
@@ -4376,7 +4613,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                 verifyButton.setEnabled(true);
             }, () -> {
                 verifyProfileMobileTarget(mobileTarget, verifyButton);
-            });
+            }, true);
     }
 
     private void verifyProfileOtp(String mobileValue, String otpValue, Object mobileTarget, TextView verifyButton,
@@ -6384,6 +6621,17 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                 scheduleRealtimeProfileSave();
             }));
         }
+        EditText mobileField = mobileCells[0];
+        mobileField.setOnFocusChangeListener((view, hasFocus) -> {
+            if (!hasFocus) {
+                String currentMobile = normalizeLocalizedDigits(mobileField.getText().toString().trim());
+                if (!currentMobile.isEmpty() && !currentMobile.matches("^\\d{10}$")) {
+                    mobileField.setError("Mobile number must be 10 digits");
+                } else {
+                    mobileField.setError(null);
+                }
+            }
+        });
 
         TextView emailVerify = filledButton(getString(R.string.profile_verify_otp), GOLD, GOLD_ON);
         emailVerify.setPadding(dp(12), 0, dp(12), 0);
@@ -6733,6 +6981,14 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         if (currentPage == PAGE_PROFILE) {
             scroll.setOnScrollChangeListener((View view, int scrollX, int scrollY, int oldScrollX, int oldScrollY) -> profileScrollY = scrollY);
         }
+        if (currentPage == PAGE_PROFILE || currentPage == PAGE_PROFILE_SETUP) {
+            scroll.getViewTreeObserver().addOnGlobalLayoutListener(() -> {
+                View focused = getCurrentFocus();
+                if (focused != null) {
+                    ensureFocusedProfileFieldVisible(scroll, focused);
+                }
+            });
+        }
         activeContent = new LinearLayout(this);
         activeContent.setOrientation(LinearLayout.VERTICAL);
         activeContent.setPadding(0, dp(26), 0, 0);
@@ -6741,6 +6997,33 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         root.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1));
         setContentView(root);
         return activeContent;
+    }
+
+    private void ensureFocusedProfileFieldVisible(ScrollView scroll, View focused) {
+        ViewParent parent = focused.getParent();
+        while (parent != null && parent != scroll) {
+            parent = parent.getParent();
+        }
+        if (parent != scroll) return;
+
+        scroll.post(() -> {
+            if (!focused.isAttachedToWindow()) return;
+            int[] scrollLocation = new int[2];
+            int[] focusedLocation = new int[2];
+            scroll.getLocationOnScreen(scrollLocation);
+            focused.getLocationOnScreen(focusedLocation);
+
+            int viewportTop = scrollLocation[1] + scroll.getPaddingTop();
+            int viewportBottom = scrollLocation[1] + scroll.getHeight() - scroll.getPaddingBottom();
+            int fieldTop = focusedLocation[1];
+            int fieldBottom = fieldTop + focused.getHeight();
+            int margin = dp(12);
+            if (fieldBottom + margin > viewportBottom) {
+                scroll.scrollBy(0, fieldBottom + margin - viewportBottom);
+            } else if (fieldTop - margin < viewportTop) {
+                scroll.scrollBy(0, fieldTop - margin - viewportTop);
+            }
+        });
     }
 
     private void addHeading(String title, String subtitle) {
@@ -7119,7 +7402,11 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
     }
 
     private EditText[] mobileCells() {
-        return digitCells(10, false);
+        EditText mobileField = field(getString(R.string.profile_mobile_number));
+        mobileField.setKeyListener(DigitsKeyListener.getInstance("0123456789"));
+        mobileField.setFilters(new InputFilter[]{new InputFilter.LengthFilter(10)});
+        mobileField.setImeOptions(EditorInfo.IME_ACTION_DONE);
+        return new EditText[]{mobileField};
     }
 
     private String mobileValue(EditText[] cells) {
@@ -7135,13 +7422,10 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
     private void setMobileCells(EditText[] cells, String value) {
         if (cells == null) return;
         String clean = normalizeLocalizedDigits(value != null ? value : "").replaceAll("\\D+", "");
-        for (int i = 0; i < cells.length; i++) {
-            if (i < clean.length()) {
-                cells[i].setText(localizeDigits(String.valueOf(clean.charAt(i))));
-            } else {
-                cells[i].setText("");
-            }
+        if (cells.length != 1) {
+            throw new IllegalArgumentException("Mobile profile field must contain one text input");
         }
+        cells[0].setText(clean);
     }
 
     private boolean hasMobileCellsFocus() {
@@ -7153,61 +7437,10 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
     }
 
     private void addLabeledMobileField(LinearLayout parent, String label, EditText[] cells, TextView verifyButton) {
-        LinearLayout group = new LinearLayout(this);
-        group.setOrientation(LinearLayout.VERTICAL);
-        group.addView(fieldLabel(label), new LinearLayout.LayoutParams(-1, dp(20)));
-
-        LinearLayout row = new LinearLayout(this);
-        row.setOrientation(LinearLayout.HORIZONTAL);
-        for (int index = 0; index < cells.length; index++) {
-            EditText cell = cells[index];
-            final boolean[] localizingDigit = {false};
-            cell.addTextChangedListener(new TextWatcher() {
-                @Override public void beforeTextChanged(CharSequence value, int start, int count, int after) { }
-                @Override public void onTextChanged(CharSequence value, int start, int before, int count) { }
-                @Override public void afterTextChanged(Editable value) {
-                    if (localizingDigit[0]) return;
-                    String localized = localizeDigits(normalizeLocalizedDigits(value.toString()));
-                    if (!localized.equals(value.toString())) {
-                        int selection = cell.getSelectionStart();
-                        localizingDigit[0] = true;
-                        cell.setText(localized);
-                        if (selection >= 0) cell.setSelection(Math.min(selection, localized.length()));
-                        localizingDigit[0] = false;
-                    }
-                }
-            });
-            LinearLayout.LayoutParams cellParams = new LinearLayout.LayoutParams(0, dp(38), 1f);
-            if (index > 0) cellParams.setMargins(dp(2), 0, 0, 0);
-            row.addView(cell, cellParams);
+        if (cells == null || cells.length != 1) {
+            throw new IllegalArgumentException("Mobile profile field must contain one text input");
         }
-        LinearLayout.LayoutParams rowParams = new LinearLayout.LayoutParams(-1, dp(42));
-        rowParams.topMargin = dp(4);
-        group.addView(row, rowParams);
-
-        if (verifyButton != null) {
-            if (verifyButton.getParent() instanceof ViewGroup) {
-                ((ViewGroup) verifyButton.getParent()).removeView(verifyButton);
-            }
-            verifyButton.setClickable(true);
-            verifyButton.setFocusable(true);
-            verifyButton.setEnabled(true);
-            verifyButton.setIncludeFontPadding(false);
-            verifyButton.setTextAlignment(View.TEXT_ALIGNMENT_CENTER);
-            verifyButton.setSingleLine(true);
-            verifyButton.setPadding(dp(16), dp(8), dp(16), dp(8));
-            LinearLayout.LayoutParams buttonParams = new LinearLayout.LayoutParams(-1, dp(40));
-            buttonParams.setMargins(0, dp(8), 0, 0);
-            verifyButton.setLayoutParams(buttonParams);
-            group.addView(verifyButton);
-            parent.addView(group, contentParams(-1, dp(120), dp(8)));
-        } else {
-            parent.addView(group, contentParams(-1, dp(68), dp(4)));
-        }
-    }
-
-    private void addLabeledMobileField(LinearLayout parent, String label, EditText[] cells) {
-        addLabeledMobileField(parent, label, cells, null);
+        addEditableProfileField(parent, label, cells[0], verifyButton);
     }
 
     private EditText[] digitCells(int count, boolean password) {
@@ -7749,6 +7982,13 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode == REQUEST_SMS_USER_CONSENT) {
+            if (resultCode == RESULT_OK && data != null) {
+                String smsMessage = data.getStringExtra(SmsRetriever.EXTRA_SMS_MESSAGE);
+                fillOtpFromSms(smsMessage);
+            }
+            return;
+        }
         if (requestCode == 701 && resultCode == RESULT_OK && data != null) {
             selectedImage = data.getData();
             if (currentReportType != null) showReport(currentReportType);
@@ -7816,6 +8056,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                 Toast.makeText(this, "Could not load selected image", Toast.LENGTH_SHORT).show();
             }
         }
+
         if (requestCode == REQUEST_PROFILE_CAMERA && resultCode == RESULT_OK) {
             Bitmap bitmap = null;
             if (pendingProfileCameraUri != null) {
@@ -7872,6 +8113,20 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             pendingProfileCameraUri = null;
         }
 
+    }
+
+    private void fillOtpFromSms(String smsMessage) {
+        if (smsMessage == null || activeSmsOtpCells == null || activeSmsOtpCells.length != 6) return;
+        java.util.regex.Matcher matcher =
+                java.util.regex.Pattern.compile("(?<!\\d)\\d{6}(?!\\d)").matcher(smsMessage);
+        if (!matcher.find()) {
+            Log.w("AUTH", "SMS User Consent message did not contain a standalone six-digit OTP");
+            return;
+        }
+        String otp = matcher.group();
+        for (int index = 0; index < activeSmsOtpCells.length; index++) {
+            activeSmsOtpCells[index].setText(String.valueOf(otp.charAt(index)));
+        }
     }
 
     private String saveProfileBitmap(Bitmap bitmap) {
@@ -9707,30 +9962,29 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                     pendingNotificationCount, true, view -> loadAdminAlerts(false));
             controls.addView(notificationIconButton, new LinearLayout.LayoutParams(-2, dp(42)));
         } else if (currentPage == PAGE_REPORTS) {
-            // Info "i" button for Reports page with instructions on how to use My Reports
-            TextView infoButton = text("i", 16, secondaryTextColor(), Typeface.NORMAL);
-            infoButton.setGravity(Gravity.CENTER);
-            infoButton.setTypeface(Typeface.DEFAULT_BOLD);
-            infoButton.setBackground(roundWithStroke(surfaceColor(), 14, borderColor()));
-            infoButton.setPadding(dp(8), dp(8), dp(8), dp(8));
-            infoButton.setElevation(dp(2));
-            infoButton.setContentDescription("How to use My Reports");
-            infoButton.setOnClickListener(view -> showReportsGuideDialog());
-            controls.addView(infoButton, new LinearLayout.LayoutParams(dp(42), dp(42)));
+            ImageView guideButton = createGuideButton("My Reports voice guide", this::showReportsGuideDialog);
+            controls.addView(guideButton, new LinearLayout.LayoutParams(dp(42), dp(42)));
         } else {
-            // Info "i" button for other post-login screens
-            TextView infoButton = text("i", 16, secondaryTextColor(), Typeface.NORMAL);
-            infoButton.setGravity(Gravity.CENTER);
-            infoButton.setTypeface(Typeface.DEFAULT_BOLD);
-            infoButton.setBackground(roundWithStroke(surfaceColor(), 14, borderColor()));
-            infoButton.setPadding(dp(8), dp(8), dp(8), dp(8));
-            infoButton.setElevation(dp(2));
-            infoButton.setContentDescription("How to report lost and found");
-            infoButton.setOnClickListener(view -> showHowToReportDialog());
-            controls.addView(infoButton, new LinearLayout.LayoutParams(dp(42), dp(42)));
+            ImageView guideButton = createGuideButton("Lost and found voice guide", this::showHowToReportDialog);
+            controls.addView(guideButton, new LinearLayout.LayoutParams(dp(42), dp(42)));
         }
 
         parent.addView(controls, new LinearLayout.LayoutParams(-1, -2));
+    }
+
+    private ImageView createGuideButton(String description, Runnable action) {
+        ImageView button = new ImageView(this);
+        button.setImageResource(R.drawable.ic_volume_up);
+        button.setColorFilter(secondaryTextColor());
+        button.setScaleType(ImageView.ScaleType.CENTER_INSIDE);
+        button.setBackground(roundWithStroke(surfaceColor(), 14, borderColor()));
+        button.setPadding(dp(8), dp(8), dp(8), dp(8));
+        button.setElevation(dp(2));
+        button.setContentDescription(description);
+        button.setClickable(true);
+        button.setFocusable(true);
+        button.setOnClickListener(view -> action.run());
+        return button;
     }
 
     private void showReportsGuideDialog() {

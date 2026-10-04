@@ -16,7 +16,7 @@ from firebase_admin import credentials as firebase_credentials
 import httpx
 import jwt
 from pydantic import BaseModel, EmailStr, Field
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
@@ -29,6 +29,7 @@ router = APIRouter(prefix="/api/auth", tags=["Authentication"])
 logger = logging.getLogger(__name__)
 
 FAST2SMS_API_KEY = os.getenv("FAST2SMS_API_KEY", "")
+FAST2SMS_OTP_TEMPLATE_ID = os.getenv("FAST2SMS_OTP_TEMPLATE_ID", "").strip()
 FAST2SMS_BULK_URL = "https://www.fast2sms.com/dev/bulkV2"
 RESEND_API_KEY = os.getenv("RESEND_API_KEY", "")
 RESEND_FROM_EMAIL = (
@@ -228,7 +229,7 @@ async def send_otp(
     phone_digest = _sms_otp_digest("phone", payload.mobile)
     otp_code = f"{secrets.randbelow(1_000_000):06d}"
     try:
-        _reserve_sms_otp_quota(
+        _check_sms_otp_quota(
             session,
             phone_digest=phone_digest,
             client_ip=request.client.host,
@@ -243,16 +244,26 @@ async def send_otp(
             detail="SMS verification is temporarily unavailable",
         ) from exc
 
+    if FAST2SMS_OTP_TEMPLATE_ID:
+        fast2sms_data = {
+            "route": "dlt",
+            "message": FAST2SMS_OTP_TEMPLATE_ID,
+            "variables_values": otp_code,
+            "numbers": payload.mobile,
+        }
+    else:
+        fast2sms_data = {
+            "route": "otp",
+            "variables_values": otp_code,
+            "numbers": payload.mobile,
+        }
+
     async with httpx.AsyncClient() as client:
         try:
             response = await client.post(
                 FAST2SMS_BULK_URL,
                 headers={"authorization": FAST2SMS_API_KEY},
-                data={
-                    "route": "q",
-                    "message": f"Your Fendly code is {otp_code}",
-                    "numbers": payload.mobile,
-                },
+                data=fast2sms_data,
                 timeout=15.0,
             )
         except httpx.HTTPError as exc:
@@ -308,6 +319,12 @@ async def send_otp(
                 expires_at=now + SMS_OTP_TTL_SECONDS,
                 attempts=0,
             )
+        )
+        _record_sms_otp_send(
+            session,
+            phone_digest=phone_digest,
+            client_ip=request.client.host,
+            now=now,
         )
         session.commit()
     except SQLAlchemyError as exc:
@@ -447,7 +464,7 @@ def _sms_otp_digest(purpose: str, value: str) -> str:
     return hmac.new(key.encode("utf-8"), message, hashlib.sha256).hexdigest()
 
 
-def _reserve_sms_otp_quota(
+def _check_sms_otp_quota(
     session: Session,
     *,
     phone_digest: str,
@@ -458,9 +475,9 @@ def _reserve_sms_otp_quota(
     ip_hour_key = _sms_otp_digest("ip-hour-quota", client_ip)
     ip_day_key = _sms_otp_digest("ip-day-quota", client_ip)
     limits = (
-        (phone_key, SMS_OTP_RESEND_SECONDS, 86400, SMS_OTP_MAX_SENDS_PER_DAY),
-        (ip_hour_key, 0, 3600, SMS_OTP_MAX_IP_SENDS_PER_HOUR),
-        (ip_day_key, 0, 86400, SMS_OTP_MAX_IP_SENDS_PER_DAY),
+        (phone_key, SMS_OTP_RESEND_SECONDS, 86400, SMS_OTP_MAX_SENDS_PER_DAY, True),
+        (ip_hour_key, 0, 3600, SMS_OTP_MAX_IP_SENDS_PER_HOUR, False),
+        (ip_day_key, 0, 86400, SMS_OTP_MAX_IP_SENDS_PER_DAY, False),
     )
     session.execute(
         delete(SmsOTPChallenge).where(SmsOTPChallenge.expires_at <= now)
@@ -476,7 +493,7 @@ def _reserve_sms_otp_quota(
             .with_for_update()
         ).all()
     }
-    for key, cooldown, window_seconds, max_sends in limits:
+    for key, cooldown, window_seconds, max_sends, is_phone_limit in limits:
         row = rows.get(key)
         if row is None:
             continue
@@ -488,13 +505,54 @@ def _reserve_sms_otp_quota(
             )
         count = row.send_count if now - row.window_started < window_seconds else 0
         if count >= max_sends:
+            if is_phone_limit:
+                has_active_challenge = session.scalar(
+                    select(SmsOTPChallenge).where(
+                        SmsOTPChallenge.phone_digest == phone_digest
+                    )
+                ) is not None
+                if not has_active_challenge:
+                    session.delete(row)
+                    continue
+
+            total_active_challenges = session.scalar(
+                select(func.count()).select_from(SmsOTPChallenge)
+            ) or 0
+            if total_active_challenges == 0:
+                session.delete(row)
+                continue
+
             session.rollback()
             raise HTTPException(
                 status_code=status.HTTP_429_TOO_MANY_REQUESTS,
                 detail="SMS verification request limit reached",
             )
 
-    for key, _, window_seconds, _ in limits:
+
+def _record_sms_otp_send(
+    session: Session,
+    *,
+    phone_digest: str,
+    client_ip: str,
+    now: int,
+) -> None:
+    phone_key = _sms_otp_digest("phone-quota", phone_digest)
+    ip_hour_key = _sms_otp_digest("ip-hour-quota", client_ip)
+    ip_day_key = _sms_otp_digest("ip-day-quota", client_ip)
+    limits = (
+        (phone_key, 86400),
+        (ip_hour_key, 3600),
+        (ip_day_key, 86400),
+    )
+    rows = {
+        row.quota_key: row
+        for row in session.scalars(
+            select(SmsOTPRateLimit)
+            .where(SmsOTPRateLimit.quota_key.in_([key for key, _ in limits]))
+            .with_for_update()
+        ).all()
+    }
+    for key, window_seconds in limits:
         row = rows.get(key)
         if row is None:
             session.add(
@@ -511,6 +569,27 @@ def _reserve_sms_otp_quota(
                 row.send_count = 0
             row.sent_at = now
             row.send_count += 1
+
+
+def _reserve_sms_otp_quota(
+    session: Session,
+    *,
+    phone_digest: str,
+    client_ip: str,
+    now: int,
+) -> None:
+    _check_sms_otp_quota(
+        session,
+        phone_digest=phone_digest,
+        client_ip=client_ip,
+        now=now,
+    )
+    _record_sms_otp_send(
+        session,
+        phone_digest=phone_digest,
+        client_ip=client_ip,
+        now=now,
+    )
     session.commit()
 
 @router.post("/send-email-otp")

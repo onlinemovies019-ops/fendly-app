@@ -13,9 +13,9 @@ import auth
 import main
 
 from auth import EmailOTPRequest, SendOTPRequest, VerifyEmailOTPRequest, VerifyOTPRequest
-from models import Base, EmailOTPChallenge, SmsOTPChallenge, SmsOTPRateLimit, User
+from models import Base, EmailOTPChallenge, SmsOTPChallenge, SmsOTPRateLimit, User, UsernameReservation
 from schemas import ProfileUpdate
-from routers.users import get_profile, update_profile
+from routers.users import check_registration_username, get_profile, update_profile
 
 
 @pytest.mark.asyncio
@@ -60,8 +60,8 @@ async def test_sms_otp_send_and_verify_use_short_lived_hashed_challenge(monkeypa
     assert calls[0][0] == (auth.FAST2SMS_BULK_URL,)
     assert calls[0][1]["headers"] == {"authorization": "test-key"}
     assert calls[0][1]["data"] == {
-        "route": "q",
-        "message": "Your Fendly code is 123456",
+        "route": "otp",
+        "variables_values": "123456",
         "numbers": "9876543210",
     }
     assert "params" not in calls[0][1]
@@ -240,6 +240,132 @@ async def test_sms_otp_send_maps_fast2sms_request_limits_to_429(monkeypatch, pro
     assert "wait a moment" in exc.value.detail.lower()
     assert "different phone number" in exc.value.detail.lower()
     assert profile_session.query(SmsOTPChallenge).count() == 0
+
+
+def test_registration_username_availability_checks_existing_profiles_and_reservations(
+    monkeypatch, profile_session
+):
+    monkeypatch.setattr("routers.users._username_exists_in_firebase_auth", lambda _: False)
+    profile_session.add(User(firebase_uid="existing-profile-uid", username="TakenUser"))
+    profile_session.add(
+        UsernameReservation(username="reserved_user", firebase_uid="reserved-user-uid")
+    )
+    profile_session.commit()
+
+    assert check_registration_username("takenuser", session=profile_session)["available"] is False
+    assert check_registration_username("RESERVED_USER", session=profile_session)["available"] is False
+    assert check_registration_username("new_user", session=profile_session)["available"] is True
+
+
+def test_registration_username_availability_checks_firebase_auth_records(
+    monkeypatch, profile_session
+):
+    monkeypatch.setattr(
+        "routers.users._username_exists_in_firebase_auth",
+        lambda username: username == "firebase_user",
+    )
+
+    result = check_registration_username("Firebase_User", session=profile_session)
+
+    assert result == {"username": "firebase_user", "available": False}
+
+
+@pytest.mark.asyncio
+async def test_sms_otp_send_uses_dlt_when_template_id_set(monkeypatch, profile_session):
+    responses = [{"return": True, "request_id": "request-id-456"}]
+    calls = []
+
+    class FakeResponse:
+        status_code = 200
+        is_success = True
+
+        def json(self):
+            return responses.pop(0)
+
+    class FakeClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, traceback):
+            return False
+
+        async def post(self, *args, **kwargs):
+            calls.append((args, kwargs))
+            return FakeResponse()
+
+    monkeypatch.setattr(auth, "FAST2SMS_API_KEY", "test-key")
+    monkeypatch.setattr(auth, "FAST2SMS_OTP_TEMPLATE_ID", "1207161234567890123")
+    monkeypatch.setattr(auth.secrets, "randbelow", lambda upper: 654321)
+    monkeypatch.setenv("APP_SECRET_KEY", "test-app-secret-0123456789abcdef")
+    monkeypatch.setattr(auth.httpx, "AsyncClient", FakeClient)
+    request = SimpleNamespace(client=SimpleNamespace(host="203.0.113.4"))
+
+    sent = await auth.send_otp(
+        SendOTPRequest(mobile="9876543210"),
+        request,
+        session=profile_session,
+    )
+
+    assert sent["success"] is True
+    assert calls[0][1]["data"] == {
+        "route": "dlt",
+        "message": "1207161234567890123",
+        "variables_values": "654321",
+        "numbers": "9876543210",
+    }
+
+
+@pytest.mark.asyncio
+async def test_sms_otp_failed_provider_does_not_consume_quota(monkeypatch, profile_session):
+    class FailedResponse:
+        status_code = 400
+        is_success = False
+
+        def json(self):
+            return {"return": False, "message": "Fast2SMS rejected request"}
+
+    class SuccessResponse:
+        status_code = 200
+        is_success = True
+
+        def json(self):
+            return {"return": True, "request_id": "ok-123"}
+
+    current_response = FailedResponse()
+
+    class FakeClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, traceback):
+            return False
+
+        async def post(self, *args, **kwargs):
+            return current_response
+
+    monkeypatch.setattr(auth, "FAST2SMS_API_KEY", "test-key")
+    monkeypatch.setenv("APP_SECRET_KEY", "test-app-secret-0123456789abcdef")
+    monkeypatch.setattr(auth.httpx, "AsyncClient", FakeClient)
+    request = SimpleNamespace(client=SimpleNamespace(host="203.0.113.4"))
+
+    # Fail 5 times due to provider error
+    for _ in range(5):
+        with pytest.raises(HTTPException) as exc:
+            await auth.send_otp(
+                SendOTPRequest(mobile="9876543210"),
+                request,
+                session=profile_session,
+            )
+        assert exc.value.status_code == 502
+
+    # Now provider succeeds — should NOT be blocked by 429 because previous failed attempts created no challenge
+    current_response = SuccessResponse()
+    sent = await auth.send_otp(
+        SendOTPRequest(mobile="9876543210"),
+        request,
+        session=profile_session,
+    )
+    assert sent["success"] is True
 
 
 def test_sms_otp_send_enforces_persistent_phone_and_ip_limits(monkeypatch, profile_session):
