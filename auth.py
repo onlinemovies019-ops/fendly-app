@@ -226,7 +226,7 @@ async def send_otp(
         )
     now = int(time.time())
     phone_digest = _sms_otp_digest("phone", payload.mobile)
-    otp = f"{secrets.randbelow(1_000_000):06d}"
+    otp_code = f"{secrets.randbelow(1_000_000):06d}"
     try:
         _reserve_sms_otp_quota(
             session,
@@ -250,7 +250,7 @@ async def send_otp(
                 headers={"authorization": FAST2SMS_API_KEY},
                 data={
                     "route": "q",
-                    "message": f"Your Fendly verification code is {otp}",
+                    "message": f"Your Fendly code is {otp_code}",
                     "numbers": payload.mobile,
                 },
                 timeout=15.0,
@@ -267,11 +267,27 @@ async def send_otp(
     except ValueError:
         data = None
 
+    response_text = str(data).lower() if isinstance(data, dict) else ""
+    rate_limited = isinstance(data, dict) and (
+        str(data.get("code")) == "995"
+        or any(
+            marker in response_text
+            for marker in ("spam", "request limit", "rate limit", "too many requests")
+        )
+    )
+    if rate_limited:
+        logger.warning("Fast2SMS rate-limit/protection rejected OTP request: %s", data)
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Too many OTP requests. Please wait a moment or try a different phone number.",
+        )
+
     if not response.is_success or not isinstance(data, dict) or data.get("return") is not True:
+
         failure_detail = _fast2sms_failure_detail(
             response,
             mobile=payload.mobile,
-            otp=otp,
+            otp=otp_code,
         )
         logger.warning("Fast2SMS rejected OTP request: %s", failure_detail)
         raise HTTPException(
@@ -279,7 +295,7 @@ async def send_otp(
             detail=failure_detail,
         )
 
-    session_digest = _sms_otp_digest("sms-code", f"{payload.mobile}:{otp}")
+    session_digest = _sms_otp_digest("sms-code", f"{payload.mobile}:{otp_code}")
     try:
         session.execute(
             delete(SmsOTPChallenge).where(SmsOTPChallenge.phone_digest == phone_digest)

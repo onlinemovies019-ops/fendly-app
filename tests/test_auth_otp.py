@@ -61,7 +61,7 @@ async def test_sms_otp_send_and_verify_use_short_lived_hashed_challenge(monkeypa
     assert calls[0][1]["headers"] == {"authorization": "test-key"}
     assert calls[0][1]["data"] == {
         "route": "q",
-        "message": "Your Fendly verification code is 123456",
+        "message": "Your Fendly code is 123456",
         "numbers": "9876543210",
     }
     assert "params" not in calls[0][1]
@@ -165,6 +165,80 @@ async def test_sms_otp_send_explains_fast2sms_website_verification_requirement(m
     assert "website verification" in exc.value.detail.lower()
     assert "DLT SMS API" in exc.value.detail
     assert "private-test-key" not in exc.value.detail
+    assert profile_session.query(SmsOTPChallenge).count() == 0
+
+
+@pytest.mark.asyncio
+async def test_sms_otp_send_maps_fast2sms_spam_code_995_to_429(monkeypatch, profile_session):
+    class FakeResponse:
+        status_code = 400
+        is_success = False
+
+        def json(self):
+            return {"return": False, "code": 995, "message": "spamming detected"}
+
+    class FakeClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, traceback):
+            return False
+
+        async def post(self, *args, **kwargs):
+            return FakeResponse()
+
+    monkeypatch.setattr(auth, "FAST2SMS_API_KEY", "private-test-key")
+    monkeypatch.setattr(auth.httpx, "AsyncClient", FakeClient)
+    monkeypatch.setenv("APP_SECRET_KEY", "test-app-secret-0123456789abcdef")
+    request = SimpleNamespace(client=SimpleNamespace(host="203.0.113.4"))
+
+    with pytest.raises(HTTPException) as exc:
+        await auth.send_otp(
+            SendOTPRequest(mobile="9876543210"),
+            request,
+            session=profile_session,
+        )
+
+    assert exc.value.status_code == 429
+    assert "wait a moment" in exc.value.detail.lower()
+    assert "different phone number" in exc.value.detail.lower()
+    assert profile_session.query(SmsOTPChallenge).count() == 0
+
+
+@pytest.mark.asyncio
+async def test_sms_otp_send_maps_fast2sms_request_limits_to_429(monkeypatch, profile_session):
+    class FakeResponse:
+        status_code = 400
+        is_success = False
+
+        def json(self):
+            return {"return": False, "message": "Request limits exceeded"}
+
+    class FakeClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, traceback):
+            return False
+
+        async def post(self, *args, **kwargs):
+            return FakeResponse()
+
+    monkeypatch.setattr(auth, "FAST2SMS_API_KEY", "private-test-key")
+    monkeypatch.setattr(auth.httpx, "AsyncClient", FakeClient)
+    monkeypatch.setenv("APP_SECRET_KEY", "test-app-secret-0123456789abcdef")
+    request = SimpleNamespace(client=SimpleNamespace(host="203.0.113.4"))
+
+    with pytest.raises(HTTPException) as exc:
+        await auth.send_otp(
+            SendOTPRequest(mobile="9876543210"),
+            request,
+            session=profile_session,
+        )
+
+    assert exc.value.status_code == 429
+    assert "wait a moment" in exc.value.detail.lower()
+    assert "different phone number" in exc.value.detail.lower()
     assert profile_session.query(SmsOTPChallenge).count() == 0
 
 

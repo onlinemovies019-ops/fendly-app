@@ -43,7 +43,7 @@ Required environment variables:
   Cloud Function that indexes Cloudinary report images and performs CLIP visual
   matching. Deploy it with `firebase deploy --only functions:matchReportImages`.
 - Set `FAST2SMS_API_KEY` to enable Indian SMS verification through Fast2SMS's
-  `bulkV2` OTP route. Keep the key server-side in `.env` locally and in the
+  `bulkV2` Quick SMS (`q`) route. Keep the key server-side in `.env` locally and in the
   deployment environment. OTPs are generated and verified by the backend,
   stored as keyed digests, limited per phone and source IP, and expire after
   10 minutes. Verification attempts are capped. Successful verification
