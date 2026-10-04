@@ -2,6 +2,7 @@ import os
 import json
 import hashlib
 import hmac
+import logging
 import re
 import secrets
 import time
@@ -25,6 +26,7 @@ from profile_service import update_profile_record
 from schemas import ProfileUpdate
 
 router = APIRouter(prefix="/api/auth", tags=["Authentication"])
+logger = logging.getLogger(__name__)
 
 FAST2SMS_API_KEY = os.getenv("FAST2SMS_API_KEY", "")
 FAST2SMS_BULK_URL = "https://www.fast2sms.com/dev/bulkV2"
@@ -246,25 +248,35 @@ async def send_otp(
             response = await client.post(
                 FAST2SMS_BULK_URL,
                 headers={"authorization": FAST2SMS_API_KEY},
-                json={
+                data={
                     "route": "otp",
                     "variables_values": otp,
                     "numbers": payload.mobile,
                 },
                 timeout=15.0,
             )
-            response.raise_for_status()
-            data = response.json()
-        except (httpx.HTTPError, ValueError) as exc:
+        except httpx.HTTPError as exc:
+            logger.warning("Fast2SMS OTP request failed: %s", type(exc).__name__)
             raise HTTPException(
                 status_code=status.HTTP_502_BAD_GATEWAY,
-                detail="Could not send SMS verification code",
+                detail="Could not connect to Fast2SMS; please try again",
             ) from exc
 
-    if not isinstance(data, dict) or data.get("return") is not True:
+    try:
+        data = response.json()
+    except ValueError:
+        data = None
+
+    if not response.is_success or not isinstance(data, dict) or data.get("return") is not True:
+        failure_detail = _fast2sms_failure_detail(
+            response,
+            mobile=payload.mobile,
+            otp=otp,
+        )
+        logger.warning("Fast2SMS rejected OTP request: %s", failure_detail)
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail="Could not send SMS verification code",
+            detail=failure_detail,
         )
 
     session_digest = _sms_otp_digest("sms-code", f"{payload.mobile}:{otp}")
@@ -364,6 +376,33 @@ async def verify_otp(
         "token_type": "Bearer",
         "expires_in": token_expiration - now,
     }
+
+
+def _fast2sms_failure_detail(
+    response: httpx.Response,
+    *,
+    mobile: str,
+    otp: str,
+) -> str:
+    try:
+        data = response.json()
+    except ValueError:
+        data = None
+
+    provider_message = data.get("message") if isinstance(data, dict) else None
+    if not isinstance(provider_message, str):
+        provider_message = ""
+    provider_message = provider_message.strip()
+    for sensitive_value in (FAST2SMS_API_KEY, mobile, otp):
+        if sensitive_value:
+            provider_message = provider_message.replace(sensitive_value, "[redacted]")
+    provider_message = provider_message[:240]
+
+    if response.status_code >= 400:
+        reason = f"Fast2SMS rejected the request (HTTP {response.status_code})"
+    else:
+        reason = "Fast2SMS did not accept the OTP request"
+    return f"{reason}: {provider_message}" if provider_message else reason
 
 
 def _sms_otp_digest(purpose: str, value: str) -> str:

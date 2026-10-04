@@ -25,6 +25,7 @@ async def test_sms_otp_send_and_verify_use_short_lived_hashed_challenge(monkeypa
 
     class FakeResponse:
         status_code = 200
+        is_success = True
 
         def raise_for_status(self):
             return None
@@ -58,7 +59,7 @@ async def test_sms_otp_send_and_verify_use_short_lived_hashed_challenge(monkeypa
     assert sent["success"] is True
     assert calls[0][0] == (auth.FAST2SMS_BULK_URL,)
     assert calls[0][1]["headers"] == {"authorization": "test-key"}
-    assert calls[0][1]["json"] == {
+    assert calls[0][1]["data"] == {
         "route": "otp",
         "variables_values": "123456",
         "numbers": "9876543210",
@@ -84,6 +85,44 @@ async def test_sms_otp_send_and_verify_use_short_lived_hashed_challenge(monkeypa
     assert claims["sub"] == "9876543210"
     assert claims["scope"] == "mobile_verification"
     assert len(calls) == 1
+    assert profile_session.query(SmsOTPChallenge).count() == 0
+
+
+@pytest.mark.asyncio
+async def test_sms_otp_send_exposes_safe_fast2sms_rejection_reason(monkeypatch, profile_session):
+    class FakeResponse:
+        status_code = 403
+        is_success = False
+
+        def json(self):
+            return {"return": False, "message": "Insufficient account balance"}
+
+    class FakeClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, traceback):
+            return False
+
+        async def post(self, *args, **kwargs):
+            return FakeResponse()
+
+    monkeypatch.setattr(auth, "FAST2SMS_API_KEY", "private-test-key")
+    monkeypatch.setattr(auth.httpx, "AsyncClient", FakeClient)
+    monkeypatch.setenv("APP_SECRET_KEY", "test-app-secret-0123456789abcdef")
+    request = SimpleNamespace(client=SimpleNamespace(host="203.0.113.4"))
+
+    with pytest.raises(HTTPException) as exc:
+        await auth.send_otp(
+            SendOTPRequest(mobile="9876543210"),
+            request,
+            session=profile_session,
+        )
+
+    assert exc.value.status_code == 502
+    assert "HTTP 403" in exc.value.detail
+    assert "Insufficient account balance" in exc.value.detail
+    assert "private-test-key" not in exc.value.detail
     assert profile_session.query(SmsOTPChallenge).count() == 0
 
 

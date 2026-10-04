@@ -1742,10 +1742,13 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                 JSONObject response = postJson("/api/auth/send-otp", payload.toString(), null);
                 boolean sent = response != null && response.optBoolean("success", false);
                 if (!sent) {
+                    String failureMessage = response == null
+                            ? translate("Could not send OTP")
+                            : response.optString("detail", response.optString("message", translate("Could not send OTP")));
                     runOnUiThread(() -> {
                         save.setText(translate("SMS verification unavailable"));
                         save.setEnabled(true);
-                        Toast.makeText(MainActivity.this, translate("Could not send OTP"), Toast.LENGTH_LONG).show();
+                        Toast.makeText(MainActivity.this, failureMessage, Toast.LENGTH_LONG).show();
                     });
                     return;
                 }
@@ -2409,9 +2412,12 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                 JSONObject response = postJson("/api/auth/send-otp", payload.toString(), null);
                 boolean sent = response != null && response.optBoolean("success", false);
                 if (!sent) {
+                    String failureMessage = response == null
+                            ? translate("Could not send OTP")
+                            : response.optString("detail", response.optString("message", translate("Could not send OTP")));
                     runOnUiThread(() -> {
                         parentDialog.dismiss();
-                        Toast.makeText(MainActivity.this, translate("Could not send OTP"), Toast.LENGTH_LONG).show();
+                        Toast.makeText(MainActivity.this, failureMessage, Toast.LENGTH_LONG).show();
                     });
                     return;
                 }
@@ -4332,7 +4338,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                 JSONObject response = postJson("/api/auth/send-otp", payload.toString(), null);
                 if (response != null) {
                     sent = response.optBoolean("success", false);
-                    errorMessage = response.optString("message", errorMessage);
+                    errorMessage = response.optString("detail", response.optString("message", errorMessage));
                 }
             } catch (Exception error) {
                 Log.e("AUTH", "Could not request SMS verification code", error);
