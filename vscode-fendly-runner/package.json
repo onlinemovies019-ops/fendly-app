@@ -2,7 +2,7 @@
     "name": "fendly-device-runner",
     "displayName": "Fendly Device Runner",
     "description": "Build, install, and launch Fendly from the VS Scrcpy panel.",
-    "version": "0.1.1",
+    "version": "0.1.2",
     "publisher": "fendly",
     "engines": {
         "vscode": "^1.85.0"

@@ -4,7 +4,7 @@
         {
             "label": "Android: Build debug APK",
             "type": "shell",
-            "command": "./gradlew :app:assembleDebug",
+            "command": "./gradlew -Dorg.gradle.java.home=/opt/homebrew/opt/openjdk@17/libexec/openjdk.jdk/Contents/Home :app:assembleDebug",
             "options": {
                 "env": {
                     "JAVA_HOME": "/opt/homebrew/opt/openjdk@17/libexec/openjdk.jdk/Contents/Home"
@@ -19,7 +19,7 @@
         {
             "label": "Android: Install debug APK",
             "type": "shell",
-            "command": "./gradlew :app:installDebug",
+            "command": "./gradlew -Dorg.gradle.java.home=/opt/homebrew/opt/openjdk@17/libexec/openjdk.jdk/Contents/Home :app:installDebug",
             "options": {
                 "env": {
                     "JAVA_HOME": "/opt/homebrew/opt/openjdk@17/libexec/openjdk.jdk/Contents/Home"

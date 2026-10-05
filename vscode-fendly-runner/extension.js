@@ -101,7 +101,13 @@ function activate(context) {
                 },
                 async () => {
                     try {
-                        await run(gradle, [":app:installDebug", "--no-configuration-cache"], root, env, output);
+                        await run(
+                            gradle,
+                            [`-Dorg.gradle.java.home=${javaHome}`, ":app:installDebug", "--no-configuration-cache"],
+                            root,
+                            env,
+                            output,
+                        );
                         output.appendLine("Launching Fendly...");
                         await run(adb, ["shell", "am", "start", "-n", "com.example.fendly/.SplashActivity"], root, env, output);
                         vscode.window.showInformationMessage("Fendly is running on your connected device.");
