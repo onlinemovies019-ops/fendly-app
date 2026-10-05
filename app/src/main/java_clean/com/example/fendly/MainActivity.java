@@ -14,8 +14,11 @@ import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.Matrix;
 import android.graphics.Paint;
+import android.graphics.Path;
 import android.graphics.Rect;
 import android.graphics.Typeface;
+import android.graphics.LinearGradient;
+import android.graphics.Shader;
 import android.graphics.drawable.ColorDrawable;
 import android.graphics.drawable.Drawable;
 import android.content.res.ColorStateList;
@@ -35,6 +38,11 @@ import android.util.Log;
 import android.util.TypedValue;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.animation.Animation;
+import android.view.animation.AlphaAnimation;
+import android.view.animation.AnimationSet;
+import android.view.animation.ScaleAnimation;
+import android.view.animation.TranslateAnimation;
 import androidx.compose.ui.platform.ComposeView;
 import android.content.res.Configuration;
 import android.view.MotionEvent;
@@ -94,6 +102,7 @@ import java.net.URL;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.Map;
 import java.util.Random;
 import java.util.concurrent.ExecutorService;
@@ -263,7 +272,11 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
     private String draftItem = "";
     private String draftDescription = "";
     private String draftLocation = "";
+    private String draftCityTag = "";
     private String draftDate = "";
+    private String draftIdentifier = "";
+    private String draftReportCategory = "item";
+    private int reportWizardStep = 1;
     private String draftImei = "";
     private String localEmailOtp = "";
     private String draftFullName = "";
@@ -296,6 +309,11 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
     private int pendingNotificationCount = 0;
     private TextView pendingNotificationBadge;
     private String adminReportFilter = "";
+    private String discoveryCity = "";
+    private int discoveryRequestGeneration;
+    private String discoveryCategory = "items";
+    private boolean discoveryReportsLoaded;
+    private final List<JSONObject> discoveryReports = new ArrayList<>();
     private int unreadUserNotificationCount = 0;
     private TextView userNotificationBadge;
     private boolean accountCreated;
@@ -314,6 +332,10 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
     private boolean ttsReady;
     private String pendingGuideSpeech;
     private ImageView pendingGuidePlayButton;
+    private String guideSpeechText;
+    private volatile int guideSpeechPosition;
+    private int guideSpeechGeneration;
+    private ImageView guideSpeechPlayButton;
     private EditText[] visibleMobileCells;
     private static final int REQUEST_SMS_USER_CONSENT = 913;
     private BroadcastReceiver smsUserConsentReceiver;
@@ -405,7 +427,12 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             draftItem = savedInstanceState.getString("state_draft_item", "");
             draftDescription = savedInstanceState.getString("state_draft_description", "");
             draftLocation = savedInstanceState.getString("state_draft_location", "");
+            draftCityTag = savedInstanceState.getString("state_draft_city_tag", "");
             draftDate = savedInstanceState.getString("state_draft_date", "");
+            draftIdentifier = savedInstanceState.getString("state_draft_identifier", "");
+            draftReportCategory = savedInstanceState.getString("state_draft_report_category", "item");
+            reportWizardStep = savedInstanceState.getInt("state_report_wizard_step", 1);
+            draftImei = savedInstanceState.getString("state_draft_imei", "");
             draftFullName = savedInstanceState.getString("state_draft_full_name", "");
             draftEmail = savedInstanceState.getString("state_draft_email", "");
             draftMobile = savedInstanceState.getString("state_draft_mobile", "");
@@ -672,11 +699,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                     }
                 } else {
                     ttsReady = false;
-                    pendingGuideSpeech = null;
-                    if (pendingGuidePlayButton != null) {
-                        pendingGuidePlayButton.setImageResource(android.R.drawable.ic_media_play);
-                        pendingGuidePlayButton = null;
-                    }
+                    stopGuideSpeech();
                     if (ttsEngine != null) {
                         ttsEngine.shutdown();
                         ttsEngine = null;
@@ -704,13 +727,14 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
     private void speakOrStop(String textToSpeak, ImageView playPauseIcon) {
         if (!ttsReady) {
             if (pendingGuidePlayButton == playPauseIcon) {
-                stopGuideSpeech();
-                playPauseIcon.setImageResource(android.R.drawable.ic_media_play);
+                cancelPendingGuideSpeech();
                 return;
             }
-            if (pendingGuidePlayButton != null) {
-                pendingGuidePlayButton.setImageResource(android.R.drawable.ic_media_play);
+            if (guideSpeechPlayButton != playPauseIcon || !textToSpeak.equals(guideSpeechText)) {
+                resetGuideSpeechPosition();
             }
+            guideSpeechText = textToSpeak;
+            guideSpeechPlayButton = playPauseIcon;
             pendingGuideSpeech = textToSpeak;
             pendingGuidePlayButton = playPauseIcon;
             playPauseIcon.setImageResource(android.R.drawable.ic_media_pause);
@@ -718,43 +742,100 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             return;
         }
         if (ttsEngine.isSpeaking()) {
+            if (guideSpeechPlayButton != playPauseIcon || !textToSpeak.equals(guideSpeechText)) {
+                ttsEngine.stop();
+                resetGuideSpeechPosition();
+                guideSpeechText = textToSpeak;
+                guideSpeechPlayButton = playPauseIcon;
+                speakGuideNow(textToSpeak, playPauseIcon);
+                return;
+            }
+            guideSpeechGeneration++;
             ttsEngine.stop();
             playPauseIcon.setImageResource(android.R.drawable.ic_media_play);
             return;
+        }
+        if (guideSpeechPlayButton != playPauseIcon || !textToSpeak.equals(guideSpeechText)) {
+            resetGuideSpeechPosition();
+            guideSpeechText = textToSpeak;
+            guideSpeechPlayButton = playPauseIcon;
         }
         speakGuideNow(textToSpeak, playPauseIcon);
     }
 
     private void speakGuideNow(String textToSpeak, ImageView playPauseIcon) {
         if (ttsEngine == null || !ttsReady) return;
+        if (!textToSpeak.equals(guideSpeechText)) {
+            guideSpeechText = textToSpeak;
+            guideSpeechPosition = 0;
+        }
+        int startPosition = Math.max(0, Math.min(guideSpeechPosition, textToSpeak.length()));
+        int generation = ++guideSpeechGeneration;
+        String utteranceId = "GuideVoice-" + generation;
         Locale targetLocale = getTtsLocaleForSelectedLanguage();
         int result = ttsEngine.setLanguage(targetLocale);
         if (result == TextToSpeech.LANG_MISSING_DATA || result == TextToSpeech.LANG_NOT_SUPPORTED) {
             ttsEngine.setLanguage(Locale.ENGLISH);
         }
-        if (Build.VERSION.SDK_INT >= 21) {
-            ttsEngine.setOnUtteranceProgressListener(new UtteranceProgressListener() {
-                @Override public void onStart(String utteranceId) {}
-                @Override public void onDone(String utteranceId) {
-                    runOnUiThread(() -> playPauseIcon.setImageResource(android.R.drawable.ic_media_play));
+        ttsEngine.setOnUtteranceProgressListener(new UtteranceProgressListener() {
+            @Override public void onStart(String id) {}
+
+            @Override public void onDone(String id) {
+                runOnUiThread(() -> {
+                    if (generation != guideSpeechGeneration) return;
+                    playPauseIcon.setImageResource(android.R.drawable.ic_media_play);
+                    resetGuideSpeechPosition();
+                });
+            }
+
+            @Override public void onError(String id) {
+                runOnUiThread(() -> {
+                    if (generation != guideSpeechGeneration) return;
+                    playPauseIcon.setImageResource(android.R.drawable.ic_media_play);
+                    resetGuideSpeechPosition();
+                });
+            }
+
+            @Override public void onRangeStart(String id, int start, int end, int frame) {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && generation == guideSpeechGeneration) {
+                    guideSpeechPosition = Math.min(textToSpeak.length(), startPosition + start);
                 }
-                @Override public void onError(String utteranceId) {
-                    runOnUiThread(() -> playPauseIcon.setImageResource(android.R.drawable.ic_media_play));
-                }
-            });
-        }
-        int speakResult = ttsEngine.speak(textToSpeak, TextToSpeech.QUEUE_FLUSH, null, "GuideVoice");
+            }
+        });
+        String remainingText = textToSpeak.substring(startPosition);
+        int speakResult = ttsEngine.speak(remainingText, TextToSpeech.QUEUE_FLUSH, null, utteranceId);
         playPauseIcon.setImageResource(speakResult == TextToSpeech.ERROR
                 ? android.R.drawable.ic_media_play : android.R.drawable.ic_media_pause);
+        if (speakResult == TextToSpeech.ERROR) resetGuideSpeechPosition();
     }
 
     private void stopGuideSpeech() {
+        ImageView activeButton = pendingGuidePlayButton != null
+                ? pendingGuidePlayButton : guideSpeechPlayButton;
+        if (activeButton != null) {
+            activeButton.setImageResource(android.R.drawable.ic_media_play);
+        }
+        guideSpeechGeneration++;
+        pendingGuidePlayButton = null;
+        pendingGuideSpeech = null;
+        resetGuideSpeechPosition();
+        if (ttsEngine != null) ttsEngine.stop();
+    }
+
+    private void cancelPendingGuideSpeech() {
         if (pendingGuidePlayButton != null) {
             pendingGuidePlayButton.setImageResource(android.R.drawable.ic_media_play);
         }
         pendingGuidePlayButton = null;
         pendingGuideSpeech = null;
-        if (ttsEngine != null) ttsEngine.stop();
+        guideSpeechGeneration++;
+        resetGuideSpeechPosition();
+    }
+
+    private void resetGuideSpeechPosition() {
+        guideSpeechText = null;
+        guideSpeechPosition = 0;
+        guideSpeechPlayButton = null;
     }
 
     private String translateHowToReportTitle() {
@@ -907,7 +988,12 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         outState.putString("state_draft_item", draftItem);
         outState.putString("state_draft_description", draftDescription);
         outState.putString("state_draft_location", draftLocation);
+        outState.putString("state_draft_city_tag", draftCityTag);
         outState.putString("state_draft_date", draftDate);
+        outState.putString("state_draft_identifier", draftIdentifier);
+        outState.putString("state_draft_report_category", draftReportCategory);
+        outState.putInt("state_report_wizard_step", reportWizardStep);
+        outState.putString("state_draft_imei", draftImei);
         outState.putString("state_draft_full_name", draftFullName);
         outState.putString("state_draft_email", draftEmail);
         outState.putString("state_draft_mobile", draftMobile);
@@ -992,6 +1078,11 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                 return;
             }
             showReport("LOST");
+            return;
+        }
+        if (currentPage == PAGE_REPORT && reportWizardStep > 1) {
+            reportWizardStep--;
+            showReport(currentReportType == null ? "LOST" : currentReportType);
             return;
         }
         if (currentPage == PAGE_REPORT || currentPage == PAGE_REPORTS || currentPage == PAGE_PROFILE) {
@@ -3152,10 +3243,17 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
     }
 
     private void clearReportDraftState() {
+        editingReportId = null;
+        editingReportType = null;
+        editingReportImageUrl = null;
         draftItem = "";
         draftDescription = "";
         draftLocation = "";
+        draftCityTag = "";
         draftDate = "";
+        draftIdentifier = "";
+        draftReportCategory = "item";
+        reportWizardStep = 1;
         draftImei = "";
         selectedImage = null;
         capturedImage = null;
@@ -3181,6 +3279,85 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         screenRenderer = this::showHome;
         LinearLayout root = screenBase("Home");
         addHeading("Find what matters.", "Lost or Found anything? We Connect the Dots.");
+        TextView discoveryLabel = text(
+                localizeReportsText("Discover active reports"),
+                15,
+                primaryTextColor(),
+                Typeface.BOLD
+        );
+        addField(root, discoveryLabel);
+
+        Map<String, String[]> stateCities = indiaStateCityMap();
+        LinkedHashSet<String> uniqueCities = new LinkedHashSet<>();
+        for (String[] cities : stateCities.values()) {
+            uniqueCities.addAll(Arrays.asList(cities));
+        }
+        List<String> discoveryCities = new ArrayList<>(uniqueCities);
+        Collections.sort(discoveryCities, String.CASE_INSENSITIVE_ORDER);
+        String[] localizedCities = localizedCityChoices(discoveryCities.toArray(new String[0]));
+        String[] cityOptions = new String[localizedCities.length + 1];
+        cityOptions[0] = localizeReportsText("All cities");
+        System.arraycopy(localizedCities, 0, cityOptions, 1, localizedCities.length);
+
+        LinearLayout cityFilterLabel = fieldLabel(localizeReportsText("Filter reports by city"));
+        addField(root, cityFilterLabel);
+        AutoCompleteTextView cityFilter = new AutoCompleteTextView(this);
+        cityFilter.setHint(localizeReportsText("All cities"));
+        cityFilter.setThreshold(0);
+        cityFilter.setSingleLine(true);
+        cityFilter.setAdapter(localizedLocationAdapter(cityOptions));
+        applyLocationFieldStyle(cityFilter);
+        cityFilter.setText(
+                discoveryCity.isEmpty()
+                        ? cityOptions[0]
+                        : localizeProfileDisplayValue("city", discoveryCity),
+                false
+        );
+        cityFilter.setOnClickListener(view -> cityFilter.showDropDown());
+        cityFilter.setOnItemClickListener((parent, view, position, id) -> {
+            String selectedOption = String.valueOf(parent.getItemAtPosition(position));
+            if (cityOptions[0].equals(selectedOption)) {
+                discoveryCity = "";
+            } else {
+                for (int index = 0; index < localizedCities.length; index++) {
+                    if (selectedOption.equals(localizedCities[index])) {
+                        discoveryCity = discoveryCities.get(index);
+                        break;
+                    }
+                }
+            }
+            showHome();
+        });
+        addField(root, cityFilter);
+
+        LinearLayout categoryLabel = fieldLabel(localizeReportsText("Browse by category"));
+        addField(root, categoryLabel);
+        TextView discoveryStatus = text(
+                localizeReportsText("Loading reports..."),
+                14,
+                secondaryTextColor(),
+                Typeface.NORMAL
+        );
+        discoveryStatus.setGravity(Gravity.CENTER);
+        LinearLayout discoveryResults = new LinearLayout(this);
+        discoveryResults.setOrientation(LinearLayout.VERTICAL);
+        LinearLayout categoryTabs = new LinearLayout(this);
+        categoryTabs.setOrientation(LinearLayout.HORIZONTAL);
+        populateDiscoveryCategoryTabs(categoryTabs, discoveryResults, discoveryStatus);
+        addField(root, categoryTabs);
+        root.addView(discoveryStatus, contentParams(-1, -2, dp(8)));
+        root.addView(discoveryResults, new LinearLayout.LayoutParams(-1, -2));
+        discoveryReportsLoaded = false;
+        discoveryStatus.setOnClickListener(view -> {
+            int retryGeneration = ++discoveryRequestGeneration;
+            discoveryReportsLoaded = false;
+            discoveryStatus.setText(localizeReportsText("Loading reports..."));
+            discoveryStatus.setVisibility(View.VISIBLE);
+            loadDiscoveryReports(discoveryCity, discoveryResults, discoveryStatus, retryGeneration);
+        });
+        int requestGeneration = ++discoveryRequestGeneration;
+        loadDiscoveryReports(discoveryCity, discoveryResults, discoveryStatus, requestGeneration);
+
         LinearLayout choices = new LinearLayout(this);
         choices.setOrientation(LinearLayout.HORIZONTAL);
         TextView lost = actionButton(LanguageManager.profileText(this, "lost_theft_button"), true);
@@ -3215,6 +3392,270 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         addField(root, signedInText);
     }
 
+    private void loadDiscoveryReports(
+            String city,
+            LinearLayout resultsContainer,
+            TextView statusView,
+            int requestGeneration
+    ) {
+        network.execute(() -> {
+            List<JSONObject> reports = new ArrayList<>();
+            String loadError = null;
+            HttpURLConnection connection = null;
+            try {
+                String endpoint = API_BASE + "/api/reports";
+                if (city != null && !city.trim().isEmpty()) {
+                    endpoint += "?city=" + URLEncoder.encode(city.trim(), StandardCharsets.UTF_8.name());
+                }
+                connection = (HttpURLConnection) new URL(endpoint).openConnection();
+                connection.setRequestMethod("GET");
+                connection.setConnectTimeout(8000);
+                connection.setReadTimeout(10000);
+                int responseCode = connection.getResponseCode();
+                if (responseCode < 200 || responseCode >= 300) {
+                    throw new java.io.IOException("Public reports returned HTTP " + responseCode);
+                }
+                JSONArray response = new JSONArray(readStream(connection.getInputStream()));
+                for (int index = 0; index < response.length(); index++) {
+                    JSONObject report = response.optJSONObject(index);
+                    if (report != null) reports.add(report);
+                }
+            } catch (Exception error) {
+                Log.w("DISCOVERY_REPORTS", "Could not load discovery reports", error);
+                loadError = "Could not load reports. Try again.";
+            } finally {
+                if (connection != null) connection.disconnect();
+            }
+
+            List<JSONObject> loadedReports = reports;
+            String errorMessage = loadError;
+            runOnUiThread(() -> {
+                if (isFinishing() || isDestroyed() || requestGeneration != discoveryRequestGeneration) return;
+                resultsContainer.removeAllViews();
+                if (errorMessage != null) {
+                    discoveryReports.clear();
+                    discoveryReportsLoaded = false;
+                    statusView.setText(localizeReportsText(errorMessage));
+                    statusView.setVisibility(View.VISIBLE);
+                    return;
+                }
+                discoveryReports.clear();
+                discoveryReports.addAll(loadedReports);
+                discoveryReportsLoaded = true;
+                renderDiscoveryReports(resultsContainer, statusView);
+            });
+        });
+    }
+
+    private void populateDiscoveryCategoryTabs(
+            LinearLayout tabs,
+            LinearLayout resultsContainer,
+            TextView statusView
+    ) {
+        tabs.removeAllViews();
+        String[] categories = {"items", "animals", "people"};
+        String[] icons = {"🔍", "🐾", "❤️"};
+        String[] labels = {
+                "Valuables & Items",
+                "Pets & Animals",
+                "Missing Persons / Loved Ones"
+        };
+        for (int index = 0; index < categories.length; index++) {
+            String category = categories[index];
+            boolean emergency = "people".equals(category);
+            LinearLayout tab = createDiscoveryCategoryTab(
+                    category,
+                    icons[index],
+                    labels[index],
+                    emergency
+            );
+            tab.setOnClickListener(view -> {
+                if (discoveryCategory.equals(category)) return;
+                discoveryCategory = category;
+                populateDiscoveryCategoryTabs(tabs, resultsContainer, statusView);
+                renderDiscoveryReports(resultsContainer, statusView);
+            });
+            LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(0, dp(112), 1);
+            params.setMargins(dp(3), 0, dp(3), 0);
+            tabs.addView(tab, params);
+        }
+    }
+
+    private LinearLayout createDiscoveryCategoryTab(
+            String category,
+            String icon,
+            String label,
+            boolean emergency
+    ) {
+        boolean selected = discoveryCategory.equals(category);
+        int urgentColor = Color.rgb(190, 45, 55);
+        int backgroundColor = selected
+                ? emergency ? urgentColor : Color.rgb(24, 112, 82)
+                : emergency ? Color.argb(30, 220, 50, 60) : surfaceColor();
+        int strokeColor = emergency ? urgentColor : selected ? Color.rgb(24, 112, 82) : borderColor();
+        int foregroundColor = selected ? Color.WHITE : primaryTextColor();
+
+        LinearLayout tab = new LinearLayout(this);
+        tab.setOrientation(LinearLayout.VERTICAL);
+        tab.setGravity(Gravity.CENTER);
+        tab.setPadding(dp(4), dp(5), dp(4), dp(5));
+        tab.setBackground(roundWithStroke(backgroundColor, 16, strokeColor));
+        tab.setClickable(true);
+        tab.setFocusable(true);
+        tab.setContentDescription(localizeReportsText(label));
+
+        TextView badge = text(
+                emergency ? localizeReportsText("URGENT") : " ",
+                8,
+                selected && emergency ? urgentColor : Color.WHITE,
+                Typeface.BOLD
+        );
+        badge.setGravity(Gravity.CENTER);
+        badge.setPadding(dp(6), dp(1), dp(6), dp(1));
+        badge.setBackground(round(
+                emergency
+                        ? selected ? Color.WHITE : urgentColor
+                        : Color.TRANSPARENT,
+                8
+        ));
+        tab.addView(badge, new LinearLayout.LayoutParams(-2, dp(14)));
+
+        TextView iconView = text(icon, 23, foregroundColor, Typeface.NORMAL);
+        iconView.setGravity(Gravity.CENTER);
+        tab.addView(iconView, new LinearLayout.LayoutParams(-1, dp(32)));
+
+        TextView labelView = text(
+                localizeReportsText(label).replace(" / ", "\n").replace(" & ", " &\n"),
+                9,
+                foregroundColor,
+                Typeface.BOLD
+        );
+        labelView.setGravity(Gravity.CENTER);
+        labelView.setMaxLines(3);
+        tab.addView(labelView, new LinearLayout.LayoutParams(-1, -2));
+        return tab;
+    }
+
+    private void renderDiscoveryReports(LinearLayout resultsContainer, TextView statusView) {
+        resultsContainer.removeAllViews();
+        if (!discoveryReportsLoaded) return;
+        List<JSONObject> visibleReports = new ArrayList<>();
+        for (JSONObject report : discoveryReports) {
+            if (discoveryReportMatchesCategory(report, discoveryCategory)) {
+                visibleReports.add(report);
+            }
+        }
+        if (visibleReports.isEmpty()) {
+            statusView.setText(localizeReportsText(
+                    discoveryReports.isEmpty()
+                            ? "No active reports found."
+                            : "No reports in this category."
+            ));
+            statusView.setVisibility(View.VISIBLE);
+            return;
+        }
+        statusView.setVisibility(View.GONE);
+        for (JSONObject report : visibleReports) {
+            resultsContainer.addView(createDiscoveryReportCard(report));
+        }
+    }
+
+    private boolean discoveryReportMatchesCategory(JSONObject report, String category) {
+        String reportCategory = report.optString("category", "").trim().toLowerCase(Locale.US);
+        if ("people".equals(category)) {
+            if (reportCategory.contains("people") || reportCategory.contains("person")) return true;
+            if (!reportCategory.isEmpty() && !"other".equals(reportCategory)) return false;
+            return containsDiscoveryTerm(
+                    report.optString("title", "").toLowerCase(Locale.US),
+                    "missing person", "person", "people", "loved one", "child", "children",
+                    "toddler", "boy", "girl", "woman", "man"
+            );
+        }
+        if ("animals".equals(category)) {
+            if (reportCategory.contains("animal") || reportCategory.contains("pet")) return true;
+            if (!reportCategory.isEmpty() && !"other".equals(reportCategory)) return false;
+            return containsDiscoveryTerm(
+                    report.optString("title", "").toLowerCase(Locale.US),
+                    "animal", "pet", "dog", "puppy", "cat", "kitten", "cow", "goat",
+                    "sheep", "horse", "bird", "parrot", "rabbit", "fish", "snake"
+            );
+        }
+        return !discoveryReportMatchesCategory(report, "people")
+                && !discoveryReportMatchesCategory(report, "animals");
+    }
+
+    private boolean containsDiscoveryTerm(String text, String... terms) {
+        for (String term : terms) {
+            if (text.contains(term)) return true;
+        }
+        return false;
+    }
+
+    private View createDiscoveryReportCard(JSONObject report) {
+        LinearLayout card = new LinearLayout(this);
+        card.setOrientation(LinearLayout.VERTICAL);
+        card.setPadding(dp(16), dp(12), dp(16), dp(12));
+        boolean emergency = discoveryReportMatchesCategory(report, "people");
+        int emergencyColor = Color.rgb(190, 45, 55);
+        card.setBackground(roundWithStroke(
+                emergency ? Color.argb(24, 220, 50, 60) : surfaceColor(),
+                16,
+                emergency ? emergencyColor : borderColor()
+        ));
+        card.setElevation(dp(2));
+        card.setTag("reportRow");
+
+        String type = report.optString("type", "FOUND").toUpperCase(Locale.US);
+        if (emergency) {
+            TextView urgentBadge = text(
+                    localizeReportsText("URGENT"),
+                    9,
+                    Color.WHITE,
+                    Typeface.BOLD
+            );
+            urgentBadge.setGravity(Gravity.CENTER);
+            urgentBadge.setPadding(dp(7), dp(2), dp(7), dp(2));
+            urgentBadge.setBackground(round(emergencyColor, 8));
+            LinearLayout.LayoutParams badgeParams = new LinearLayout.LayoutParams(-2, -2);
+            badgeParams.setMargins(0, 0, 0, dp(5));
+            card.addView(urgentBadge, badgeParams);
+        }
+        TextView typeLabel = text(
+                "LOST".equals(type) ? translate("LOST") : translate("FOUND"),
+                11,
+                "LOST".equals(type) ? Color.rgb(110, 205, 161) : accentColor(),
+                Typeface.BOLD
+        );
+        card.addView(typeLabel, new LinearLayout.LayoutParams(-1, -2));
+
+        TextView title = text(report.optString("title", ""), 16, primaryTextColor(), Typeface.BOLD);
+        title.setPadding(0, dp(3), 0, dp(4));
+        card.addView(title, new LinearLayout.LayoutParams(-1, -2));
+
+        String location = report.optString("report_location", "").trim();
+        String category = report.optString("category", "").trim();
+        String detail = location;
+        if (!category.isEmpty()) {
+            detail = detail.isEmpty() ? category : category + " · " + detail;
+        }
+        if (!detail.isEmpty()) {
+            TextView details = text(detail, 13, secondaryTextColor(), Typeface.NORMAL);
+            card.addView(details, new LinearLayout.LayoutParams(-1, -2));
+        }
+
+        String reportDate = report.optString("report_date", "").trim();
+        if (!reportDate.isEmpty()) {
+            TextView date = text(reportDate, 12, secondaryTextColor(), Typeface.NORMAL);
+            date.setPadding(0, dp(4), 0, 0);
+            card.addView(date, new LinearLayout.LayoutParams(-1, -2));
+        }
+
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(-1, -2);
+        params.setMargins(0, 0, 0, dp(10));
+        card.setLayoutParams(params);
+        return card;
+    }
+
     private void showReport(String type) {
         inRenewalPaymentFlow = false;
         currentPage = PAGE_REPORT;
@@ -3222,112 +3663,470 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         currentReportType = type;
         restoreReportLocationState(type);
         LinearLayout root = screenBase("");
-        TextView reportHeader = text("Click Lost/Found button to report", 15, primaryTextColor(), Typeface.NORMAL);
-        reportHeader.setGravity(Gravity.CENTER);
-        root.addView(reportHeader, contentParams(-1, dp(22), dp(14)));
-        LinearLayout typeToggle = new LinearLayout(this);
-        typeToggle.setOrientation(LinearLayout.HORIZONTAL);
-        TextView lostToggle = reportTypeToggle(LanguageManager.profileText(this, "lost_theft_button"), "LOST".equals(type), LOST_GREEN, LOST_GREEN_ON);
-        TextView foundToggle = reportTypeToggle("Found", "FOUND".equals(type), FOUND_GOLD, FOUND_GOLD_ON);
-        lostToggle.setOnClickListener(view -> showReport("LOST"));
-        foundToggle.setOnClickListener(view -> showReport("FOUND"));
-        typeToggle.addView(lostToggle, new LinearLayout.LayoutParams(0, dp(36), 1));
-        LinearLayout.LayoutParams foundToggleParams = new LinearLayout.LayoutParams(0, dp(36), 1);
-        foundToggleParams.setMargins(dp(8), 0, 0, 0);
-        typeToggle.addView(foundToggle, foundToggleParams);
-        root.addView(typeToggle, contentParams(-1, dp(36), dp(16)));
+        AnimationSet transition = new AnimationSet(true);
+        AlphaAnimation fade = new AlphaAnimation(0f, 1f);
+        TranslateAnimation slide = new TranslateAnimation(0f, 0f, dp(10), 0f);
+        transition.addAnimation(fade);
+        transition.addAnimation(slide);
+        transition.setDuration(180);
+        root.startAnimation(transition);
+        addHeading(
+                localizeReportWizardText("Report wizard"),
+                localizeReportWizardText("Step " + reportWizardStep + " of 4")
+        );
+        addReportWizardProgress(root);
 
         EditText item = field("");
         EditText description = field("");
         EditText location = field("");
+        EditText city = field("");
         EditText date = field("");
+        EditText identifier = field("");
         EditText imei = field("");
         imei.setInputType(InputType.TYPE_CLASS_NUMBER);
         imei.setKeyListener(DigitsKeyListener.getInstance("0123456789"));
         imei.setFilters(new InputFilter[] {new InputFilter.LengthFilter(15)});
-        item.setText(draftItem);
-        description.setText(draftDescription);
-        location.setText(draftLocation);
-        date.setText(draftDate);
-        imei.setText(draftImei);
-        item.addTextChangedListener(draftWatcher(value -> {
-            draftItem = value;
-        }));
-        description.addTextChangedListener(draftWatcher(value -> {
-            draftDescription = value;
-        }));
-        location.addTextChangedListener(draftWatcher(value -> draftLocation = value));
-        date.addTextChangedListener(draftWatcher(value -> draftDate = value));
-        imei.addTextChangedListener(draftWatcher(value -> draftImei = value));
+        bindReportDraftField(item, draftItem, value -> draftItem = value);
+        bindReportDraftField(description, draftDescription, value -> draftDescription = value);
+        bindReportDraftField(location, draftLocation, value -> draftLocation = value);
+        bindReportDraftField(city, draftCityTag, value -> draftCityTag = value);
+        bindReportDraftField(date, draftDate, value -> draftDate = value);
+        bindReportDraftField(identifier, draftIdentifier, value -> draftIdentifier = value);
+        bindReportDraftField(imei, draftImei, value -> draftImei = value);
         configureDateField(date);
-        addLabeledField(root, "Item name", item);
-        addLabeledField(root, "Description", description);
-        addLabeledDateField(root, translate("FOUND".equals(type) ? "Date found" : "Date lost"), date);
-        addLabeledField(root, translate("FOUND".equals(type) ? "Place found" : "Last seen at"), location);
-        if ("LOST".equals(type) && editingReportId == null) {
-            addLabeledField(root, "Optional IMEI for SafeTrade checks", imei);
-            TextView imeiDisclosure = text(
-                    "If provided, the IMEI is stored as a keyed hash, not as the original number, to check this lost report.",
-                    12, secondaryTextColor(), Typeface.NORMAL);
-            imeiDisclosure.setPadding(dp(2), 0, dp(2), dp(10));
-            root.addView(imeiDisclosure, contentParams(-1, -2, 0));
+
+        if (reportWizardStep == 1) {
+            renderReportWizardCategoryStep(root, type);
+            return;
+        }
+        if (reportWizardStep == 2) {
+            renderReportWizardLocationStep(root, type, location, city);
+            return;
+        }
+        if (reportWizardStep == 3) {
+            renderReportWizardDetailsStep(root, type, item, identifier, description, date, imei);
+            return;
+        }
+        renderReportWizardReviewStep(root, type, item, description, location, city, date, identifier, imei);
+    }
+
+    private void addReportWizardProgress(LinearLayout root) {
+        String[] labels = {"Category", "Location", "Details", "Review"};
+        LinearLayout progress = new LinearLayout(this);
+        progress.setOrientation(LinearLayout.HORIZONTAL);
+        for (int index = 0; index < labels.length; index++) {
+            boolean current = reportWizardStep == index + 1;
+            TextView step = text(
+                    (index + 1) + ". " + localizeReportWizardText(labels[index]),
+                    10,
+                    current ? Color.WHITE : secondaryTextColor(),
+                    current ? Typeface.BOLD : Typeface.NORMAL
+            );
+            step.setGravity(Gravity.CENTER);
+            step.setPadding(dp(4), dp(8), dp(4), dp(8));
+            step.setBackground(round(
+                    current ? LOST_GREEN : surfaceColor(),
+                    12
+            ));
+            LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(0, dp(38), 1);
+            params.setMargins(dp(2), 0, dp(2), 0);
+            progress.addView(step, params);
+        }
+        addField(root, progress);
+    }
+
+    private void bindReportDraftField(EditText field, String value, java.util.function.Consumer<String> update) {
+        field.setText(value);
+        field.addTextChangedListener(draftWatcher(update::accept));
+    }
+
+    private void renderReportWizardCategoryStep(LinearLayout root, String type) {
+        addWizardSectionTitle(root, "Choose what you are reporting");
+        String[] categories = {"item", "pet", "person"};
+        String[] categoryLabels = {"Item / Valuables", "Pet / Animal", "Missing Person"};
+        String[] categoryIcons = {"📦", "🐾", "❤️"};
+        for (int index = 0; index < categories.length; index++) {
+            String category = categories[index];
+            TextView option = actionButton(
+                    categoryIcons[index] + "\n" + localizeReportWizardText(categoryLabels[index]),
+                    draftReportCategory.equals(category)
+            );
+            option.setGravity(Gravity.CENTER);
+            option.setCompoundDrawablePadding(dp(12));
+            option.setTextSize(16);
+            option.setMinHeight(dp(62));
+            option.setOnClickListener(view -> {
+                draftReportCategory = category;
+                showReport(type);
+            });
+            addField(root, option);
         }
 
-        boolean locationVisibleOnThisScreen = hasLocation && currentReportType != null && currentReportType.equalsIgnoreCase(activeLocationReportType);
-        TextView addLocation = text(locationVisibleOnThisScreen
-            ? "Location ready"
-                : translate("Precise location  OFF"), 11, locationVisibleOnThisScreen ? Color.WHITE : secondaryTextColor(), Typeface.NORMAL);
-        addLocation.setGravity(Gravity.CENTER);
-        addLocation.setBackground(locationVisibleOnThisScreen
-                ? roundWithStroke(LOST_GREEN, 10, LOST_GREEN)
-                : roundWithStroke(surfaceColor(), 10, fieldBorderColor()));
-        LinearLayout.LayoutParams locationParams = new LinearLayout.LayoutParams(-1, dp(42));
-        locationParams.setMargins(0, 0, 0, dp(12));
-        root.addView(addLocation, locationParams);
-        addLocation.setOnClickListener(view -> {
-            if (hasLocation && currentReportType != null && currentReportType.equalsIgnoreCase(activeLocationReportType)) {
-                setReportLocationState(currentReportType, false, 0.0, 0.0);
+        addWizardSectionTitle(root, "Report type");
+        LinearLayout typeChoices = new LinearLayout(this);
+        typeChoices.setOrientation(LinearLayout.HORIZONTAL);
+        TextView lost = reportTypeToggle(
+                LanguageManager.profileText(this, "lost_theft_button"),
+                "LOST".equalsIgnoreCase(type),
+                LOST_GREEN,
+                LOST_GREEN_ON
+        );
+        TextView found = reportTypeToggle(
+                translate("FOUND"),
+                "FOUND".equalsIgnoreCase(type),
+                FOUND_GOLD,
+                FOUND_GOLD_ON
+        );
+        if (editingReportId != null) {
+            lost.setEnabled(false);
+            found.setEnabled(false);
+            lost.setAlpha("LOST".equalsIgnoreCase(type) ? 1f : 0.55f);
+            found.setAlpha("FOUND".equalsIgnoreCase(type) ? 1f : 0.55f);
+        }
+        lost.setOnClickListener(view -> showReport("LOST"));
+        found.setOnClickListener(view -> showReport("FOUND"));
+        typeChoices.addView(lost, new LinearLayout.LayoutParams(0, dp(48), 1));
+        LinearLayout.LayoutParams foundParams = new LinearLayout.LayoutParams(0, dp(48), 1);
+        foundParams.setMargins(dp(8), 0, 0, 0);
+        typeChoices.addView(found, foundParams);
+        addField(root, typeChoices);
+        addWizardNavigation(root, type, 2);
+    }
+
+    private void renderReportWizardLocationStep(
+            LinearLayout root,
+            String type,
+            EditText location,
+            EditText city
+    ) {
+        addWizardSectionTitle(root, "Add a photo and location");
+        addLabeledField(root, translate("FOUND".equalsIgnoreCase(type) ? "Place found" : "Last seen at"), location);
+        addLabeledField(root, localizeReportWizardText("City / area tag"), city);
+        city.setHint(localizeReportWizardText("e.g. Nagpur"));
+
+        boolean locationEnabled = isReportLocationEnabled(type);
+        TextView preciseLocation = text(
+                locationEnabled ? localizeReportWizardText("Precise location ready")
+                        : localizeReportWizardText("Use precise location (optional)"),
+                12,
+                locationEnabled ? Color.WHITE : secondaryTextColor(),
+                Typeface.BOLD
+        );
+        preciseLocation.setGravity(Gravity.CENTER);
+        preciseLocation.setBackground(roundWithStroke(
+                locationEnabled ? LOST_GREEN : surfaceColor(),
+                12,
+                locationEnabled ? LOST_GREEN : fieldBorderColor()
+        ));
+        root.addView(preciseLocation, contentParams(-1, dp(44), dp(10)));
+        preciseLocation.setOnClickListener(view -> {
+            if (isReportLocationEnabled(type)) {
+                setReportLocationState(type, false, 0.0, 0.0);
                 locationRequestGeneration++;
                 stopActiveLocationUpdates();
                 hasLocation = false;
                 activeLocationReportType = null;
                 currentLat = 0.0;
                 currentLng = 0.0;
-                applyLocationToggleVisualState(addLocation, addLocation, false);
+                showReport(type);
             } else {
-                requestLocation(addLocation, addLocation);
+                locationStatus = preciseLocation;
+                locationToggleStatus = preciseLocation;
+                requestLocation(preciseLocation, preciseLocation);
             }
         });
-        locationStatus = addLocation;
-        locationToggleStatus = addLocation;
+        root.addView(imageSlots(), contentParams(-1, dp(104), dp(12)));
+        addWizardNavigation(root, type, 3);
+    }
 
-        root.addView(imageSlots(), contentParams(-1, dp(104), dp(14)));
+    private void renderReportWizardDetailsStep(
+            LinearLayout root,
+            String type,
+            EditText item,
+            EditText identifier,
+            EditText description,
+            EditText date,
+            EditText imei
+    ) {
+        addWizardSectionTitle(root, "Add identifying details");
+        addLabeledField(root, localizeReportWizardText("Report title"), item);
+        item.setHint(reportCategoryHint("e.g. Blue backpack", "e.g. Brown dog", "e.g. Missing person"));
+        addLabeledField(root, reportIdentifierLabel(), identifier);
+        identifier.setHint(reportIdentifierHint());
+        addLabeledField(root, localizeReportWizardText("Other identifying details"), description);
+        description.setMinLines(3);
+        description.setHint(localizeReportWizardText(
+                "Describe color, brand, appearance, or other helpful details"
+        ));
+        addLabeledDateField(root, translate("FOUND".equalsIgnoreCase(type) ? "Date found" : "Date lost"), date);
+        if ("item".equals(draftReportCategory) && "LOST".equalsIgnoreCase(type) && editingReportId == null) {
+            addLabeledField(root, localizeReportWizardText("Optional 15-digit IMEI"), imei);
+            TextView disclosure = text(
+                    "IMEI is stored as a keyed hash for SafeTrade checks.",
+                    11,
+                    secondaryTextColor(),
+                    Typeface.NORMAL
+            );
+            addField(root, disclosure);
+        }
+        addWizardNavigation(root, type, 4);
+    }
+
+    private void renderReportWizardReviewStep(
+            LinearLayout root,
+            String type,
+            EditText item,
+            EditText description,
+            EditText location,
+            EditText city,
+            EditText date,
+            EditText identifier,
+            EditText imei
+    ) {
+        String submissionDescription = reportDetailsForSubmission(description.getText().toString(), identifier.getText().toString());
+        String locationValue = reportLocationForSubmission(location.getText().toString(), city.getText().toString());
+        addWizardSectionTitle(root, "Review your report");
+        addWizardSummaryRow(root, "Category", reportCategoryDisplayName());
+        addWizardSummaryRow(root, "Report type", translate(type));
+        addWizardSummaryRow(root, "Title", item.getText().toString().trim());
+        addWizardSummaryRow(root, "Photo", localizeReportWizardText(
+                reportHasPhoto() ? "Photo attached" : "No photo attached"
+        ));
+        addWizardPhotoPreview(root);
+        addWizardSummaryRow(root, "Location", locationValue);
+        addWizardSummaryRow(root, "Date", date.getText().toString().trim());
+        addWizardSummaryRow(root, "Identifying details", submissionDescription);
+
+        TextView editCategory = actionButton(localizeReportWizardText("Edit category"), false);
+        editCategory.setOnClickListener(view -> {
+            reportWizardStep = 1;
+            showReport(type);
+        });
+        addField(root, editCategory);
+        TextView editLocation = actionButton(localizeReportWizardText("Edit photo and location"), false);
+        editLocation.setOnClickListener(view -> {
+            reportWizardStep = 2;
+            showReport(type);
+        });
+        addField(root, editLocation);
+        TextView editDetails = actionButton(localizeReportWizardText("Edit identifying details"), false);
+        editDetails.setOnClickListener(view -> {
+            reportWizardStep = 3;
+            showReport(type);
+        });
+        addField(root, editDetails);
 
         if (editingReportId != null && type.equalsIgnoreCase(editingReportType)) {
             TextView save = actionButton(translate("Save changes"), true);
-            save.setOnClickListener(view -> submitItem(type, item, description, location, date, save, null));
-            root.addView(save, contentParams(-1, dp(44), 0));
-        } else if ("FOUND".equals(type)) {
-            TextView publish = actionButton(translate("Submit report — free"), true);
-            publish.setOnClickListener(view -> submitItem(type, item, description, location, date, publish, null));
-            root.addView(publish, contentParams(-1, dp(44), 0));
-        } else {
-            boolean unlocked = hasActiveAnnualSubscription();
-            if (!unlocked) {
-                root.addView(subscriptionCard(), contentParams(-1, dp(74), dp(14)));
-            }
-            TextView action = unlocked
-                    ? actionButton(translate("Submit report — free"), true)
-                    : filledButton(translate("Continue to payment"), LOST_GREEN, LOST_GREEN_ON);
-            if (unlocked) {
-                String subscriptionPaymentId = getSharedPreferences("fendly_account", MODE_PRIVATE)
-                    .getString("annual_subscription_payment_id", null);
-                action.setOnClickListener(view -> submitItem(type, item, description, location, date, action, subscriptionPaymentId));
-            } else {
-                action.setOnClickListener(view -> showPaymentOptions(item, description, location, date));
-            }
-            root.addView(action, contentParams(-1, dp(44), 0));
+            save.setOnClickListener(view -> {
+                if (!validateWizardReport(item, submissionDescription, locationValue, date)) return;
+                location.setText(locationValue);
+                description.setText(submissionDescription);
+                updateItem(type, item, description, location, date, save);
+            });
+            addField(root, save);
+            return;
         }
+        if ("LOST".equalsIgnoreCase(type) && !hasActiveAnnualSubscription()) {
+            addField(root, subscriptionCard());
+            TextView payment = filledButton(
+                    translate("Continue to payment"),
+                    LOST_GREEN,
+                    LOST_GREEN_ON
+            );
+            payment.setOnClickListener(view -> {
+                if (!validateWizardReport(item, submissionDescription, locationValue, date)) return;
+                location.setText(locationValue);
+                description.setText(submissionDescription);
+                draftImei = imei.getText().toString().trim();
+                showPaymentOptions(item, description, location, date);
+            });
+            addField(root, payment);
+            return;
+        }
+
+        TextView submit = actionButton(translate("Submit report — free"), true);
+        submit.setOnClickListener(view -> {
+            if (!validateWizardReport(item, submissionDescription, locationValue, date)) return;
+            location.setText(locationValue);
+            description.setText(submissionDescription);
+            draftImei = imei.getText().toString().trim();
+            String paymentId = "LOST".equalsIgnoreCase(type)
+                    ? getSharedPreferences("fendly_account", MODE_PRIVATE)
+                            .getString("annual_subscription_payment_id", null)
+                    : null;
+            submitItem(type, item, description, location, date, submit, paymentId);
+        });
+        addField(root, submit);
+    }
+
+    private void addWizardNavigation(LinearLayout root, String type, int nextStep) {
+        LinearLayout navigation = new LinearLayout(this);
+        navigation.setOrientation(LinearLayout.HORIZONTAL);
+        if (reportWizardStep > 1) {
+            TextView back = actionButton(localizeReportWizardText("Back"), false);
+            back.setOnClickListener(view -> {
+                reportWizardStep--;
+                showReport(type);
+            });
+            navigation.addView(back, new LinearLayout.LayoutParams(0, dp(46), 1));
+        }
+        TextView next = actionButton(localizeReportWizardText("Continue"), true);
+        LinearLayout.LayoutParams nextParams = new LinearLayout.LayoutParams(0, dp(46), 1);
+        if (reportWizardStep > 1) nextParams.setMargins(dp(8), 0, 0, 0);
+        navigation.addView(next, nextParams);
+        next.setOnClickListener(view -> {
+            if (editingReportId == null && reportWizardStep == 2
+                    && (draftCityTag.trim().isEmpty() || draftLocation.trim().isEmpty())) {
+                Toast.makeText(this, localizeReportWizardText("Add a location and city tag."), Toast.LENGTH_LONG).show();
+                return;
+            }
+            if (reportWizardStep == 3 && draftItem.trim().isEmpty()) {
+                Toast.makeText(this, localizeReportWizardText("Enter a report title to continue."), Toast.LENGTH_LONG).show();
+                return;
+            }
+            if (reportWizardStep == 3 && reportDetailsForSubmission(
+                    draftDescription,
+                    draftIdentifier
+            ).trim().isEmpty()) {
+                Toast.makeText(this, localizeReportWizardText("Add at least one identifying detail."), Toast.LENGTH_LONG).show();
+                return;
+            }
+            reportWizardStep = nextStep;
+            showReport(type);
+        });
+        addField(root, navigation);
+    }
+
+    private void addWizardSectionTitle(LinearLayout root, String title) {
+        TextView heading = text(
+                localizeReportWizardText(title),
+                17,
+                primaryTextColor(),
+                Typeface.BOLD
+        );
+        addField(root, heading);
+    }
+
+    private void addWizardSummaryRow(LinearLayout root, String label, String value) {
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.VERTICAL);
+        row.setPadding(dp(12), dp(9), dp(12), dp(9));
+        row.setBackground(roundWithStroke(surfaceColor(), 12, borderColor()));
+        TextView labelView = text(
+                localizeReportWizardText(label),
+                10,
+                secondaryTextColor(),
+                Typeface.BOLD
+        );
+        row.addView(labelView, new LinearLayout.LayoutParams(-1, -2));
+        String summary = value == null || value.trim().isEmpty() ? "—" : value.trim();
+        TextView valueView = text(summary, 13, primaryTextColor(), Typeface.NORMAL);
+        row.addView(valueView, new LinearLayout.LayoutParams(-1, -2));
+        addField(root, row);
+    }
+
+    private void addWizardPhotoPreview(LinearLayout root) {
+        Bitmap cameraPhoto = reportCameraImages.length > 0 ? reportCameraImages[0] : null;
+        Uri selectedPhoto = reportImages.length > 0 ? reportImages[0] : null;
+        String existingPhoto = editingReportImageUrl == null ? "" : editingReportImageUrl.trim();
+        if (cameraPhoto == null && selectedPhoto == null && existingPhoto.isEmpty()) return;
+        ImageView preview = new ImageView(this);
+        preview.setScaleType(ImageView.ScaleType.CENTER_CROP);
+        preview.setBackground(roundWithStroke(surfaceColor(), 14, borderColor()));
+        if (cameraPhoto != null) {
+            preview.setImageBitmap(cameraPhoto);
+        } else if (selectedPhoto != null) {
+            Glide.with(this).load(selectedPhoto).centerCrop().into(preview);
+        } else {
+            Glide.with(this).load(existingPhoto).centerCrop().into(preview);
+        }
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(dp(132), dp(132));
+        params.gravity = Gravity.CENTER_HORIZONTAL;
+        params.setMargins(0, dp(5), 0, dp(8));
+        root.addView(preview, params);
+    }
+
+    private String reportDetailsForSubmission(String details, String identifier) {
+        String cleanDetails = details == null ? "" : details.trim();
+        String cleanIdentifier = identifier == null ? "" : identifier.trim();
+        if (cleanIdentifier.isEmpty()) return cleanDetails;
+        if (cleanDetails.isEmpty()) return "Identifying details: " + cleanIdentifier;
+        return cleanDetails + "\nIdentifying details: " + cleanIdentifier;
+    }
+
+    private String reportLocationForSubmission(String location, String city) {
+        String cleanLocation = location == null ? "" : location.trim();
+        String cleanCity = city == null ? "" : city.trim();
+        if (cleanCity.isEmpty()) return cleanLocation;
+        if (cleanLocation.isEmpty()) return cleanCity;
+        if (cleanLocation.toLowerCase(Locale.US).contains(cleanCity.toLowerCase(Locale.US))) {
+            return cleanLocation;
+        }
+        return cleanLocation + ", " + cleanCity;
+    }
+
+    private boolean reportHasPhoto() {
+        for (int index = 0; index < reportImages.length; index++) {
+            if (reportImages[index] != null || reportCameraImages[index] != null) return true;
+        }
+        return editingReportImageUrl != null && !editingReportImageUrl.trim().isEmpty();
+    }
+
+    private boolean validateWizardReport(EditText item, String details, String location, EditText date) {
+        if (item.getText().toString().trim().isEmpty()) {
+            Toast.makeText(this, localizeReportWizardText("Enter a report title."), Toast.LENGTH_LONG).show();
+            return false;
+        }
+        if (details.trim().isEmpty()) {
+            Toast.makeText(this, localizeReportWizardText("Add at least one identifying detail."), Toast.LENGTH_LONG).show();
+            return false;
+        }
+        if (editingReportId == null && (draftCityTag.trim().isEmpty() || location.trim().isEmpty())) {
+            Toast.makeText(this, localizeReportWizardText("Add a location and city tag."), Toast.LENGTH_LONG).show();
+            return false;
+        }
+        String dateValue = date.getText().toString().trim();
+        if (!dateValue.isEmpty() && !validDate(dateValue)) {
+            date.setError("Use a valid date in DD/MM/YYYY format");
+            return false;
+        }
+        if ("item".equals(draftReportCategory) && "LOST".equalsIgnoreCase(currentReportType)
+                && !draftImei.isEmpty() && !draftImei.matches("[0-9]{15}")) {
+            Toast.makeText(this, "IMEI must contain exactly 15 digits", Toast.LENGTH_LONG).show();
+            return false;
+        }
+        return true;
+    }
+
+    private String backendReportCategory(String title, String description) {
+        if ("pet".equals(draftReportCategory)) return "Animals";
+        if ("person".equals(draftReportCategory)) return "People";
+        return AiMatchService.inferCategory(title, description);
+    }
+
+    private String reportCategoryDisplayName() {
+        if ("pet".equals(draftReportCategory)) return localizeReportWizardText("Pet / Animal");
+        if ("person".equals(draftReportCategory)) return localizeReportWizardText("Missing Person");
+        return localizeReportWizardText("Item / Valuables");
+    }
+
+    private String reportIdentifierLabel() {
+        if ("pet".equals(draftReportCategory)) return localizeReportWizardText("Pet identifiers");
+        if ("person".equals(draftReportCategory)) return localizeReportWizardText("Person identifiers");
+        return localizeReportWizardText("Serial number or other identifier");
+    }
+
+    private String reportIdentifierHint() {
+        if ("pet".equals(draftReportCategory)) return localizeReportWizardText("Collar color, tag, breed, or microchip");
+        if ("person".equals(draftReportCategory)) return localizeReportWizardText("Distinct clothing, appearance, or accessories");
+        return localizeReportWizardText("Serial number, brand, model, or distinguishing mark");
+    }
+
+    private String reportCategoryHint(String itemHint, String petHint, String personHint) {
+        if ("pet".equals(draftReportCategory)) return localizeReportWizardText(petHint);
+        if ("person".equals(draftReportCategory)) return localizeReportWizardText(personHint);
+        return localizeReportWizardText(itemHint);
     }
 
     private void showPaymentOptions(EditText item, EditText description, EditText location, EditText date) {
@@ -3647,7 +4446,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             date.setError("Use a valid date in DD/MM/YYYY format");
             return;
         }
-        if ("LOST".equalsIgnoreCase(type) && !draftImei.isEmpty()
+        if ("LOST".equalsIgnoreCase(type) && "item".equals(draftReportCategory) && !draftImei.isEmpty()
                 && !draftImei.matches("[0-9]{15}")) {
             Toast.makeText(this, "IMEI must contain exactly 15 digits", Toast.LENGTH_LONG).show();
             return;
@@ -3679,7 +4478,9 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                         type, title, details, location.getText().toString().trim(),
                         date.getText().toString().trim(), latitude, longitude,
                         images, cameraImages, token.getToken(), paymentId,
-                        "LOST".equalsIgnoreCase(type) ? draftImei : "");
+                        "LOST".equalsIgnoreCase(type) && "item".equals(draftReportCategory)
+                                ? draftImei
+                                : "");
                 runOnUiThread(() -> {
                     publish.setEnabled(true);
                     int code = submission.statusCode;
@@ -3733,7 +4534,8 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             AiMatchService.ApiResponse response = AiMatchService.createItem(
                     title, description, imageUrl, imageUrls, type, latitude, longitude,
                     location, date, paymentId,
-                    getTtsLocaleForSelectedLanguage().getLanguage(), idToken, imeiNumber);
+                    getTtsLocaleForSelectedLanguage().getLanguage(), idToken, imeiNumber,
+                    backendReportCategory(title, description));
             if (!response.isSuccessful()) {
                 lastSubmissionError = "Could not save report (" + response.getStatusCode() + "): " + response.getErrorMessage();
                 return new ItemSubmissionResult(response.getStatusCode(), lastSubmissionError);
@@ -3942,7 +4744,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             connection.setRequestProperty("Authorization", "Bearer " + idToken);
             connection.setRequestProperty("Content-Type", "application/json; charset=UTF-8");
             String imageJson = imageUrl == null || imageUrl.trim().isEmpty() ? "null" : "\"" + escapeJson(imageUrl) + "\"";
-            String body = "{\"title\":\"" + escapeJson(title) + "\",\"description\":\"" + escapeJson(description) + "\",\"source_language\":\"" + getTtsLocaleForSelectedLanguage().getLanguage() + "\",\"report_location\":\"" + escapeJson(location) + "\",\"report_date\":\"" + escapeJson(date) + "\",\"category\":\"" + escapeJson(AiMatchService.inferCategory(title, description)) + "\",\"lat\":0.0,\"lng\":0.0,\"image_url\":" + imageJson + "}";
+            String body = "{\"title\":\"" + escapeJson(title) + "\",\"description\":\"" + escapeJson(description) + "\",\"source_language\":\"" + getTtsLocaleForSelectedLanguage().getLanguage() + "\",\"report_location\":\"" + escapeJson(location) + "\",\"report_date\":\"" + escapeJson(date) + "\",\"category\":\"" + escapeJson(backendReportCategory(title, description)) + "\",\"lat\":0.0,\"lng\":0.0,\"image_url\":" + imageJson + "}";
             try (OutputStream output = connection.getOutputStream()) {
                 output.write(body.getBytes(StandardCharsets.UTF_8));
             }
@@ -5286,15 +6088,45 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                     draftItem = title;
                     draftDescription = report.optString("description", "");
                     draftLocation = report.optString("report_location", "");
+                    draftCityTag = report.optString("report_location", "");
                     draftDate = report.optString("report_date", "");
+                    String savedCategory = report.optString("category", "").toLowerCase(Locale.US);
+                    draftReportCategory = savedCategory.contains("animal") || savedCategory.contains("pet")
+                            ? "pet"
+                            : savedCategory.contains("people") || savedCategory.contains("person")
+                                    ? "person"
+                                    : "item";
+                    draftIdentifier = "";
+                    reportWizardStep = 1;
                     selectedImage = null;
                     capturedImage = null;
                     Arrays.fill(reportImages, null);
                     Arrays.fill(reportCameraImages, null);
                     showReport(type);
                 }, canEdit, () -> deleteReport(reportId, type));
+                LinearLayout reportCardContainer = new LinearLayout(this);
+                reportCardContainer.setOrientation(LinearLayout.VERTICAL);
+                reportCardContainer.setPadding(dp(8), dp(6), dp(8), dp(10));
+                reportCardContainer.setBackground(roundWithStroke(surfaceColor(), 18, borderColor()));
+                reportCard.setBackgroundColor(Color.TRANSPARENT);
                 reportCard.setOnClickListener(view -> showReportDetailsDialog(report, false));
-                addField(activeContent, reportCard);
+                reportCardContainer.addView(reportCard, new LinearLayout.LayoutParams(-1, -2));
+                reportCardContainer.addView(createReportStatusTracker(report));
+                if (isHighPriorityReport(report)) {
+                    TextView shareAlert = actionButton(
+                            localizeReportsText("Share Alert Card"),
+                            false
+                    );
+                    shareAlert.setTextColor(Color.WHITE);
+                    shareAlert.setBackground(round(Color.rgb(190, 45, 55), 14));
+                    LinearLayout.LayoutParams shareParams = new LinearLayout.LayoutParams(-1, dp(44));
+                    shareParams.setMargins(dp(12), dp(8), dp(12), 0);
+                    reportCardContainer.addView(shareAlert, shareParams);
+                    shareAlert.setOnClickListener(view -> showShareAlertCardDialog(report));
+                }
+                LinearLayout.LayoutParams reportCardParams = new LinearLayout.LayoutParams(-1, -2);
+                reportCardParams.setMargins(0, 0, 0, dp(12));
+                activeContent.addView(reportCardContainer, reportCardParams);
             }
 
             if (allReports.isEmpty()) {
@@ -5307,6 +6139,442 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         TextView home = actionButton(translate("Back home"), false);
         home.setOnClickListener(view -> showHome());
         addField(root, home);
+    }
+
+    private View createReportStatusTracker(JSONObject report) {
+        LinearLayout tracker = new LinearLayout(this);
+        tracker.setOrientation(LinearLayout.VERTICAL);
+        tracker.setPadding(dp(12), dp(8), dp(8), dp(2));
+
+        TextView heading = text(
+                localizeReportsText("Live Status Tracker"),
+                13,
+                primaryTextColor(),
+                Typeface.BOLD
+        );
+        tracker.addView(heading, new LinearLayout.LayoutParams(-1, -2));
+
+        String[] titles = {
+                "Submitted & Under Review",
+                "Published & Broadcasting",
+                "Match Found / Verification in Progress",
+                "Successfully Reunited"
+        };
+        String[] descriptions = {
+                "Admin validating details",
+                "Live on network",
+                "Admin verifying ownership",
+                "Closed with a success badge"
+        };
+        int currentStage = resolveReportWorkflowStage(report);
+        int completeColor = Color.rgb(24, 132, 91);
+        int activeColor = currentStage == 3 ? Color.rgb(190, 45, 55) : Color.rgb(201, 145, 40);
+
+        for (int index = 0; index < titles.length; index++) {
+            int stage = index + 1;
+            boolean complete = stage < currentStage || currentStage == 4;
+            boolean active = stage == currentStage && currentStage < 4;
+            int markerColor = complete ? completeColor : active ? activeColor : borderColor();
+
+            LinearLayout step = new LinearLayout(this);
+            step.setOrientation(LinearLayout.HORIZONTAL);
+            step.setGravity(Gravity.TOP);
+            step.setPadding(0, dp(8), 0, 0);
+
+            LinearLayout track = new LinearLayout(this);
+            track.setOrientation(LinearLayout.VERTICAL);
+            track.setGravity(Gravity.CENTER_HORIZONTAL);
+            TextView marker = text(complete ? "✓" : active ? "•" : "", active ? 18 : 13,
+                    complete ? Color.WHITE : active ? Color.WHITE : secondaryTextColor(),
+                    Typeface.BOLD);
+            marker.setGravity(Gravity.CENTER);
+            marker.setBackground(roundWithStroke(
+                    complete || active ? markerColor : Color.TRANSPARENT,
+                    20,
+                    markerColor
+            ));
+            track.addView(marker, new LinearLayout.LayoutParams(dp(22), dp(22)));
+            if (stage < titles.length) {
+                View connector = new View(this);
+                connector.setBackgroundColor(complete ? completeColor : borderColor());
+                track.addView(connector, new LinearLayout.LayoutParams(dp(2), dp(28)));
+            }
+            step.addView(track, new LinearLayout.LayoutParams(dp(26), -2));
+
+            LinearLayout textColumn = new LinearLayout(this);
+            textColumn.setOrientation(LinearLayout.VERTICAL);
+            TextView title = text(
+                    localizeReportsText(titles[index]),
+                    12,
+                    complete ? completeColor : active ? activeColor : secondaryTextColor(),
+                    complete || active ? Typeface.BOLD : Typeface.NORMAL
+            );
+            TextView description = text(
+                    localizeReportsText(descriptions[index]),
+                    10,
+                    secondaryTextColor(),
+                    Typeface.NORMAL
+            );
+            textColumn.addView(title, new LinearLayout.LayoutParams(-1, -2));
+            textColumn.addView(description, new LinearLayout.LayoutParams(-1, -2));
+            step.addView(textColumn, new LinearLayout.LayoutParams(0, -2, 1));
+            tracker.addView(step, new LinearLayout.LayoutParams(-1, -2));
+
+            if (active) {
+                ScaleAnimation pulse = new ScaleAnimation(
+                        0.78f, 1.12f, 0.78f, 1.12f,
+                        Animation.RELATIVE_TO_SELF, 0.5f,
+                        Animation.RELATIVE_TO_SELF, 0.5f
+                );
+                pulse.setDuration(750);
+                pulse.setRepeatMode(Animation.REVERSE);
+                pulse.setRepeatCount(Animation.INFINITE);
+                marker.startAnimation(pulse);
+            }
+        }
+
+        if (currentStage == 4) {
+            TextView successBadge = text(
+                    localizeReportsText("SUCCESSFULLY REUNITED"),
+                    10,
+                    Color.WHITE,
+                    Typeface.BOLD
+            );
+            successBadge.setGravity(Gravity.CENTER);
+            successBadge.setPadding(dp(10), dp(5), dp(10), dp(5));
+            successBadge.setBackground(round(completeColor, 12));
+            LinearLayout.LayoutParams badgeParams = new LinearLayout.LayoutParams(-2, -2);
+            badgeParams.setMargins(dp(26), dp(8), 0, 0);
+            tracker.addView(successBadge, badgeParams);
+        }
+        return tracker;
+    }
+
+    private int resolveReportWorkflowStage(JSONObject report) {
+        int stage = report.optInt("workflow_stage", 0);
+        if (stage >= 1 && stage <= 4) return stage;
+        String status = report.optString("status", "").trim().toLowerCase(Locale.US);
+        if (containsDiscoveryTerm(status, "recovered", "reunited", "closed")) return 4;
+        if (containsDiscoveryTerm(status, "match", "verification")) return 3;
+        return 2;
+    }
+
+    private boolean isHighPriorityReport(JSONObject report) {
+        return discoveryReportMatchesCategory(report, "people")
+                || resolveReportWorkflowStage(report) >= 3;
+    }
+
+    private void showShareAlertCardDialog(JSONObject report) {
+        Dialog dialog = new Dialog(this);
+        dialog.requestWindowFeature(Window.FEATURE_NO_TITLE);
+        LinearLayout content = themedDialogContent(
+                R.drawable.ic_field_info,
+                "Share alert flyer",
+                "Preview the branded alert, then share it with your community."
+        );
+
+        ImageView preview = new ImageView(this);
+        preview.setAdjustViewBounds(true);
+        preview.setScaleType(ImageView.ScaleType.FIT_CENTER);
+        preview.setBackground(roundWithStroke(backgroundColor(), 16, borderColor()));
+        preview.setPadding(dp(4), dp(4), dp(4), dp(4));
+        LinearLayout.LayoutParams previewParams = new LinearLayout.LayoutParams(-1, dp(350));
+        previewParams.setMargins(0, dp(8), 0, dp(12));
+        content.addView(preview, previewParams);
+
+        TextView preparing = text(
+                localizeReportsText("Preparing flyer..."),
+                13,
+                secondaryTextColor(),
+                Typeface.NORMAL
+        );
+        preparing.setGravity(Gravity.CENTER);
+        content.addView(preparing, new LinearLayout.LayoutParams(-1, dp(30)));
+
+        LinearLayout actions = new LinearLayout(this);
+        actions.setOrientation(LinearLayout.HORIZONTAL);
+        TextView close = actionButton(translate("Close"), false);
+        close.setOnClickListener(view -> dialog.dismiss());
+        actions.addView(close, new LinearLayout.LayoutParams(0, dp(44), 1));
+
+        TextView share = actionButton(localizeReportsText("Share Alert Card"), true);
+        share.setEnabled(false);
+        share.setAlpha(0.55f);
+        LinearLayout.LayoutParams shareParams = new LinearLayout.LayoutParams(0, dp(44), 1);
+        shareParams.setMargins(dp(8), 0, 0, 0);
+        actions.addView(share, shareParams);
+        content.addView(actions, new LinearLayout.LayoutParams(-1, dp(44)));
+
+        final File[] flyerFile = {null};
+        share.setOnClickListener(view -> {
+            if (flyerFile[0] == null) return;
+            shareAlertFlyer(report, flyerFile[0]);
+        });
+
+        dialog.setContentView(content);
+        dialog.setCanceledOnTouchOutside(true);
+        dialog.show();
+        sizeThemedDialog(dialog);
+
+        network.execute(() -> {
+            Bitmap flyer;
+            File flyerFileResult;
+            try {
+                flyer = createAlertFlyerBitmap(report);
+                File flyerDirectory = new File(getCacheDir(), "share_flyers");
+                if (!flyerDirectory.exists() && !flyerDirectory.mkdirs()) {
+                    throw new java.io.IOException("Could not create alert flyer cache");
+                }
+                String safeReportId = report.optString("id", "report")
+                        .replaceAll("[^A-Za-z0-9_-]", "_");
+                flyerFileResult = new File(
+                        flyerDirectory,
+                        "fendly_alert_" + safeReportId + "_" + System.currentTimeMillis() + ".jpg"
+                );
+                try (FileOutputStream output = new FileOutputStream(flyerFileResult)) {
+                    if (!flyer.compress(Bitmap.CompressFormat.JPEG, 92, output)) {
+                        throw new java.io.IOException("Could not encode alert flyer");
+                    }
+                    output.flush();
+                }
+            } catch (Exception error) {
+                Log.e("REPORT_FLYER", "Could not prepare alert flyer", error);
+                runOnUiThread(() -> {
+                    if (!dialog.isShowing()) return;
+                    preparing.setText(localizeReportsText("Could not prepare flyer. Try again."));
+                    preparing.setTextColor(Color.rgb(190, 45, 55));
+                });
+                return;
+            }
+
+            runOnUiThread(() -> {
+                if (!dialog.isShowing()) return;
+                flyerFile[0] = flyerFileResult;
+                preview.setImageBitmap(flyer);
+                preparing.setVisibility(View.GONE);
+                share.setEnabled(true);
+                share.setAlpha(1f);
+            });
+        });
+    }
+
+    private Bitmap createAlertFlyerBitmap(JSONObject report) throws Exception {
+        final int width = 1080;
+        final int height = 1350;
+        Bitmap photo = loadAlertFlyerPhoto(report.optString("image_url", "").trim());
+        Bitmap flyer = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888);
+        Canvas canvas = new Canvas(flyer);
+        Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG | Paint.FILTER_BITMAP_FLAG);
+        int deepGreen = Color.rgb(14, 67, 53);
+        int brandGreen = Color.rgb(25, 112, 82);
+        int cream = Color.rgb(248, 246, 238);
+        int urgentRed = Color.rgb(190, 45, 55);
+
+        canvas.drawColor(cream);
+        paint.setShader(new LinearGradient(
+                0, 0, width, 300,
+                deepGreen, brandGreen, Shader.TileMode.CLAMP
+        ));
+        canvas.drawRect(0, 0, width, 300, paint);
+        paint.setShader(null);
+
+        Drawable logo = getDrawable(R.drawable.fendly_logo);
+        if (logo != null) {
+            logo.setBounds(70, 70, 190, 190);
+            logo.draw(canvas);
+        }
+        drawFlyerText(canvas, "FENDLY", 235, 136, 54, Color.WHITE, Typeface.BOLD);
+        drawFlyerText(canvas, "REUNITE WHAT MATTERS", 238, 190, 25,
+                Color.rgb(220, 237, 228), Typeface.NORMAL);
+
+        drawFlyerRoundRect(canvas, 70, 330, 1010, 845, 34, Color.WHITE);
+        if (photo != null) {
+            Path photoClip = new Path();
+            photoClip.addRoundRect(75, 335, 1005, 840, 28, 28, Path.Direction.CW);
+            canvas.save();
+            canvas.clipPath(photoClip);
+            Rect destination = cropRect(photo, 75, 335, 1005, 840);
+            canvas.drawBitmap(photo, null, destination, paint);
+            canvas.restore();
+            if (!photo.isRecycled()) photo.recycle();
+        } else {
+            paint.setColor(Color.rgb(229, 237, 231));
+            canvas.drawRoundRect(75, 335, 1005, 840, 28, 28, paint);
+            drawFlyerText(canvas, "PHOTO NOT AVAILABLE", 540, 610, 28,
+                    brandGreen, Typeface.BOLD, Paint.Align.CENTER);
+        }
+
+        boolean reunited = resolveReportWorkflowStage(report) == 4;
+        String alertLabel = reunited ? "SUCCESSFULLY REUNITED" : "COMMUNITY ALERT";
+        drawFlyerRoundRect(canvas, 70, 890, 520, 958, 28, reunited ? brandGreen : urgentRed);
+        drawFlyerText(canvas, alertLabel, 295, 936, 25, Color.WHITE,
+                Typeface.BOLD, Paint.Align.CENTER);
+
+        String title = report.optString("title", "").trim();
+        if (title.isEmpty()) title = "Fendly community report";
+        drawFlyerWrappedText(canvas, title, 72, 1015, 900, 54,
+                Color.rgb(28, 43, 36), Typeface.BOLD, 2);
+
+        drawFlyerText(canvas, "LAST-SEEN LOCATION", 75, 1160, 22,
+                Color.rgb(98, 111, 103), Typeface.BOLD);
+        String location = report.optString("report_location", "").trim();
+        if (location.isEmpty()) location = "Location shared with the Fendly team";
+        drawFlyerWrappedText(canvas, location, 75, 1205, 900, 34,
+                Color.rgb(48, 63, 54), Typeface.NORMAL, 2);
+
+        paint.setColor(Color.rgb(216, 226, 217));
+        canvas.drawRect(70, 1280, 1010, 1283, paint);
+        drawFlyerText(canvas, "FENDLY  ·  LOST & FOUND COMMUNITY", 75, 1325, 22,
+                deepGreen, Typeface.BOLD);
+        return flyer;
+    }
+
+    private Bitmap loadAlertFlyerPhoto(String imageUrl) throws Exception {
+        if (imageUrl == null || imageUrl.isEmpty()) return null;
+        URL url = new URL(imageUrl);
+        String protocol = url.getProtocol();
+        if (!"https".equalsIgnoreCase(protocol) && !"http".equalsIgnoreCase(protocol)) {
+            throw new java.io.IOException("Unsupported report photo URL");
+        }
+        HttpURLConnection connection = (HttpURLConnection) url.openConnection();
+        connection.setConnectTimeout(10000);
+        connection.setReadTimeout(15000);
+        connection.setInstanceFollowRedirects(true);
+        try {
+            int responseCode = connection.getResponseCode();
+            if (responseCode < 200 || responseCode >= 300) {
+                throw new java.io.IOException("Report photo returned HTTP " + responseCode);
+            }
+            int contentLength = connection.getContentLength();
+            if (contentLength > 15 * 1024 * 1024) {
+                throw new java.io.IOException("Report photo is too large to share");
+            }
+            ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+            byte[] buffer = new byte[8192];
+            int total = 0;
+            int count;
+            try (InputStream input = connection.getInputStream()) {
+                while ((count = input.read(buffer)) != -1) {
+                    total += count;
+                    if (total > 15 * 1024 * 1024) {
+                        throw new java.io.IOException("Report photo is too large to share");
+                    }
+                    bytes.write(buffer, 0, count);
+                }
+            }
+            byte[] imageBytes = bytes.toByteArray();
+            BitmapFactory.Options bounds = new BitmapFactory.Options();
+            bounds.inJustDecodeBounds = true;
+            BitmapFactory.decodeByteArray(imageBytes, 0, imageBytes.length, bounds);
+            if (bounds.outWidth <= 0 || bounds.outHeight <= 0) {
+                throw new java.io.IOException("Report photo is not a valid image");
+            }
+            BitmapFactory.Options options = new BitmapFactory.Options();
+            options.inSampleSize = Math.max(
+                    1,
+                    Math.min(bounds.outWidth / 930, bounds.outHeight / 505)
+            );
+            return BitmapFactory.decodeByteArray(imageBytes, 0, imageBytes.length, options);
+        } finally {
+            connection.disconnect();
+        }
+    }
+
+    private Rect cropRect(Bitmap bitmap, int left, int top, int right, int bottom) {
+        float targetRatio = (right - left) / (float) (bottom - top);
+        float imageRatio = bitmap.getWidth() / (float) bitmap.getHeight();
+        if (imageRatio > targetRatio) {
+            int cropWidth = Math.round(bitmap.getHeight() * targetRatio);
+            int cropLeft = (bitmap.getWidth() - cropWidth) / 2;
+            return new Rect(cropLeft, 0, cropLeft + cropWidth, bitmap.getHeight());
+        }
+        int cropHeight = Math.round(bitmap.getWidth() / targetRatio);
+        int cropTop = (bitmap.getHeight() - cropHeight) / 2;
+        return new Rect(0, cropTop, bitmap.getWidth(), cropTop + cropHeight);
+    }
+
+    private void drawFlyerRoundRect(Canvas canvas, float left, float top, float right,
+                                    float bottom, float radius, int color) {
+        Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        paint.setColor(color);
+        canvas.drawRoundRect(left, top, right, bottom, radius, radius, paint);
+    }
+
+    private void drawFlyerText(Canvas canvas, String value, float x, float baseline,
+                               float size, int color, int style) {
+        drawFlyerText(canvas, value, x, baseline, size, color, style, Paint.Align.LEFT);
+    }
+
+    private void drawFlyerText(Canvas canvas, String value, float x, float baseline,
+                               float size, int color, int style, Paint.Align alignment) {
+        Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        paint.setColor(color);
+        paint.setTextSize(size);
+        paint.setTypeface(Typeface.create("sans-serif", style));
+        paint.setTextAlign(alignment);
+        canvas.drawText(value, x, baseline, paint);
+    }
+
+    private void drawFlyerWrappedText(Canvas canvas, String value, float x, float baseline,
+                                      float maxWidth, float size, int color, int style,
+                                      int maxLines) {
+        Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        paint.setColor(color);
+        paint.setTextSize(size);
+        paint.setTypeface(Typeface.create("sans-serif", style));
+        String[] words = value.split("\\s+");
+        String line = "";
+        int lineNumber = 0;
+        for (String word : words) {
+            String candidate = line.isEmpty() ? word : line + " " + word;
+            if (paint.measureText(candidate) > maxWidth && !line.isEmpty()) {
+                drawFlyerText(canvas, line, x, baseline + lineNumber * (size + 10),
+                        size, color, style);
+                line = word;
+                lineNumber++;
+                if (lineNumber >= maxLines) return;
+            } else {
+                line = candidate;
+            }
+        }
+        if (!line.isEmpty() && lineNumber < maxLines) {
+            drawFlyerText(canvas, line, x, baseline + lineNumber * (size + 10),
+                    size, color, style);
+        }
+    }
+
+    private void shareAlertFlyer(JSONObject report, File flyerFile) {
+        try {
+            Uri flyerUri = FileProvider.getUriForFile(
+                    this,
+                    getPackageName() + ".fileprovider",
+                    flyerFile
+            );
+            String title = report.optString("title", "Fendly community alert");
+            String location = report.optString("report_location", "").trim();
+            Intent shareIntent = new Intent(Intent.ACTION_SEND);
+            shareIntent.setType("image/jpeg");
+            shareIntent.putExtra(Intent.EXTRA_STREAM, flyerUri);
+            shareIntent.putExtra(
+                    Intent.EXTRA_TEXT,
+                    location.isEmpty()
+                            ? title + " · Shared from Fendly"
+                            : title + " · Last seen: " + location + " · Shared from Fendly"
+            );
+            shareIntent.setClipData(android.content.ClipData.newUri(
+                    getContentResolver(),
+                    "Fendly alert flyer",
+                    flyerUri
+            ));
+            shareIntent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            startActivity(Intent.createChooser(
+                    shareIntent,
+                    localizeReportsText("Share alert flyer")
+            ));
+        } catch (Exception error) {
+            Log.e("REPORT_FLYER", "Could not share alert flyer", error);
+            Toast.makeText(this, localizeReportsText("Could not share flyer."), Toast.LENGTH_LONG).show();
+        }
     }
 
     private void deleteReport(String reportId, String type) {
@@ -10474,9 +11742,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
     private void applyLanguageSelection(int languageIndex, String languageCode) {
         selectedLanguage = languageIndex;
         LanguageManager.setAppLanguage(this, languageCode);
-        LanguageManager.restoreSavedLanguage(this);
-        applySystemBarColors();
-        if (screenRenderer != null) screenRenderer.run();
+        recreate();
     }
 
     private void showLanguagePicker() {
@@ -10924,13 +12190,100 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                 {"Sign in to view reports.", "रिपोर्ट देखने के लिए साइन इन करें।", "अहवाल पाहण्यासाठी साइन इन करा.", "રિપોર્ટ જોવા માટે સાઇન ઇન કરો.", "রিপোর্ট দেখতে সাইন ইন করুন।", "அறிக்கைகளைப் பார்க்க உள்நுழைவும்.", "రిపోర్టులు చూసేందుకు సైన్ ఇన్ చేయండి.", "ವರದಿಗಳನ್ನು ವೀಕ್ಷಿಸಲು ಸೈನ್ ઇન ಮಾಡಿ.", "റിപ്പോർട്ടുകൾ കാണാൻ സൈൻ ഇൻ ചെയ്യുക."},
                 {"Reports are temporarily unavailable.", "रिपोर्ट्स अस्थायी रूप से उपलब्ध नहीं हैं।", "अहवाल तात्पुरते उपलब्ध नाहीत.", "રિપોર્ટ્સ અસ્થાયી રૂપે અનુપલબ્ધ છે.", "রিপোর্ট সাময়িকভাবে পাওয়া যাচ্ছে না।", "அறிக்கைகள் தற்காலிகமாகக் கிடைக்கவில்லை.", "రిపోర్టులు తాత్కాలికంగా అందుబాటులో లేవు.", "ವರದಿಗಳು ತಾತ್ಕಾಲಿಕವಾಗಿ ಲಭ್ಯವಾಗಿಲ್ಲ.", "റിപ്പോർട്ടുകൾ താൽకాలികമായി ലഭ്യമല്ല."},
                 {"Reports could not be read.", "रिपोर्ट पढ़ी नहीं जा सकीं।", "अहवाल वाचता आले नाहीत.", "રિપોર્ટ વાંચી શકાયા નથી.", "রিপোর্ট পড়া সম্ভব হয়নি।", "அறிக்கைகளைப் படிக்க முடியவில்லை.", "రిపోర్టులు చదవలేకపోయాము.", "ವರದಿಗಳನ್ನು ಓದಲು ಸಾಧ್ಯವಾಗಲಿಲ್ಲ.", "റിപ്പോർട്ടുകൾ വായിക്കാൻ കഴിഞ്ഞില്ല."},
-                {"Authentication unavailable.", "प्रमाणीकरण उपलब्ध नहीं है।", "प्रमाणीकरण उपलब्ध नाही.", "પ્રમાણીકરણ અનુપલબ્ધ છે.", "প্রমাণীকরণ উপলব্ধ নয়।", "அடையாள அங்கீகாரம் கிடைக்கவில்லை.", "ప్రామాణీకరణ అందుబాటులో లేదు.", "ಪ್ರಮಾಣೀಕರಣ ಲಭ್ಯವಿಲ್ಲ.", "ആധികാരികത ലഭ്യമല്ല."}
+                {"Authentication unavailable.", "प्रमाणीकरण उपलब्ध नहीं है।", "प्रमाणीकरण उपलब्ध नाही.", "પ્રમાણીકરણ અનુપલબ્ધ છે.", "প্রমাণীকরণ উপলব্ধ নয়।", "அடையாள அங்கீகாரம் கிடைக்கவில்லை.", "ప్రామాణీకరణ అందుబాటులో లేదు.", "ಪ್ರಮಾಣೀಕರಣ ಲಭ್ಯವಿಲ್ಲ.", "ആധികാരികത ലഭ്യമല്ല."},
+                {"Discover active reports", "सक्रिय रिपोर्ट खोजें", "सक्रिय अहवाल शोधा", "સક્રિય અહેવાલો શોધો", "সক্রিয় রিপোর্ট খুঁজুন", "செயலில் உள்ள புகார்களைக் கண்டறியுங்கள்", "యాక్టివ్ నివేదికలను కనుగొనండి", "ಸಕ್ರಿಯ ವರದಿಗಳನ್ನು ಅನ್ವೇಷಿಸಿ", "സജീവ റിപ്പോർട്ടുകൾ കണ്ടെത്തുക"},
+                {"Filter reports by city", "शहर के अनुसार रिपोर्ट फ़िल्टर करें", "शहरानुसार अहवाल फिल्टर करा", "શહેર પ્રમાણે અહેવાલો ફિલ્ટર કરો", "শহর অনুযায়ী রিপোর্ট ফিল্টার করুন", "நகரத்தின் அடிப்படையில் புகார்களை வடிகட்டுங்கள்", "నగరం ఆధారంగా నివేదికలను ఫిల్టర్ చేయండి", "ನಗರದ ಪ್ರಕಾರ ವರದಿಗಳನ್ನು ಫಿಲ్టర్ ಮಾಡಿ", "നഗരം അനുസരിച്ച് റിപ്പോർട്ടുകൾ ഫിൽട്ടർ ചെയ്യുക"},
+                {"All cities", "सभी शहर", "सर्व शहरे", "બધા શહેરો", "সব শহর", "அனைத்து நகரங்களும்", "అన్ని నగరాలు", "ಎಲ್ಲಾ ನಗರಗಳು", "എല്ലാ നഗരങ്ങളും"},
+                {"No active reports found.", "कोई सक्रिय रिपोर्ट नहीं मिली।", "कोणताही सक्रिय अहवाल आढळला नाही.", "કોઈ સક્રિય અહેવાલ મળ્યો નથી.", "কোনো সক্রিয় রিপোর্ট পাওয়া যায়নি।", "செயலில் உள்ள புகார்கள் எதுவும் இல்லை.", "యాక్టివ్ నివేదికలు ఏవీ కనుగొనబడలేదు.", "ಸಕ್ರಿಯ ವರದಿಗಳು ಕಂಡುಬಂದಿಲ್ಲ.", "സജീവ റിപ്പോർട്ടുകളൊന്നും കണ്ടെത്തിയില്ല."},
+                {"Could not load reports. Try again.", "रिपोर्ट लोड नहीं हो सकीं। फिर से कोशिश करें।", "अहवाल लोड करता आले नाहीत. पुन्हा प्रयत्न करा.", "અહેવાલો લોડ થઈ શક્યા નથી. ફરી પ્રયાસ કરો.", "রিপোর্ট লোড করা যায়নি। আবার চেষ্টা করুন।", "புகார்களை ஏற்ற முடியவில்லை. மீண்டும் முயற்சிக்கவும்.", "నివేదికలను లోడ్ చేయలేకపోయాము. మళ్లీ ప్రయత్నించండి.", "ವರದಿಗಳನ್ನು ಲೋಡ್ ಮಾಡಲಾಗಲಿಲ್ಲ. ಮತ್ತೆ ಪ್ರಯತ್ನಿಸಿ.", "റിപ്പോർട്ടുകൾ ലോഡ് ചെയ്യാനായില്ല. വീണ്ടും ശ്രമിക്കുക."},
+                {"Browse by category", "श्रेणी के अनुसार देखें", "श्रेणीनुसार पहा", "શ્રેણી પ્રમાણે જુઓ", "বিভাগ অনুযায়ী দেখুন", "வகையின்படி பார்க்கவும்", "వర్గం ద్వారా చూడండి", "ವರ್ಗದ ಪ್ರಕಾರ ವೀಕ್ಷಿಸಿ", "വിഭാഗം തിരിച്ച് കാണുക"},
+                {"Valuables & Items", "कीमती सामान और वस्तुएँ", "मौल्यवान वस्तू", "કીમતી વસ્તુઓ", "মূল্যবান জিনিসপত্র", "மதிப்புமிக்க பொருட்கள்", "విలువైన వస్తువులు", "ಬೆಲೆಬಾಳುವ ವಸ್ತುಗಳು", "വിലപിടിപ്പുള്ള വസ്തുക്കൾ"},
+                {"Pets & Animals", "पालतू जानवर और पशु", "पाळीव प्राणी आणि इतर प्राणी", "પાળતુ પ્રાણી અને પ્રાણીઓ", "পোষা প্রাণী ও অন্যান্য প্রাণী", "செல்லப்பிராணிகள் மற்றும் விலங்குகள்", "పెంపుడు జంతువులు మరియు ఇతర జంతువులు", "ಸಾಕುಪ್ರಾಣಿಗಳು ಮತ್ತು ಇತರ ಪ್ರಾಣಿಗಳು", "വളർത്തുമൃഗങ്ങളും മറ്റ് മൃഗങ്ങളും"},
+                {"Missing Persons / Loved Ones", "लापता व्यक्ति / प्रियजन", "बेपत्ता व्यक्ती / प्रियजन", "ગુમ થયેલ વ્યક્તિ / પ્રિયજનો", "নিখোঁজ ব্যক্তি / প্রিয়জন", "காணாமல் போனவர்கள் / அன்புக்குரியவர்கள்", "కనిపించని వ్యక్తులు / ఆత్మీయులు", "ಕಾಣೆಯಾದ ವ್ಯಕ್ತಿಗಳು / ಪ್ರೀತಿಪಾತ್ರರು", "കാണാതായവർ / പ്രിയപ്പെട്ടവർ"},
+                {"URGENT", "अत्यावश्यक", "तातडीचे", "તાત્કાલિક", "জরুরি", "அவசரம்", "అత్యవసరం", "ತುರ್ತು", "അടിയന്തിരം"},
+                {"No reports in this category.", "इस श्रेणी में कोई रिपोर्ट नहीं है।", "या श्रेणीमध्ये कोणतेही अहवाल नाहीत.", "આ શ્રેણીમાં કોઈ અહેવાલ નથી.", "এই বিভাগে কোনো রিপোর্ট নেই।", "இந்த வகையில் புகார்கள் எதுவும் இல்லை.", "ఈ వర్గంలో నివేదికలు లేవు.", "ಈ ವರ್ಗದಲ್ಲಿ ಯಾವುದೇ ವರದಿಗಳಿಲ್ಲ.", "ഈ വിഭാഗത്തിൽ റിപ്പോർട്ടുകളൊന്നുമില്ല."},
+                {"Live Status Tracker", "लाइव स्थिति ट्रैकर", "लाइव्ह स्थिती ट्रॅकर", "લાઇવ સ્થિતિ ટ્રેકર", "লাইভ স্ট্যাটাস ট্র্যাকার", "நேரடி நிலை கண்காணிப்பு", "లైవ్ స్టేటస్ ట్రాకర్", "ಲೈವ್ ಸ್ಥಿತಿ ಟ್ರ್ಯಾಕರ್", "ലൈവ് സ്റ്റാറ്റസ് ട്രാക്കർ"},
+                {"Submitted & Under Review", "जमा किया गया और समीक्षा जारी", "सबमिट केले आणि पुनरावलोकन सुरू", "સબમિટ કર્યું અને સમીક્ષા હેઠળ", "জমা দেওয়া হয়েছে ও পর্যালোচনাধীন", "சமர்ப்பிக்கப்பட்டது மற்றும் மதிப்பாய்வில் உள்ளது", "సమర్పించబడింది మరియు సమీక్షలో ఉంది", "ಸಲ್ಲಿಸಲಾಗಿದೆ ಮತ್ತು ಪರಿಶೀಲನೆಯಲ್ಲಿದೆ", "സമർപ്പിച്ചു, അവലോകനത്തിലാണ്"},
+                {"Admin validating details", "एडमिन विवरण सत्यापित कर रहा है", "अॅडमिन तपशील पडताळत आहे", "એડમિન વિગતો ચકાસી રહ્યું છે", "অ্যাডমিন বিবরণ যাচাই করছে", "நிர்வாகி விவரங்களைச் சரிபார்க்கிறார்", "అడ్మిన్ వివరాలను ధృవీకరిస్తున్నారు", "ನಿರ್ವಾಹಕರು ವಿವರಗಳನ್ನು ಪರಿಶೀಲಿಸುತ್ತಿದ್ದಾರೆ", "അഡ്മിൻ വിവരങ്ങൾ പരിശോധിക്കുന്നു"},
+                {"Published & Broadcasting", "प्रकाशित और प्रसारित", "प्रकाशित आणि प्रसारित", "પ્રકાશિત અને પ્રસારિત", "প্রকাশিত ও সম্প্রচারিত", "வெளியிடப்பட்டு ஒளிபரப்பப்படுகிறது", "ప్రచురించబడింది మరియు ప్రసారం అవుతోంది", "ಪ್ರಕಟಿಸಲಾಗಿದೆ ಮತ್ತು ಪ್ರಸಾರವಾಗುತ್ತಿದೆ", "പ്രസിദ്ധീകരിച്ചു, പ്രക്ഷേപണം ചെയ്യുന്നു"},
+                {"Live on network", "नेटवर्क पर लाइव", "नेटवर्कवर लाइव्ह", "નેટવર્ક પર લાઇવ", "নেটওয়ার্কে লাইভ", "நெட்வொர்க்கில் நேரலையில்", "నెట్‌వర్క్‌లో ప్రత్యక్షంగా", "ನೆಟ್‌ವರ್ಕ್‌ನಲ್ಲಿ ಲೈವ್", "നെറ്റ്‌വർക്കിൽ ലൈവ്"},
+                {"Match Found / Verification in Progress", "मैच मिला / सत्यापन जारी", "जुळणी आढळली / पडताळणी सुरू", "મેચ મળ્યો / ચકાસણી ચાલુ", "মিল পাওয়া গেছে / যাচাই চলছে", "பொருத்தம் கண்டறியப்பட்டது / சரிபார்ப்பு நடைபெறுகிறது", "మ్యాచ్ కనుగొనబడింది / ధృవీకరణలో ఉంది", "ಹೊಂದಾಣಿಕೆ ಕಂಡುಬಂದಿದೆ / ಪರಿಶೀಲನೆ ನಡೆಯುತ್ತಿದೆ", "പൊരുത്തം കണ്ടെത്തി / പരിശോധന പുരോഗമിക്കുന്നു"},
+                {"Admin verifying ownership", "एडमिन स्वामित्व सत्यापित कर रहा है", "अॅडमिन मालकीची पडताळणी करत आहे", "એડમિન માલિકી ચકાસી રહ્યું છે", "অ্যাডমিন মালিকানা যাচাই করছে", "நிர்வாகி உரிமையைச் சரிபார்க்கிறார்", "అడ్మిన్ యాజమాన్యాన్ని ధృవీకరిస్తున్నారు", "ನಿರ್ವಾಹಕರು ಮಾಲೀಕತ್ವವನ್ನು ಪರಿಶೀಲಿಸುತ್ತಿದ್ದಾರೆ", "അഡ്മിൻ ഉടമസ്ഥാവകാശം പരിശോധിക്കുന്നു"},
+                {"Successfully Reunited", "सफलतापूर्वक मिल गया", "यशस्वीरित्या पुन्हा मिळाले", "સફળતાપૂર્વક ફરી મળ્યું", "সফলভাবে পুনর্মিলিত", "வெற்றிகரமாக மீண்டும் இணைக்கப்பட்டது", "విజయవంతంగా తిరిగి కలిశారు", "ಯಶಸ್ವಿಯಾಗಿ ಮತ್ತೆ ಒಂದಾಗಿದೆ", "വിജയകരമായി വീണ്ടും ഒന്നിച്ചു"},
+                {"Closed with a success badge", "सफलता बैज के साथ बंद", "यशस्वी बॅजसह बंद", "સફળતા બેજ સાથે બંધ", "সাফল্যের ব্যাজসহ বন্ধ", "வெற்றி அடையாளத்துடன் முடிக்கப்பட்டது", "విజయ బ్యాడ్జ్‌తో మూసివేయబడింది", "ಯಶಸ್ಸಿನ ಬ್ಯಾಡ್ಜ್‌ನೊಂದಿಗೆ ಮುಚ್ಚಲಾಗಿದೆ", "വിജയ ബാഡ്ജോടെ അടച്ചു"},
+                {"SUCCESSFULLY REUNITED", "सफलतापूर्वक मिल गया", "यशस्वीरित्या पुन्हा मिळाले", "સફળતાપૂર્વક ફરી મળ્યું", "সফলভাবে পুনর্মিলিত", "வெற்றிகரமாக மீண்டும் இணைக்கப்பட்டது", "విజయవంతంగా తిరిగి కలిశారు", "ಯಶಸ್ವಿಯಾಗಿ ಮತ್ತೆ ಒಂದಾಗಿದೆ", "വിജയകരമായി വീണ്ടും ഒന്നിച്ചു"},
+                {"Share Alert Card", "अलर्ट कार्ड साझा करें", "अलर्ट कार्ड शेअर करा", "એલર્ટ કાર્ડ શેર કરો", "সতর্কতা কার্ড শেয়ার করুন", "எச்சரிக்கை அட்டையைப் பகிரவும்", "అలర్ట్ కార్డ్‌ను షేర్ చేయండి", "ಎಚ್ಚರಿಕೆ ಕಾರ್ಡ್ ಹಂಚಿಕೊಳ್ಳಿ", "അലർട്ട് കാർഡ് പങ്കിടുക"},
+                {"Share alert flyer", "अलर्ट फ्लायर साझा करें", "अलर्ट फ्लायर शेअर करा", "એલર્ટ ફ્લાયર શેર કરો", "সতর্কতার ফ্লায়ার শেয়ার করুন", "எச்சரிக்கை ஃப்ளையரைப் பகிரவும்", "అలర్ట్ ఫ్లయర్‌ను షేర్ చేయండి", "ಎಚ್ಚರಿಕೆ ಫ್ಲೈಯರ್ ಹಂಚಿಕೊಳ್ಳಿ", "അലർട്ട് ഫ്ലയർ പങ്കിടുക"},
+                {"Preview the branded alert, then share it with your community.", "ब्रांडेड अलर्ट का पूर्वावलोकन करें और समुदाय के साथ साझा करें।", "ब्रँडेड अलर्टचे पूर्वावलोकन करा आणि समुदायासोबत शेअर करा.", "બ્રાન્ડેડ એલર્ટનું પૂર્વાવલોકન કરો અને સમુદાય સાથે શેર કરો.", "ব্র্যান্ডেড সতর্কতা দেখুন, তারপর সম্প্রদায়ের সঙ্গে শেয়ার করুন।", "பிராண்டட் எச்சரிக்கையை முன்னோட்டமிட்டு சமூகத்துடன் பகிரவும்.", "బ్రాండెడ్ అలర్ట్‌ను ప్రివ్యూ చేసి కమ్యూనిటీతో షేర్ చేయండి.", "ಬ್ರಾಂಡೆಡ್ ಎಚ್ಚರಿಕೆಯನ್ನು ಪೂರ್ವವೀಕ್ಷಿಸಿ, ನಂತರ ಸಮುದಾಯದೊಂದಿಗೆ ಹಂಚಿಕೊಳ್ಳಿ.", "ബ്രാൻഡഡ് അലർട്ട് പ്രിവ്യൂ ചെയ്ത് സമൂഹവുമായി പങ്കിടുക."},
+                {"Preparing flyer...", "फ्लायर तैयार हो रहा है...", "फ्लायर तयार होत आहे...", "ફ્લાયર તૈયાર થઈ રહ્યું છે...", "ফ্লায়ার তৈরি হচ্ছে...", "ஃப்ளையர் தயாராகிறது...", "ఫ్లయర్ సిద్ధమవుతోంది...", "ಫ್ಲೈಯರ್ ಸಿದ್ಧವಾಗುತ್ತಿದೆ...", "ഫ്ലയർ തയ്യാറാക്കുന്നു..."},
+                {"Could not prepare flyer. Try again.", "फ्लायर तैयार नहीं हो सका। फिर से कोशिश करें।", "फ्लायर तयार करता आला नाही. पुन्हा प्रयत्न करा.", "ફ્લાયર તૈયાર થઈ શક્યું નથી. ફરી પ્રયાસ કરો.", "ফ্লায়ার তৈরি করা যায়নি। আবার চেষ্টা করুন।", "ஃப்ளையரைத் தயாரிக்க முடியவில்லை. மீண்டும் முயற்சிக்கவும்.", "ఫ్లయర్‌ను సిద్ధం చేయలేకపోయాము. మళ్లీ ప్రయత్నించండి.", "ಫ್ಲೈಯರ್ ಸಿದ್ಧಪಡಿಸಲು ಸಾಧ್ಯವಾಗಲಿಲ್ಲ. ಮತ್ತೆ ಪ್ರಯತ್ನಿಸಿ.", "ഫ്ലയർ തയ്യാറാക്കാനായില്ല. വീണ്ടും ശ്രമിക്കുക."},
+                {"Could not share flyer.", "फ्लायर साझा नहीं हो सका।", "फ्लायर शेअर करता आला नाही.", "ફ્લાયર શેર થઈ શક્યો નથી.", "ফ্লায়ার শেয়ার করা যায়নি।", "ஃப்ளையரைப் பகிர முடியவில்லை.", "ఫ్లయర్‌ను షేర్ చేయలేకపోయాము.", "ಫ್ಲೈಯರ್ ಹಂಚಿಕೊಳ್ಳಲು ಸಾಧ್ಯವಾಗಲಿಲ್ಲ.", "ഫ്ലയർ പങ്കിടാനായില്ല."}
         };
         int language = Math.max(0, Math.min(selectedLanguage, entries[0].length - 1));
         for (String[] entry : entries) {
             if (entry[0].equals(value)) return localizeDigits(entry[language]);
         }
         return localizeDigits(value);
+    }
+
+    private String localizeReportWizardText(String value) {
+        if (value == null) return null;
+        if (value.startsWith("Step ") && value.endsWith(" of 4")) {
+            return localizeDigits(value);
+        }
+        String[][] entries = {
+                {"Category", "श्रेणी", "श्रेणी", "શ્રેણી", "বিভাগ", "வகை", "వర్గం", "ವರ್ಗ", "വിഭാഗം"},
+                {"Location", "स्थान", "ठिकाण", "સ્થાન", "অবস্থান", "இடம்", "స్థానం", "ಸ್ಥಳ", "സ്ഥലം"},
+                {"Details", "विवरण", "तपशील", "વિગતો", "বিবরণ", "விவரங்கள்", "వివరాలు", "ವಿವರಗಳು", "വിശദാംശങ്ങൾ"},
+                {"Review", "समीक्षा", "पुनरावलोकन", "સમીક્ષા", "পর্যালোচনা", "மதிப்பாய்வு", "సమీక్ష", "ಪರಿಶೀಲನೆ", "അവലോകനം"},
+                {"Choose what you are reporting", "आप किसकी रिपोर्ट कर रहे हैं चुनें", "कशाची नोंद करायची ते निवडा", "તમે શું નોંધવા માંગો છો તે પસંદ કરો", "আপনি কী রিপোর্ট করছেন তা বেছে নিন", "எதைப் புகாரளிக்கிறீர்கள் என்பதைத் தேர்ந்தெடுக்கவும்", "మీరు దేనిని నివేదిస్తున్నారో ఎంచుకోండి", "ನೀವು ಏನನ್ನು ವರದಿ ಮಾಡುತ್ತಿದ್ದೀರಿ ಆಯ್ಕೆಮಾಡಿ", "എന്താണ് റിപ്പോർട്ട് ചെയ്യുന്നതെന്ന് തിരഞ്ഞെടുക്കുക"},
+                {"Item / Valuables", "वस्तु / कीमती सामान", "वस्तू / मौल्यवान वस्तू", "વસ્તુ / કીમતી ચીજ", "জিনিস / মূল্যবান সামগ্রী", "பொருள் / மதிப்புமிக்கவை", "వస్తువు / విలువైనవి", "ವಸ್ತು / ಬೆಲೆಬಾಳುವವು", "വസ്തു / വിലപിടിപ്പുള്ളവ"},
+                {"Pet / Animal", "पालतू / पशु", "पाळीव प्राणी / प्राणी", "પાળતુ પ્રાણી / પ્રાણી", "পোষা প্রাণী / পশু", "செல்லப்பிராணி / விலங்கு", "పెంపుడు జంతువు / జంతువు", "ಸಾಕುಪ್ರಾಣಿ / ಪ್ರಾಣಿ", "വളർത്തുമൃഗം / മൃഗം"},
+                {"Missing Person", "लापता व्यक्ति", "बेपत्ता व्यक्ती", "ગુમ થયેલ વ્યક્તિ", "নিখোঁজ ব্যক্তি", "காணாமல் போனவர்", "కనిపించని వ్యక్తి", "ಕಾಣೆಯಾದ ವ್ಯಕ್ತಿ", "കാണാതായ വ്യക്തി"},
+                {"Report type", "रिपोर्ट का प्रकार", "अहवालाचा प्रकार", "રિપોર્ટનો પ્રકાર", "রিপোর্টের ধরন", "புகார் வகை", "నివేదిక రకం", "ವರದಿ ಪ್ರಕಾರ", "റിപ്പോർട്ട് തരം"},
+                {"Add a photo and location", "फोटो और स्थान जोड़ें", "फोटो आणि ठिकाण जोडा", "ફોટો અને સ્થાન ઉમેરો", "ছবি ও অবস্থান যোগ করুন", "படம் மற்றும் இடத்தைச் சேர்க்கவும்", "ఫోటో మరియు స్థానాన్ని జోడించండి", "ಫೋಟೋ ಮತ್ತು ಸ್ಥಳ ಸೇರಿಸಿ", "ഫോട്ടോയും സ്ഥലവും ചേർക്കുക"},
+                {"City / area tag", "शहर / क्षेत्र टैग", "शहर / परिसर टॅग", "શહેર / વિસ્તાર ટૅગ", "শহর / এলাকার ট্যাগ", "நகரம் / பகுதி குறிச்சொல்", "నగరం / ప్రాంతం ట్యాగ్", "ನಗರ / ಪ್ರದೇಶ ಟ್ಯಾಗ್", "നഗരം / പ്രദേശ ടാഗ്"},
+                {"Precise location ready", "सटीक स्थान तैयार", "अचूक ठिकाण तयार", "ચોક્કસ સ્થાન તૈયાર", "সুনির্দিষ্ট অবস্থান প্রস্তুত", "துல்லியமான இடம் தயார்", "ఖచ్చితమైన స్థానం సిద్ధం", "ನಿಖರ ಸ್ಥಳ ಸಿದ್ಧ", "കൃത്യമായ സ്ഥലം തയ്യാറാണ്"},
+                {"Use precise location (optional)", "सटीक स्थान उपयोग करें (वैकल्पिक)", "अचूक ठिकाण वापरा (ऐच्छिक)", "ચોક્કસ સ્થાન વાપરો (વૈકલ્પિક)", "সুনির্দিষ্ট অবস্থান ব্যবহার করুন (ঐচ্ছিক)", "துல்லியமான இடத்தைப் பயன்படுத்தவும் (விருப்பம்)", "ఖచ్చితమైన స్థానాన్ని ఉపయోగించండి (ఐచ్ఛికం)", "ನಿಖರ ಸ್ಥಳ ಬಳಸಿ (ಐಚ್ಛಿಕ)", "കൃത്യമായ സ്ഥലം ഉപയോഗിക്കുക (ഐച്ഛികം)"},
+                {"Add identifying details", "पहचान का विवरण जोड़ें", "ओळख तपशील जोडा", "ઓળખની વિગતો ઉમેરો", "শনাক্তকরণের বিবরণ যোগ করুন", "அடையாள விவரங்களைச் சேர்க்கவும்", "గుర్తింపు వివరాలను జోడించండి", "ಗುರುತಿನ ವಿವರಗಳನ್ನು ಸೇರಿಸಿ", "തിരിച്ചറിയൽ വിവരങ്ങൾ ചേർക്കുക"},
+                {"Report title", "रिपोर्ट का शीर्षक", "अहवालाचे शीर्षक", "રિપોર્ટનું શીર્ષક", "রিপোর্টের শিরোনাম", "புகார் தலைப்பு", "నివేదిక శీర్షిక", "ವರದಿ ಶೀರ್ಷಿಕೆ", "റിപ്പോർട്ട് തലക്കെട്ട്"},
+                {"Pet identifiers", "पालतू जानवर की पहचान", "पाळीव प्राण्याची ओळख", "પાળતુ પ્રાણીની ઓળખ", "পোষা প্রাণীর পরিচয়", "செல்லப்பிராணி அடையாளங்கள்", "పెంపుడు జంతువు గుర్తింపులు", "ಸಾಕುಪ್ರಾಣಿ ಗುರುತುಗಳು", "വളർത്തുമൃഗത്തിന്റെ തിരിച്ചറിയൽ"},
+                {"Person identifiers", "व्यक्ति की पहचान", "व्यक्तीची ओळख", "વ્યક્તિની ઓળખ", "ব্যক্তির পরিচয়", "நபர் அடையாளங்கள்", "వ్యక్తి గుర్తింపులు", "ವ್ಯಕ್ತಿ ಗುರುತುಗಳು", "വ്യക്തിയുടെ തിരിച്ചറിയൽ"},
+                {"Serial number or other identifier", "सीरियल नंबर या अन्य पहचान", "सीरियल क्रमांक किंवा इतर ओळख", "સીરીયલ નંબર અથવા અન્ય ઓળખ", "সিরিয়াল নম্বর বা অন্য পরিচয়", "வரிசை எண் அல்லது பிற அடையாளம்", "సీరియల్ నంబర్ లేదా ఇతర గుర్తింపు", "ಸೀರಿಯಲ್ ಸಂಖ್ಯೆ ಅಥವಾ ಇತರ ಗುರುತು", "സീരിയൽ നമ്പർ അല്ലെങ്കിൽ മറ്റ് തിരിച്ചറിയൽ"},
+                {"Other identifying details", "अन्य पहचान विवरण", "इतर ओळख तपशील", "અન્ય ઓળખ વિગતો", "অন্যান্য শনাক্তকরণ বিবরণ", "பிற அடையாள விவரங்கள்", "ఇతర గుర్తింపు వివరాలు", "ಇತರ ಗುರುತಿನ ವಿವರಗಳು", "മറ്റ് തിരിച്ചറിയൽ വിവരങ്ങൾ"},
+                {"Review your report", "अपनी रिपोर्ट की समीक्षा करें", "तुमच्या अहवालाचे पुनरावलोकन करा", "તમારા રિપોર્ટની સમીક્ષા કરો", "আপনার রিপোর্ট পর্যালোচনা করুন", "உங்கள் புகாரை மதிப்பாய்வு செய்யவும்", "మీ నివేదికను సమీక్షించండి", "ನಿಮ್ಮ ವರದಿಯನ್ನು ಪರಿಶೀಲಿಸಿ", "നിങ്ങളുടെ റിപ്പോർട്ട് അവലോകനം ചെയ്യുക"},
+                {"Photo", "फोटो", "फोटो", "ફોટો", "ছবি", "படம்", "ఫోటో", "ಫೋಟೋ", "ഫോട്ടോ"},
+                {"Photo attached", "फोटो संलग्न", "फोटो जोडला", "ફોટો જોડ્યો", "ছবি সংযুক্ত", "படம் இணைக்கப்பட்டது", "ఫోటో జోడించబడింది", "ಫೋಟೋ ಸೇರಿಸಲಾಗಿದೆ", "ഫോട്ടോ ചേർത്തു"},
+                {"No photo attached", "कोई फोटो संलग्न नहीं", "फोटो जोडलेला नाही", "કોઈ ફોટો જોડ્યો નથી", "কোনো ছবি সংযুক্ত নয়", "படம் இணைக்கப்படவில்லை", "ఫోటో జోడించలేదు", "ಫೋಟೋ ಸೇರಿಸಲಾಗಿಲ್ಲ", "ഫോട്ടോ ചേർത്തിട്ടില്ല"},
+                {"Identifying details", "पहचान का विवरण", "ओळख तपशील", "ઓળખની વિગતો", "শনাক্তকরণের বিবরণ", "அடையாள விவரங்கள்", "గుర్తింపు వివరాలు", "ಗುರುತಿನ ವಿವರಗಳು", "തിരിച്ചറിയൽ വിവരങ്ങൾ"},
+                {"Edit category", "श्रेणी बदलें", "श्रेणी बदला", "શ્રેણી બદલો", "বিভাগ সম্পাদনা", "வகையைத் திருத்தவும்", "వర్గాన్ని సవరించండి", "ವರ್ಗ ಸಂಪಾದಿಸಿ", "വിഭാഗം തിരുത്തുക"},
+                {"Edit photo and location", "फोटो और स्थान बदलें", "फोटो आणि ठिकाण बदला", "ફોટો અને સ્થાન બદલો", "ছবি ও অবস্থান সম্পাদনা", "படம் மற்றும் இடத்தைத் திருத்தவும்", "ఫోటో మరియు స్థానాన్ని సవరించండి", "ಫೋಟೋ ಮತ್ತು ಸ್ಥಳ ಸಂಪಾದಿಸಿ", "ഫോട്ടോയും സ്ഥലവും തിരുത്തുക"},
+                {"Edit identifying details", "पहचान विवरण बदलें", "ओळख तपशील बदला", "ઓળખની વિગતો બદલો", "শনাক্তকরণের বিবরণ সম্পাদনা", "அடையாள விவரங்களைத் திருத்தவும்", "గుర్తింపు వివరాలను సవరించండి", "ಗುರುತಿನ ವಿವರ ಸಂಪಾದಿಸಿ", "തിരിച്ചറിയൽ വിവരങ്ങൾ തിരുത്തുക"},
+                {"Back", "वापस", "मागे", "પાછળ", "পেছনে", "பின்", "వెనుకకు", "ಹಿಂದೆ", "പിന്നിലേക്ക്"},
+                {"Continue", "जारी रखें", "पुढे जा", "ચાલુ રાખો", "চালিয়ে যান", "தொடரவும்", "కొనసాగించండి", "ಮುಂದುವರಿಸಿ", "തുടരുക"},
+                {"Add a city or area tag to continue.", "जारी रखने के लिए शहर या क्षेत्र टैग जोड़ें।", "पुढे जाण्यासाठी शहर किंवा परिसर टॅग जोडा.", "ચાલુ રાખવા માટે શહેર અથવા વિસ્તાર ટૅગ ઉમેરો.", "চালিয়ে যেতে শহর বা এলাকার ট্যাগ যোগ করুন।", "தொடர நகரம் அல்லது பகுதி குறிச்சொல்லைச் சேர்க்கவும்.", "కొనసాగించడానికి నగరం లేదా ప్రాంతం ట్యాగ్ జోడించండి.", "ಮುಂದುವರಿಸಲು ನಗರ ಅಥವಾ ಪ್ರದೇಶ ಟ್ಯಾಗ್ ಸೇರಿಸಿ.", "തുടരാൻ നഗരമോ പ്രദേശമോ ടാഗ് ചേർക്കുക."},
+                {"Enter a report title to continue.", "जारी रखने के लिए रिपोर्ट का शीर्षक दर्ज करें।", "पुढे जाण्यासाठी अहवालाचे शीर्षक भरा.", "ચાલુ રાખવા માટે રિપોર્ટનું શીર્ષક દાખલ કરો.", "চালিয়ে যেতে রিপোর্টের শিরোনাম লিখুন।", "தொடர புகார் தலைப்பை உள்ளிடவும்.", "కొనసాగించడానికి నివేదిక శీర్షిక నమోదు చేయండి.", "ಮುಂದುವರಿಸಲು ವರದಿ ಶೀರ್ಷಿಕೆ ನಮೂದಿಸಿ.", "തുടരാൻ റിപ്പോർട്ട് തലക്കെട്ട് നൽകുക."},
+                {"Enter a report title.", "रिपोर्ट का शीर्षक दर्ज करें।", "अहवालाचे शीर्षक भरा.", "રિપોર્ટનું શીર્ષક દાખલ કરો.", "রিপোর্টের শিরোনাম লিখুন।", "புகார் தலைப்பை உள்ளிடவும்.", "నివేదిక శీర్షిక నమోదు చేయండి.", "ವರದಿ ಶೀರ್ಷಿಕೆ ನಮೂದಿಸಿ.", "റിപ്പോർട്ട് തലക്കെട്ട് നൽകുക."},
+                {"Add at least one identifying detail.", "कम से कम एक पहचान विवरण जोड़ें।", "किमान एक ओळख तपशील जोडा.", "ઓછામાં ઓછી એક ઓળખની વિગત ઉમેરો.", "অন্তত একটি শনাক্তকরণ বিবরণ যোগ করুন।", "குறைந்தது ஒரு அடையாள விவரத்தைச் சேர்க்கவும்.", "కనీసం ఒక గుర్తింపు వివరాన్ని జోడించండి.", "ಕನಿಷ್ಠ ಒಂದು ಗುರುತಿನ ವಿವರ ಸೇರಿಸಿ.", "കുറഞ്ഞത് ഒരു തിരിച്ചറിയൽ വിവരം ചേർക്കുക."},
+                {"Add a location and city tag.", "स्थान और शहर टैग जोड़ें।", "ठिकाण आणि शहर टॅग जोडा.", "સ્થાન અને શહેર ટૅગ ઉમેરો.", "অবস্থান ও শহরের ট্যাগ যোগ করুন।", "இடம் மற்றும் நகரக் குறிச்சொல்லைச் சேர்க்கவும்.", "స్థానం మరియు నగరం ట్యాగ్ జోడించండి.", "ಸ್ಥಳ ಮತ್ತು ನಗರ ಟ್ಯಾಗ್ ಸೇರಿಸಿ.", "സ്ഥലവും നഗര ടാഗും ചേർക്കുക."},
+                {"Title", "शीर्षक", "शीर्षक", "શીર્ષક", "শিরোনাম", "தலைப்பு", "శీర్షిక", "ಶೀರ್ಷಿಕೆ", "തലക്കെട്ട്"},
+                {"Date", "तारीख", "तारीख", "તારીખ", "তারিখ", "தேதி", "తేదీ", "ದಿನಾಂಕ", "തീയതി"},
+                {"Collar color, tag, breed, or microchip", "कॉलर का रंग, टैग, नस्ल या माइक्रोचिप", "कॉलरचा रंग, टॅग, जात किंवा मायक्रोचिप", "કોલરનો રંગ, ટૅગ, જાતિ અથવા માઇક્રોચિપ", "কলারের রং, ট্যাগ, জাত বা মাইক্রোচিপ", "காலர் நிறம், குறிச்சொல், இனம் அல்லது மைக்ரோசிப்", "కాలర్ రంగు, ట్యాగ్, జాతి లేదా మైక్రోచిప్", "ಕಾಲರ್ ಬಣ್ಣ, ಟ್ಯಾಗ್, ತಳಿ ಅಥವಾ ಮೈಕ್ರೋಚಿಪ್", "കോളറിന്റെ നിറം, ടാഗ്, ഇനം അല്ലെങ്കിൽ മൈക്രോചിപ്പ്"},
+                {"Distinct clothing, appearance, or accessories", "विशिष्ट कपड़े, रूप-रंग या सहायक वस्तुएँ", "वेगळे कपडे, रूप किंवा अॅक्सेसरीज", "અલગ કપડાં, દેખાવ અથવા એસેસરીઝ", "স্বতন্ত্র পোশাক, চেহারা বা আনুষঙ্গিক", "தனித்துவமான ஆடை, தோற்றம் அல்லது அணிகலன்கள்", "ప్రత్యేక దుస్తులు, రూపం లేదా ఉపకరణాలు", "ವಿಶಿಷ್ಟ ಉಡುಪು, ರೂಪ ಅಥವಾ ಪರಿಕರಗಳು", "പ്രത്യേക വസ്ത്രം, രൂപം അല്ലെങ്കിൽ അനുബന്ധങ്ങൾ"},
+                {"Serial number, brand, model, or distinguishing mark", "सीरियल नंबर, ब्रांड, मॉडल या पहचान चिह्न", "सीरियल क्रमांक, ब्रँड, मॉडेल किंवा ओळखचिन्ह", "સીરીયલ નંબર, બ્રાન્ડ, મોડેલ અથવા ઓળખચિહ્ન", "সিরিয়াল নম্বর, ব্র্যান্ড, মডেল বা শনাক্তকারী চিহ্ন", "வரிசை எண், பிராண்ட், மாடல் அல்லது அடையாளக் குறி", "సీరియల్ నంబర్, బ్రాండ్, మోడల్ లేదా ప్రత్యేక గుర్తు", "ಸೀರಿಯಲ್ ಸಂಖ್ಯೆ, ಬ್ರ್ಯಾಂಡ್, ಮಾದರಿ ಅಥವಾ ಗುರುತಿನ ಚಿಹ್ನೆ", "സീരിയൽ നമ്പർ, ബ്രാൻഡ്, മോഡൽ അല്ലെങ്കിൽ തിരിച്ചറിയൽ അടയാളം"},
+                {"e.g. Blue backpack", "उदाहरण: नीला बैकपैक", "उदा. निळी बॅकपॅक", "દા.ત. વાદળી બેકપેક", "যেমন: নীল ব্যাকপ্যাক", "உதா: நீல நிற பை", "ఉదా: నీలం బ్యాక్‌ప్యాక్", "ಉದಾ: ನೀಲಿ ಬ್ಯಾಕ್‌ಪ್ಯಾಕ್", "ഉദാ: നീല ബാക്ക്പാക്ക്"},
+                {"e.g. Brown dog", "उदाहरण: भूरा कुत्ता", "उदा. तपकिरी कुत्रा", "દા.ત. ભૂરા રંગનો કૂતરો", "যেমন: বাদামি কুকুর", "உதா: பழுப்பு நாய்", "ఉదా: గోధుమ రంగు కుక్క", "ಉದಾ: ಕಂದು ನಾಯಿ", "ഉദാ: തവിട്ടുനിറമുള്ള നായ"},
+                {"e.g. Missing person", "उदाहरण: लापता व्यक्ति", "उदा. बेपत्ता व्यक्ती", "દા.ત. ગુમ થયેલ વ્યક્તિ", "যেমন: নিখোঁজ ব্যক্তি", "உதா: காணாமல் போனவர்", "ఉదా: కనిపించని వ్యక్తి", "ಉದಾ: ಕಾಣೆಯಾದ ವ್ಯಕ್ತಿ", "ഉദാ: കാണാതായ വ്യക്തി"},
+                {"e.g. Nagpur", "उदाहरण: नागपुर", "उदा. नागपूर", "દા.ત. નાગપુર", "যেমন: নাগপুর", "உதா: நாக்பூர்", "ఉదా: నాగ్‌పూర్", "ಉದಾ: ನಾಗಪುರ", "ഉദാ: നാഗ്പൂർ"},
+                {"Optional 15-digit IMEI", "वैकल्पिक 15-अंकीय IMEI", "ऐच्छिक 15-अंकी IMEI", "વૈકલ્પિક 15-અંકનો IMEI", "ঐচ্ছিক ১৫-অঙ্কের IMEI", "விருப்பமான 15 இலக்க IMEI", "ఐచ్ఛిక 15 అంకెల IMEI", "ಐಚ್ಛಿಕ 15-ಅಂಕಿಯ IMEI", "ഐച്ഛിക 15 അക്ക IMEI"},
+                {"Report wizard", "रिपोर्ट विज़ार्ड", "अहवाल विझार्ड", "રિપોર્ટ વિઝાર્ડ", "রিপোর্ট উইজার্ড", "புகார் வழிகாட்டி", "నివేదిక విజార్డ్", "ವರದಿ ವಿಝಾರ್ಡ್", "റിപ്പോർട്ട് വിസാർഡ്"},
+                {"Describe color, brand, appearance, or other helpful details", "रंग, ब्रांड, रूप-रंग या अन्य उपयोगी विवरण बताएँ", "रंग, ब्रँड, रूप किंवा इतर उपयुक्त तपशील द्या", "રંગ, બ્રાન્ડ, દેખાવ અથવા અન્ય ઉપયોગી વિગતો આપો", "রং, ব্র্যান্ড, চেহারা বা অন্যান্য সহায়ক বিবরণ দিন", "நிறம், பிராண்ட், தோற்றம் அல்லது பிற பயனுள்ள விவரங்களை விவரிக்கவும்", "రంగు, బ్రాండ్, రూపం లేదా ఇతర ఉపయోగకరమైన వివరాలను వివరించండి", "ಬಣ್ಣ, ಬ್ರ್ಯಾಂಡ್, ರೂಪ ಅಥವಾ ಇತರ ಉಪಯುಕ್ತ ವಿವರಗಳನ್ನು ವಿವರಿಸಿ", "നിറം, ബ്രാൻഡ്, രൂപം അല്ലെങ്കിൽ മറ്റ് സഹായകരമായ വിശദാംശങ്ങൾ വിവരിക്കുക"}
+        };
+        int language = Math.max(0, Math.min(selectedLanguage, entries[0].length - 1));
+        for (String[] entry : entries) {
+            if (entry[0].equals(value)) return localizeDigits(entry[language]);
+        }
+        return localizeReportsText(value);
     }
 
     private String translateExtra(String value) {

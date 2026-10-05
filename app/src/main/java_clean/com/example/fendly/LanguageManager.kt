@@ -38,12 +38,20 @@ object LanguageManager {
     @JvmStatic
     fun getSavedLanguage(context: Context): String {
         val prefs = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
+        val savedIndex = prefs.getInt(KEY_LANG_INDEX, -1)
+        if (savedIndex in supportedLanguageCodes.indices) {
+            return supportedLanguageCodes[savedIndex]
+        }
         return normalizeLanguageCode(prefs.getString(KEY_LANG_CODE, "en"))
     }
 
     @JvmStatic
     fun getSavedLanguageIndex(context: Context): Int {
         val prefs = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
+        val savedIndex = prefs.getInt(KEY_LANG_INDEX, -1)
+        if (savedIndex in supportedLanguageCodes.indices) {
+            return savedIndex
+        }
         val savedCode = normalizeLanguageCode(prefs.getString(KEY_LANG_CODE, "en"))
         return supportedLanguageCodes.indexOf(savedCode).takeIf { it >= 0 } ?: 0
     }
@@ -255,6 +263,7 @@ object LanguageManager {
     @JvmStatic
     fun restoreSavedLanguage(context: Context) {
         val safeCode = getSavedLanguage(context)
+        AppCompatDelegate.setApplicationLocales(LocaleListCompat.forLanguageTags(safeCode))
         val locale = Locale.forLanguageTag(safeCode)
         Locale.setDefault(locale)
         val resources = context.resources

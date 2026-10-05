@@ -60,7 +60,8 @@ public final class AiMatchService {
             String paymentId,
             String sourceLanguage,
             String idToken,
-            String imeiNumber
+            String imeiNumber,
+            String reportCategory
     ) throws Exception {
         JSONArray images = new JSONArray();
         if (imageUrls != null) {
@@ -79,7 +80,9 @@ public final class AiMatchService {
                 .put("lng", longitude)
                 .put("report_location", location == null ? JSONObject.NULL : location)
                 .put("report_date", date == null ? JSONObject.NULL : date)
-                .put("category", inferCategory(title, description))
+                .put("category", reportCategory == null || reportCategory.trim().isEmpty()
+                        ? inferCategory(title, description)
+                        : reportCategory.trim())
                 .put("payment_id", paymentId == null ? JSONObject.NULL : paymentId);
         if ("lost".equalsIgnoreCase(type) && imeiNumber != null && !imeiNumber.isEmpty()) {
             payload.put("imei_number", imeiNumber);

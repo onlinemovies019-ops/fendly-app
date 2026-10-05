@@ -2,4 +2,5 @@
 <paths>
     <files-path name="image_provider_images" path="image_provider/" />
     <files-path name="profile_camera_images" path="profile_photos/" />
+    <cache-path name="share_flyers" path="share_flyers/" />
 </paths>

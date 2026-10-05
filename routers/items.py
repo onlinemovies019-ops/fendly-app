@@ -10,12 +10,12 @@ from typing import Literal, Optional
 from uuid import uuid4
 
 import firebase_admin
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
 from firebase_admin import firestore
 import httpx
 from pydantic import BaseModel, Field
 from PIL import Image, UnidentifiedImageError
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from ai_matching import create_embedding, item_text
@@ -24,7 +24,7 @@ from database import SessionLocal, get_db
 from image_matching import cosine_similarity, create_image_embedding
 from imei_security import imei_digest, validate_imei
 from moderation import moderate_content
-from models import FoundItem, LostItem
+from models import AdminMatchAlert, FoundItem, LostItem
 from notifications import persist_admin_match_alert, send_admin_match_email, send_match_notifications
 from routers.payments import verify_captured_payment
 from schemas import ItemCreate, ItemResponse, ItemUpdate, MatchPreview, MatchRequest, MatchResponse
@@ -521,6 +521,39 @@ async def list_my_items(
     found_items = session.scalars(select(FoundItem).where(FoundItem.created_by == uid)).all()
     items = [("LOST", item) for item in lost_items] + [("FOUND", item) for item in found_items]
     items.sort(key=lambda pair: pair[1].created_at.timestamp() if pair[1].created_at else 0, reverse=True)
+    lost_ids = {item.id for item in lost_items}
+    found_ids = {item.id for item in found_items}
+    recovered_statuses = {"RECOVERED", "REUNITED", "CLOSED"}
+    recovered_lost_ids = {
+        item.id for item in lost_items
+        if (item.status or "").strip().upper() in recovered_statuses
+    }
+    matched_report_ids: set[str] = set()
+    recovered_report_ids = set(recovered_lost_ids)
+    if lost_ids or found_ids:
+        match_alerts = session.scalars(
+            select(AdminMatchAlert).where(
+                or_(
+                    AdminMatchAlert.lost_item_id.in_(lost_ids) if lost_ids else False,
+                    AdminMatchAlert.found_item_id.in_(found_ids) if found_ids else False,
+                )
+            )
+        ).all()
+        linked_lost_ids = {alert.lost_item_id for alert in match_alerts}
+        if linked_lost_ids:
+            linked_lost_items = session.scalars(
+                select(LostItem).where(LostItem.id.in_(linked_lost_ids))
+            ).all()
+            recovered_lost_ids.update(
+                item.id for item in linked_lost_items
+                if (item.status or "").strip().upper() in recovered_statuses
+            )
+        for alert in match_alerts:
+            if alert.lost_item_id in recovered_lost_ids:
+                recovered_report_ids.add(alert.found_item_id)
+            if (alert.review_status or "").strip().lower() in {"pending", "confirmed"}:
+                matched_report_ids.update((alert.lost_item_id, alert.found_item_id))
+
     return [
         {
             "id": item.id,
@@ -537,8 +570,54 @@ async def list_my_items(
             "edit_count": item.edit_count,
             "created_at": item.created_at,
             "status": "Active" if item_type == "LOST" else "Published",
+            "workflow_stage": (
+                4 if item.id in recovered_report_ids
+                else 3 if item.id in matched_report_ids
+                else 2
+            ),
         }
         for item_type, item in items
+    ]
+
+
+@router.get("/reports")
+def list_public_reports(
+    city: str | None = Query(default=None, max_length=120),
+    session: Session | None = Depends(get_db),
+) -> list[dict[str, object]]:
+    session = _require_db_session(session)
+    normalized_city = city.strip().casefold() if city else ""
+    escaped_city = normalized_city.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+    reports: list[tuple[str, LostItem | FoundItem]] = []
+    for item_type, model in (("LOST", LostItem), ("FOUND", FoundItem)):
+        query = select(model)
+        if model is LostItem:
+            query = query.where(LostItem.status == "LOST")
+        if escaped_city:
+            query = query.where(
+                func.lower(model.report_location).like(f"%{escaped_city}%", escape="\\")
+            )
+        reports.extend((item_type, item) for item in session.scalars(query).all())
+
+    reports.sort(
+        key=lambda pair: pair[1].created_at.timestamp() if pair[1].created_at else 0,
+        reverse=True,
+    )
+    return [
+        {
+            "id": item.id,
+            "type": item_type,
+            "title": item.title,
+            "category": item.category,
+            "report_date": item.report_date or _stored_report_field(item.description, "Date"),
+            "report_location": item.report_location or _stored_report_field(item.description, "Location"),
+            "image_url": item.image_url,
+            "image_urls": item.image_urls or ([item.image_url] if item.image_url else []),
+            "created_at": item.created_at,
+            "status": "Active" if item_type == "LOST" else "Published",
+        }
+        for item_type, item in reports
     ]
 
 
