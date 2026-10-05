@@ -9,6 +9,7 @@ gradle.properties
 
 # Android and Gradle outputs
 .gradle/
+.kotlin/
 build/
 app/build/
 captures/
