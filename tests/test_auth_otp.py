@@ -373,8 +373,15 @@ def test_complete_registration_sets_password_for_reserved_incomplete_account(
     )
     monkeypatch.setattr(
         auth.firebase_auth,
+        "get_user_by_email",
+        lambda email, app: SimpleNamespace(uid=uid),
+    )
+    monkeypatch.setattr(
+        auth.firebase_auth,
         "update_user",
-        lambda target_uid, password, app: updated.append((target_uid, password, app)),
+        lambda target_uid, email, password, app: updated.append(
+            (target_uid, email, password, app)
+        ),
     )
 
     result = complete_registration(
@@ -384,18 +391,84 @@ def test_complete_registration_sets_password_for_reserved_incomplete_account(
     )
 
     assert result == {"success": True}
-    assert updated == [(uid, "Fendly!new_person#1234", app)]
+    assert updated == [
+        (uid, "new_person@login.fendly.app", "Fendly!new_person#1234", app)
+    ]
 
 
-def test_complete_registration_rejects_username_not_reserved_by_authenticated_uid(profile_session):
+def test_complete_registration_repairs_missing_username_reservation(
+    monkeypatch, profile_session
+):
+    uid = "registration-uid"
+    profile_session.add(User(firebase_uid=uid))
+    profile_session.commit()
+    app = object()
+    updates = []
+    monkeypatch.setattr(auth, "_firebase_app", lambda: app)
+    monkeypatch.setattr(
+        auth.firebase_auth,
+        "get_user",
+        lambda target_uid, app: SimpleNamespace(email="old_name@login.fendly.app"),
+    )
+    monkeypatch.setattr(
+        auth.firebase_auth,
+        "get_user_by_email",
+        lambda email, app: SimpleNamespace(uid=uid),
+    )
+    monkeypatch.setattr(
+        auth.firebase_auth,
+        "update_user",
+        lambda target_uid, email, password, app: updates.append(
+            (target_uid, email, password)
+        ),
+    )
+
+    result = complete_registration(
+        CompleteRegistrationRequest(username="new_person", pin="1234"),
+        session=profile_session,
+        uid=uid,
+    )
+
+    assert result == {"success": True}
+    assert profile_session.get(UsernameReservation, "new_person").firebase_uid == uid
+    assert updates == [
+        (uid, "new_person@login.fendly.app", "Fendly!new_person#1234")
+    ]
+
+
+def test_complete_registration_rejects_reservation_owned_by_another_active_user(
+    monkeypatch, profile_session
+):
+    uid = "registration-uid"
+    profile_session.add_all(
+        [
+            UsernameReservation(username="new_person", firebase_uid="other-active-uid"),
+            User(firebase_uid=uid),
+        ]
+    )
+    profile_session.commit()
+    app = object()
+    monkeypatch.setattr(auth, "_firebase_app", lambda: app)
+    monkeypatch.setattr(
+        auth.firebase_auth,
+        "get_user",
+        lambda target_uid, app: SimpleNamespace(email=f"{target_uid}@example.test"),
+    )
+    monkeypatch.setattr(
+        auth.firebase_auth,
+        "get_user_by_email",
+        lambda email, app: SimpleNamespace(uid=uid),
+    )
+
     with pytest.raises(HTTPException) as exc:
         complete_registration(
             CompleteRegistrationRequest(username="new_person", pin="1234"),
             session=profile_session,
-            uid="different-uid",
+            uid=uid,
         )
 
     assert exc.value.status_code == 409
+    assert "another active account" in exc.value.detail
 
 
 def test_complete_registration_cannot_reset_credentials_for_completed_profile(profile_session):

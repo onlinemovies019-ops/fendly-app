@@ -17,7 +17,7 @@ import httpx
 import jwt
 from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy import delete, func, select
-from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from database import get_db
@@ -425,7 +425,6 @@ def complete_registration(
 ) -> dict[str, bool]:
     username = payload.username.strip().lower()
     try:
-        reservation = session.get(UsernameReservation, username)
         profile = session.scalar(select(User).where(User.firebase_uid == uid))
     except SQLAlchemyError as exc:
         session.rollback()
@@ -434,11 +433,6 @@ def complete_registration(
             detail="Account setup is temporarily unavailable",
         ) from exc
 
-    if reservation is None or reservation.firebase_uid != uid:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Username reservation does not match this account",
-        )
     if profile is not None and profile.username:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -447,18 +441,17 @@ def complete_registration(
 
     app = _firebase_app()
     try:
-        firebase_user = firebase_auth.get_user(uid, app=app)
+        firebase_auth.get_user(uid, app=app)
         expected_email = f"{username}@login.fendly.app"
-        if (firebase_user.email or "").strip().lower() != expected_email:
+        try:
+            email_owner = firebase_auth.get_user_by_email(expected_email, app=app)
+        except firebase_auth.UserNotFoundError:
+            email_owner = None
+        if email_owner is not None and email_owner.uid != uid:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
-                detail="Username does not match this Firebase account",
+                detail="Username is already linked to another account",
             )
-        firebase_auth.update_user(
-            uid,
-            password=f"Fendly!{username}#{payload.pin}",
-            app=app,
-        )
     except HTTPException:
         raise
     except firebase_auth.UserNotFoundError as exc:
@@ -466,6 +459,90 @@ def complete_registration(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Firebase account is unavailable; sign in again",
         ) from exc
+    except firebase_admin.exceptions.FirebaseError as exc:
+        logger.exception("Firebase registration credential setup failed")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Account setup is temporarily unavailable",
+        ) from exc
+
+    try:
+        reservation = session.get(UsernameReservation, username)
+        if reservation is not None and reservation.firebase_uid != uid:
+            try:
+                firebase_auth.get_user(reservation.firebase_uid, app=app)
+            except firebase_auth.UserNotFoundError:
+                stale_uid = reservation.firebase_uid
+                session.delete(reservation)
+                stale_profile = session.scalar(
+                    select(User).where(
+                        User.firebase_uid == stale_uid,
+                        func.lower(User.username) == username,
+                    )
+                )
+                if stale_profile is not None:
+                    stale_profile.username = None
+                session.flush()
+            else:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="Username is already reserved by another active account",
+                )
+
+        if reservation is None or reservation.firebase_uid != uid:
+            profile_owner_uid = session.scalar(
+                select(User.firebase_uid)
+                .where(
+                    func.lower(User.username) == username,
+                    User.firebase_uid != uid,
+                )
+                .limit(1)
+            )
+            if profile_owner_uid is not None:
+                try:
+                    firebase_auth.get_user(profile_owner_uid, app=app)
+                except firebase_auth.UserNotFoundError:
+                    stale_profile = session.scalar(
+                        select(User).where(User.firebase_uid == profile_owner_uid)
+                    )
+                    if stale_profile is not None:
+                        stale_profile.username = None
+                else:
+                    raise HTTPException(
+                        status_code=status.HTTP_409_CONFLICT,
+                        detail="Username is already used by another active account",
+                    )
+            session.add(UsernameReservation(username=username, firebase_uid=uid))
+        session.commit()
+    except HTTPException:
+        session.rollback()
+        raise
+    except IntegrityError as exc:
+        session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Username was claimed by another account; choose a different username",
+        ) from exc
+    except SQLAlchemyError as exc:
+        session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Could not reserve username for account setup; please retry",
+        ) from exc
+    except firebase_admin.exceptions.FirebaseError as exc:
+        session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Could not verify username ownership; please retry",
+        ) from exc
+
+    try:
+        firebase_auth.update_user(
+            uid,
+            email=expected_email,
+            password=f"Fendly!{username}#{payload.pin}",
+            app=app,
+        )
     except firebase_admin.exceptions.FirebaseError as exc:
         logger.exception("Firebase registration credential setup failed")
         raise HTTPException(
