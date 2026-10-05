@@ -471,7 +471,9 @@ def test_complete_registration_rejects_reservation_owned_by_another_active_user(
     assert "another active account" in exc.value.detail
 
 
-def test_complete_registration_cannot_reset_credentials_for_completed_profile(profile_session):
+def test_complete_registration_recognizes_same_completed_account_without_resetting_pin(
+    monkeypatch, profile_session
+):
     uid = "completed-registration-uid"
     profile_session.add_all(
         [
@@ -480,6 +482,83 @@ def test_complete_registration_cannot_reset_credentials_for_completed_profile(pr
         ]
     )
     profile_session.commit()
+    app = object()
+    updated = []
+    monkeypatch.setattr(auth, "_firebase_app", lambda: app)
+    monkeypatch.setattr(
+        auth.firebase_auth,
+        "get_user",
+        lambda target_uid, app: SimpleNamespace(email="active_person@login.fendly.app"),
+    )
+    monkeypatch.setattr(
+        auth.firebase_auth,
+        "get_user_by_email",
+        lambda email, app: SimpleNamespace(uid=uid),
+    )
+    monkeypatch.setattr(
+        auth.firebase_auth,
+        "update_user",
+        lambda *args, **kwargs: updated.append((args, kwargs)),
+    )
+
+    result = complete_registration(
+        CompleteRegistrationRequest(username="active_person", pin="1234"),
+        session=profile_session,
+        uid=uid,
+    )
+
+    assert result == {"success": True, "already_completed": True}
+    assert updated == []
+
+
+def test_complete_registration_rejects_completed_profile_with_different_username(
+    monkeypatch, profile_session
+):
+    uid = "completed-registration-uid"
+    profile_session.add(User(firebase_uid=uid, username="active_person"))
+    profile_session.commit()
+    app = object()
+    monkeypatch.setattr(auth, "_firebase_app", lambda: app)
+    monkeypatch.setattr(
+        auth.firebase_auth,
+        "get_user",
+        lambda target_uid, app: SimpleNamespace(email="other_name@login.fendly.app"),
+    )
+    monkeypatch.setattr(
+        auth.firebase_auth,
+        "get_user_by_email",
+        lambda email, app: SimpleNamespace(uid=uid),
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        complete_registration(
+            CompleteRegistrationRequest(username="other_name", pin="1234"),
+            session=profile_session,
+            uid=uid,
+        )
+
+    assert exc.value.status_code == 409
+    assert exc.value.detail == "This account has already completed registration"
+
+
+def test_complete_registration_requires_matching_firebase_email_for_completed_profile(
+    monkeypatch, profile_session
+):
+    uid = "completed-registration-uid"
+    profile_session.add(User(firebase_uid=uid, username="active_person"))
+    profile_session.commit()
+    app = object()
+    monkeypatch.setattr(auth, "_firebase_app", lambda: app)
+    monkeypatch.setattr(
+        auth.firebase_auth,
+        "get_user",
+        lambda target_uid, app: SimpleNamespace(email="temporary@login.fendly.app"),
+    )
+    monkeypatch.setattr(
+        auth.firebase_auth,
+        "get_user_by_email",
+        lambda email, app: SimpleNamespace(uid=uid),
+    )
 
     with pytest.raises(HTTPException) as exc:
         complete_registration(
@@ -489,6 +568,7 @@ def test_complete_registration_cannot_reset_credentials_for_completed_profile(pr
         )
 
     assert exc.value.status_code == 409
+    assert "sign in with your existing username and PIN" in exc.value.detail
 
 
 @pytest.mark.asyncio

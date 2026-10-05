@@ -2549,13 +2549,30 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                             token.getToken()
                     );
                     boolean completed = response.optBoolean("success", false);
+                    boolean alreadyCompleted = response.optBoolean("already_completed", false);
                     String detail = response.optString(
                             "detail",
                             "Could not secure account credentials; please retry"
                     );
                     runOnUiThread(() -> {
                         if (completed) {
-                            finishFirebaseCredentialSetup(username, pin, save, account);
+                            if (alreadyCompleted) {
+                                account.edit()
+                                        .putBoolean("created", true)
+                                        .putBoolean("pin_setup_pending", false)
+                                        .putString("username", formatUsernameDisplay(username))
+                                        .apply();
+                                accountCreated = false;
+                                FirebaseAuth.getInstance().signOut();
+                                showPinLogin();
+                                Toast.makeText(
+                                        this,
+                                        "This account is already registered. Log in with your existing PIN.",
+                                        Toast.LENGTH_LONG
+                                ).show();
+                            } else {
+                                finishFirebaseCredentialSetup(username, pin, save, account);
+                            }
                         } else {
                             save.setText("Could not secure account");
                             save.setEnabled(true);
@@ -2685,6 +2702,9 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         LinearLayout root = screenBase(translate("Login with PIN"));
         addHeading(translate("Welcome back."), translate("Use the username and PIN from your Fendly profile."));
         EditText username = field(localizedFieldLabel("Username"));
+        String savedUsername = getSharedPreferences("fendly_account", MODE_PRIVATE)
+                .getString("username", "");
+        username.setText(savedUsername);
         EditText pin = field(localizedFieldLabel("4-digit PIN"));
         pin.setInputType(InputType.TYPE_CLASS_NUMBER | InputType.TYPE_NUMBER_VARIATION_PASSWORD);
         pin.setPadding(dp(16), dp(8), dp(56), dp(8));

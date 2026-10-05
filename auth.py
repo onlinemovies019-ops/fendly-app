@@ -433,15 +433,9 @@ def complete_registration(
             detail="Account setup is temporarily unavailable",
         ) from exc
 
-    if profile is not None and profile.username:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="This account has already completed registration",
-        )
-
     app = _firebase_app()
     try:
-        firebase_auth.get_user(uid, app=app)
+        firebase_user = firebase_auth.get_user(uid, app=app)
         expected_email = f"{username}@login.fendly.app"
         try:
             email_owner = firebase_auth.get_user_by_email(expected_email, app=app)
@@ -465,6 +459,19 @@ def complete_registration(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Account setup is temporarily unavailable",
         ) from exc
+
+    if profile is not None and profile.username:
+        if profile.username.strip().lower() != username:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="This account has already completed registration",
+            )
+        if (firebase_user.email or "").strip().lower() != expected_email:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Registration is already complete; sign in with your existing username and PIN",
+            )
+        return {"success": True, "already_completed": True}
 
     try:
         reservation = session.get(UsernameReservation, username)
