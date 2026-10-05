@@ -1,7 +1,9 @@
 const vscode = require("vscode");
-const { spawn } = require("child_process");
+const { spawn, spawnSync } = require("child_process");
 const fs = require("fs");
 const path = require("path");
+
+const DEFAULT_JAVA_HOME = "/opt/homebrew/opt/openjdk@17/libexec/openjdk.jdk/Contents/Home";
 
 function run(command, args, cwd, env, output) {
     return new Promise((resolve, reject) => {
@@ -24,6 +26,29 @@ function resolveAdb() {
         "adb",
     ].filter(Boolean);
     return candidates.find((candidate) => candidate === "adb" || fs.existsSync(candidate));
+}
+
+function javaMajorVersion(javaHome) {
+    const java = path.join(javaHome, "bin", "java");
+    if (!fs.existsSync(java)) return null;
+    const result = spawnSync(java, ["-version"], { encoding: "utf8" });
+    const version = `${result.stdout || ""}\n${result.stderr || ""}`;
+    const match = version.match(/version "(?:1\.)?(\d+)/);
+    return result.status === 0 && match ? Number(match[1]) : null;
+}
+
+function resolveJavaHome(output) {
+    const requestedJavaHome = process.env.FENDLY_JAVA_HOME;
+    if (requestedJavaHome && javaMajorVersion(requestedJavaHome) === 17) {
+        return requestedJavaHome;
+    }
+    if (requestedJavaHome) {
+        output.appendLine(`Ignoring FENDLY_JAVA_HOME: Android builds require JDK 17 (found ${requestedJavaHome}).`);
+    }
+    if (javaMajorVersion(DEFAULT_JAVA_HOME) === 17) {
+        return DEFAULT_JAVA_HOME;
+    }
+    throw new Error(`JDK 17 was not found at ${DEFAULT_JAVA_HOME}. Install JDK 17 or set FENDLY_JAVA_HOME to a JDK 17 installation.`);
 }
 
 function activate(context) {
@@ -50,16 +75,23 @@ function activate(context) {
                 return;
             }
 
-            const javaHome = process.env.FENDLY_JAVA_HOME ||
-                "/opt/homebrew/opt/openjdk@17/libexec/openjdk.jdk/Contents/Home";
+            output.clear();
+            output.show(true);
+            let javaHome;
+            try {
+                javaHome = resolveJavaHome(output);
+            } catch (error) {
+                output.appendLine(error.message);
+                vscode.window.showErrorMessage(error.message);
+                return;
+            }
             const env = {
                 ...process.env,
                 JAVA_HOME: javaHome,
                 PATH: `${path.join(javaHome, "bin")}:${path.dirname(adb)}:${process.env.PATH || ""}`,
             };
 
-            output.clear();
-            output.show(true);
+            output.appendLine(`Using JDK 17: ${javaHome}`);
             output.appendLine("Building and installing Fendly...");
             await vscode.window.withProgress(
                 {
@@ -85,4 +117,4 @@ function activate(context) {
 
 function deactivate() {}
 
-module.exports = { activate, deactivate };
+module.exports = { activate, deactivate, javaMajorVersion, resolveJavaHome };
