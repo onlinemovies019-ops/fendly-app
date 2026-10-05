@@ -2564,10 +2564,10 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                                         .apply();
                                 accountCreated = false;
                                 FirebaseAuth.getInstance().signOut();
-                                showPinLogin();
+                                buildScreen();
                                 Toast.makeText(
                                         this,
-                                        "This account is already registered. Log in with your existing PIN.",
+                                        "This account is already registered. Log in from the Auth screen.",
                                         Toast.LENGTH_LONG
                                 ).show();
                             } else {
