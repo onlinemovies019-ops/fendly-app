@@ -1,0 +1,35 @@
+{
+    "name": "fendly-device-runner",
+    "displayName": "Fendly Device Runner",
+    "description": "Build, install, and launch Fendly from the VS Scrcpy panel.",
+    "version": "0.1.0",
+    "publisher": "fendly",
+    "engines": {
+        "vscode": "^1.85.0"
+    },
+    "categories": [
+        "Other"
+    ],
+    "activationEvents": [
+        "onCommand:fendly.runOnDevice"
+    ],
+    "main": "./extension.js",
+    "contributes": {
+        "commands": [
+            {
+                "command": "fendly.runOnDevice",
+                "title": "Build, Install & Run Fendly",
+                "icon": "$(play)"
+            }
+        ],
+        "menus": {
+            "view/title": [
+                {
+                    "command": "fendly.runOnDevice",
+                    "when": "view == scrcpySidebar",
+                    "group": "navigation@1"
+                }
+            ]
+        }
+    }
+}
