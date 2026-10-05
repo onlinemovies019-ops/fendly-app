@@ -253,8 +253,8 @@ async def send_otp(
         }
     else:
         fast2sms_data = {
-            "route": "otp",
-            "variables_values": otp_code,
+            "route": "q",
+            "message": f"Your Fendly verification code is {otp_code}",
             "numbers": payload.mobile,
         }
 
@@ -437,11 +437,19 @@ def _fast2sms_failure_detail(
         or "complete website verification" in normalized_message
         or "visit otp message menu" in normalized_message
     ):
-        guidance = (
-            "Fast2SMS requires website verification before OTP messages can be "
-            "sent. Complete the verification in the Fast2SMS dashboard or use "
-            "the DLT SMS API instead."
-        )
+        if FAST2SMS_OTP_TEMPLATE_ID:
+            guidance = (
+                "Fast2SMS rejected the configured DLT template. Confirm that "
+                "FAST2SMS_OTP_TEMPLATE_ID is an approved template ID registered "
+                "for this sender and that the DLT setup is active."
+            )
+        else:
+            guidance = (
+                "Fast2SMS returned an OTP Message website-verification error. "
+                "Fendly sends Quick SMS by default; make sure the latest backend "
+                "deployment is active, or configure an approved DLT template "
+                "with FAST2SMS_OTP_TEMPLATE_ID."
+            )
         if response.status_code >= 400:
             return f"Fast2SMS rejected the request (HTTP {response.status_code}): {guidance}"
         return guidance

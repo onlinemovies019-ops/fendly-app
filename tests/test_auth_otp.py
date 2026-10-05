@@ -65,8 +65,8 @@ async def test_sms_otp_send_and_verify_use_short_lived_hashed_challenge(monkeypa
     assert calls[0][0] == (auth.FAST2SMS_BULK_URL,)
     assert calls[0][1]["headers"] == {"authorization": "test-key"}
     assert calls[0][1]["data"] == {
-        "route": "otp",
-        "variables_values": "123456",
+        "route": "q",
+        "message": "Your Fendly verification code is 123456",
         "numbers": "9876543210",
     }
     assert "params" not in calls[0][1]
@@ -167,9 +167,52 @@ async def test_sms_otp_send_explains_fast2sms_website_verification_requirement(m
 
     assert exc.value.status_code == 502
     assert "HTTP 400" in exc.value.detail
-    assert "website verification" in exc.value.detail.lower()
-    assert "DLT SMS API" in exc.value.detail
+    assert "otp message website-verification error" in exc.value.detail.lower()
+    assert "Quick SMS" in exc.value.detail
+    assert "latest backend deployment" in exc.value.detail
+    assert "FAST2SMS_OTP_TEMPLATE_ID" in exc.value.detail
     assert "private-test-key" not in exc.value.detail
+    assert profile_session.query(SmsOTPChallenge).count() == 0
+
+
+@pytest.mark.asyncio
+async def test_sms_otp_dlt_rejection_explains_template_configuration(monkeypatch, profile_session):
+    class FailedResponse:
+        status_code = 400
+        is_success = False
+
+        def json(self):
+            return {
+                "return": False,
+                "message": "Before using OTP Message API, complete website verification.",
+            }
+
+    class FakeClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, traceback):
+            return False
+
+        async def post(self, *args, **kwargs):
+            return FailedResponse()
+
+    monkeypatch.setattr(auth, "FAST2SMS_API_KEY", "private-test-key")
+    monkeypatch.setattr(auth, "FAST2SMS_OTP_TEMPLATE_ID", "registered-template-id")
+    monkeypatch.setattr(auth.httpx, "AsyncClient", FakeClient)
+    monkeypatch.setenv("APP_SECRET_KEY", "test-app-secret-0123456789abcdef")
+    request = SimpleNamespace(client=SimpleNamespace(host="203.0.113.4"))
+
+    with pytest.raises(HTTPException) as exc:
+        await auth.send_otp(
+            SendOTPRequest(mobile="9876543210"),
+            request,
+            session=profile_session,
+        )
+
+    assert exc.value.status_code == 502
+    assert "rejected the configured DLT template" in exc.value.detail
+    assert "registered-template-id" not in exc.value.detail
     assert profile_session.query(SmsOTPChallenge).count() == 0
 
 
