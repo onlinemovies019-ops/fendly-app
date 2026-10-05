@@ -396,6 +396,55 @@ def _username_is_taken(session: Session, normalized: str) -> bool:
     return reserved is not None or existing_profile is not None
 
 
+def _firebase_uid_exists(uid: str) -> bool:
+    try:
+        firebase_auth.get_user(uid, app=_firebase_app())
+        return True
+    except firebase_auth.UserNotFoundError:
+        return False
+    except (firebase_admin.exceptions.FirebaseError, ValueError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Username availability is temporarily unavailable",
+        ) from exc
+
+
+def _release_stale_username_claims(session: Session, normalized: str) -> None:
+    try:
+        reservation = session.get(UsernameReservation, normalized)
+        profiles = session.scalars(
+            select(User).where(func.lower(User.username) == normalized)
+        ).all()
+    except SQLAlchemyError as exc:
+        session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Username availability is temporarily unavailable",
+        ) from exc
+
+    owner_uids = {
+        claim.firebase_uid
+        for claim in ([reservation] if reservation is not None else []) + profiles
+    }
+    stale_uids = {uid for uid in owner_uids if not _firebase_uid_exists(uid)}
+    if not stale_uids:
+        return
+
+    if reservation is not None and reservation.firebase_uid in stale_uids:
+        session.delete(reservation)
+    for profile in profiles:
+        if profile.firebase_uid in stale_uids:
+            profile.username = None
+    try:
+        session.commit()
+    except SQLAlchemyError as exc:
+        session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Username availability is temporarily unavailable",
+        ) from exc
+
+
 def _username_exists_in_firebase_auth(normalized: str) -> bool:
     email = f"{normalized}@login.fendly.app"
     try:
@@ -425,6 +474,7 @@ def check_registration_username(
         return {"username": normalized, "available": False}
     if _username_exists_in_firebase_auth(normalized):
         return {"username": normalized, "available": False}
+    _release_stale_username_claims(session, normalized)
     return {
         "username": normalized,
         "available": not _username_is_taken(session, normalized),
@@ -440,6 +490,7 @@ def check_username(
     normalized = normalize_username(username)
     if len(normalized) < 3 or len(normalized) > 32 or not normalized.replace("_", "").isalnum():
         return {"username": normalized, "available": False}
+    _release_stale_username_claims(session, normalized)
     taken = _username_is_taken(session, normalized)
     return {"username": normalized, "available": not taken}
 
@@ -451,9 +502,20 @@ def reserve_username(
     uid: str = Depends(get_current_user),
 ) -> dict[str, str]:
     normalized = normalize_username(payload.username)
+    _release_stale_username_claims(session, normalized)
     try:
         existing = session.get(UsernameReservation, normalized)
         if existing is not None and existing.firebase_uid != uid:
+            raise HTTPException(409, "Username is already taken")
+        existing_profile_uid = session.scalar(
+            select(User.firebase_uid)
+            .where(
+                func.lower(User.username) == normalized,
+                User.firebase_uid != uid,
+            )
+            .limit(1)
+        )
+        if existing_profile_uid is not None:
             raise HTTPException(409, "Username is already taken")
         owned = session.scalar(select(UsernameReservation).where(UsernameReservation.firebase_uid == uid))
         if owned is not None and owned.username != normalized:
@@ -461,12 +523,19 @@ def reserve_username(
             session.flush()
         if existing is None:
             session.add(UsernameReservation(username=normalized, firebase_uid=uid))
-            session.commit()
+        session.commit()
     except HTTPException:
+        session.rollback()
         raise
-    except Exception as exc:
+    except IntegrityError as exc:
         session.rollback()
         raise HTTPException(409, "Username is already taken") from exc
+    except SQLAlchemyError as exc:
+        session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Username reservation is temporarily unavailable",
+        ) from exc
     return {"username": normalized, "status": "reserved"}
 
 

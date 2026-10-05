@@ -14,8 +14,13 @@ import main
 
 from auth import EmailOTPRequest, SendOTPRequest, VerifyEmailOTPRequest, VerifyOTPRequest
 from models import Base, EmailOTPChallenge, SmsOTPChallenge, SmsOTPRateLimit, User, UsernameReservation
-from schemas import ProfileUpdate
-from routers.users import check_registration_username, get_profile, update_profile
+from schemas import ProfileUpdate, UsernameRequest
+from routers.users import (
+    check_registration_username,
+    get_profile,
+    reserve_username,
+    update_profile,
+)
 
 
 @pytest.mark.asyncio
@@ -246,6 +251,7 @@ def test_registration_username_availability_checks_existing_profiles_and_reserva
     monkeypatch, profile_session
 ):
     monkeypatch.setattr("routers.users._username_exists_in_firebase_auth", lambda _: False)
+    monkeypatch.setattr("routers.users._firebase_uid_exists", lambda _: True)
     profile_session.add(User(firebase_uid="existing-profile-uid", username="TakenUser"))
     profile_session.add(
         UsernameReservation(username="reserved_user", firebase_uid="reserved-user-uid")
@@ -255,6 +261,32 @@ def test_registration_username_availability_checks_existing_profiles_and_reserva
     assert check_registration_username("takenuser", session=profile_session)["available"] is False
     assert check_registration_username("RESERVED_USER", session=profile_session)["available"] is False
     assert check_registration_username("new_user", session=profile_session)["available"] is True
+
+
+def test_registration_releases_username_claims_for_deleted_firebase_users(
+    monkeypatch, profile_session
+):
+    monkeypatch.setattr("routers.users._username_exists_in_firebase_auth", lambda _: False)
+    monkeypatch.setattr("routers.users._firebase_uid_exists", lambda _: False)
+    old_uid = "deleted-firebase-user"
+    profile = User(firebase_uid=old_uid, username="TakenUser")
+    reservation = UsernameReservation(username="takenuser", firebase_uid=old_uid)
+    profile_session.add_all([profile, reservation])
+    profile_session.commit()
+
+    result = check_registration_username("takenuser", session=profile_session)
+
+    assert result == {"username": "takenuser", "available": True}
+    assert profile.username is None
+    assert profile_session.get(UsernameReservation, "takenuser") is None
+
+    reserved = reserve_username(
+        UsernameRequest(username="TakenUser"),
+        session=profile_session,
+        uid="new-firebase-user",
+    )
+    assert reserved == {"username": "takenuser", "status": "reserved"}
+    assert profile_session.get(UsernameReservation, "takenuser").firebase_uid == "new-firebase-user"
 
 
 def test_registration_username_availability_checks_firebase_auth_records(

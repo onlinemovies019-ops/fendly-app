@@ -309,6 +309,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
     private int pendingNotificationCount = 0;
     private TextView pendingNotificationBadge;
     private String adminReportFilter = "";
+    private String adminReportCategory = "items";
     private String discoveryCity = "";
     private int discoveryRequestGeneration;
     private String myReportsCategory = "items";
@@ -3369,7 +3370,11 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         });
     }
 
-    private void populateMyReportCategoryTabs(LinearLayout tabs, Runnable rerenderReports) {
+    private void populateReportCategoryTabs(
+            LinearLayout tabs,
+            String selectedCategory,
+            java.util.function.Consumer<String> onCategorySelected
+    ) {
         tabs.removeAllViews();
         String[] categories = {"items", "animals", "people"};
         String[] icons = {"🔍", "🐾", "❤️"};
@@ -3385,12 +3390,12 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                     category,
                     icons[index],
                     labels[index],
-                    emergency
+                    emergency,
+                    selectedCategory.equals(category)
             );
             tab.setOnClickListener(view -> {
-                if (myReportsCategory.equals(category)) return;
-                myReportsCategory = category;
-                rerenderReports.run();
+                if (selectedCategory.equals(category)) return;
+                onCategorySelected.accept(category);
             });
             LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(0, dp(112), 1);
             params.setMargins(dp(3), 0, dp(3), 0);
@@ -3402,9 +3407,9 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             String category,
             String icon,
             String label,
-            boolean emergency
+            boolean emergency,
+            boolean selected
     ) {
-        boolean selected = myReportsCategory.equals(category);
         int urgentColor = Color.rgb(190, 45, 55);
         int backgroundColor = selected
                 ? emergency ? urgentColor : Color.rgb(24, 112, 82)
@@ -5962,9 +5967,13 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         addField(activeContent, fieldLabel(localizeReportsText("Browse by category")));
         LinearLayout categoryTabs = new LinearLayout(this);
         categoryTabs.setOrientation(LinearLayout.HORIZONTAL);
-        populateMyReportCategoryTabs(
+        populateReportCategoryTabs(
                 categoryTabs,
-                () -> renderMergedReports(backendReports, firestoreReports)
+                myReportsCategory,
+                category -> {
+                    myReportsCategory = category;
+                    renderMergedReports(backendReports, firestoreReports);
+                }
         );
         activeContent.addView(categoryTabs, contentParams(-1, dp(112), dp(12)));
 
@@ -9630,6 +9639,11 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         String reportsHeadingText = adminReportFilter.isEmpty() ? "Live reports" : adminReportFilter + " reports";
         TextView reportsHeading = text(reportsHeadingText, 15, primaryTextColor(), Typeface.NORMAL);
         root.addView(reportsHeading, contentParams(-1, dp(22), dp(8)));
+        root.addView(text("Browse by category", 12, secondaryTextColor(), Typeface.BOLD),
+                contentParams(-1, dp(20), dp(6)));
+        LinearLayout reportCategoryTabs = new LinearLayout(this);
+        reportCategoryTabs.setOrientation(LinearLayout.HORIZONTAL);
+        root.addView(reportCategoryTabs, contentParams(-1, dp(112), dp(10)));
         LinearLayout reports = new LinearLayout(this);
         reports.setOrientation(LinearLayout.VERTICAL);
         root.addView(reports, contentParams(-1, -2, 0));
@@ -9648,6 +9662,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                 renderAdminReports(liveReportsResponse[0], reports, matchesHeading, matches, lostCount, foundCount);
             }
         };
+        populateAdminReportCategoryTabs(reportCategoryTabs, search, restoreLiveReports);
         updateAdminReportFilterStyles(lostCount, foundCount);
         lostCount.setOnClickListener(view -> selectAdminReportFilter(
             "LOST", lostCount, foundCount, search, reportsHeading, restoreLiveReports));
@@ -9660,7 +9675,9 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                 if (value.toString().trim().isEmpty()) {
                     searchButton.setText("Search");
                     searchButton.setEnabled(true);
-                    reportsHeading.setText("Live reports");
+                    reportsHeading.setText(
+                            adminReportFilter.isEmpty() ? "Live reports" : adminReportFilter + " reports"
+                    );
                     restoreLiveReports.run();
                 }
             }
@@ -9689,6 +9706,22 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         }
         root.post(() -> {
             if (currentPage == PAGE_ADMIN) fetchPendingNotificationCount();
+        });
+    }
+
+    private void populateAdminReportCategoryTabs(
+            LinearLayout tabs,
+            EditText search,
+            Runnable restoreLiveReports
+    ) {
+        populateReportCategoryTabs(tabs, adminReportCategory, category -> {
+            adminReportCategory = category;
+            populateAdminReportCategoryTabs(tabs, search, restoreLiveReports);
+            if (!search.getText().toString().trim().isEmpty()) {
+                search.setText("");
+            } else {
+                restoreLiveReports.run();
+            }
         });
     }
 
@@ -9739,32 +9772,40 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             JSONArray items = new JSONArray(response);
             int lost = 0;
             int found = 0;
+            int filteredLost = 0;
+            int filteredFound = 0;
             LinearLayout lostSection = adminReportSection("LOST REPORTS", LOST_GREEN);
             LinearLayout foundSection = adminReportSection("FOUND REPORTS", FOUND_GOLD);
             for (int index = 0; index < items.length(); index++) {
                 JSONObject item = items.getJSONObject(index);
                 if ("FOUND".equalsIgnoreCase(item.optString("type"))) {
                     found++;
-                    foundSection.addView(adminReportCard(item, true, matchesHeading, matches));
+                    if (discoveryReportMatchesCategory(item, adminReportCategory)) {
+                        filteredFound++;
+                        foundSection.addView(adminReportCard(item, true, matchesHeading, matches));
+                    }
                 } else {
                     lost++;
-                    lostSection.addView(adminReportCard(item, false, matchesHeading, matches));
+                    if (discoveryReportMatchesCategory(item, adminReportCategory)) {
+                        filteredLost++;
+                        lostSection.addView(adminReportCard(item, false, matchesHeading, matches));
+                    }
                 }
             }
             lostCount.setText("LOST  " + lost);
             foundCount.setText("FOUND  " + found);
             updateAdminReportFilterStyles(lostCount, foundCount);
             if ("LOST".equals(adminReportFilter)) {
-                if (lost > 0) {
+                if (filteredLost > 0) {
                     reports.addView(lostSection, contentParams(-1, -2, 0));
                 } else {
-                    reports.addView(text("No LOST reports currently available.", 13, secondaryTextColor(), Typeface.NORMAL));
+                    reports.addView(text("No LOST reports in this category currently available.", 13, secondaryTextColor(), Typeface.NORMAL));
                 }
             } else if ("FOUND".equals(adminReportFilter)) {
-                if (found > 0) {
+                if (filteredFound > 0) {
                     reports.addView(foundSection, contentParams(-1, -2, 0));
                 } else {
-                    reports.addView(text("No FOUND reports currently available.", 13, secondaryTextColor(), Typeface.NORMAL));
+                    reports.addView(text("No FOUND reports in this category currently available.", 13, secondaryTextColor(), Typeface.NORMAL));
                 }
             } else if (lost == 0 && found == 0) {
                 reports.addView(text("No live reports currently available.", 13, secondaryTextColor(), Typeface.NORMAL));
@@ -10465,6 +10506,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                 dialog.dismiss();
                 adminAlertsAutoShownThisVisit = false;
                 adminReportFilter = "";
+                adminReportCategory = "items";
                 showAdminDashboard();
             } else {
                 Toast.makeText(this, "Invalid Admin Name or PIN", Toast.LENGTH_LONG).show();
@@ -10610,9 +10652,13 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         notificationButton.setBackground(roundWithStroke(surfaceColor(), 14, borderColor()));
         notificationButton.setPadding(dp(8), dp(8), dp(8), dp(8));
         notificationButton.setElevation(dp(2));
-        notificationButton.setContentDescription("Match notifications");
+        notificationButton.setContentDescription(adminNotifications ? "Admin notifications" : "Match notifications");
         if (onClickListener != null) {
             notificationButton.setOnClickListener(onClickListener);
+            frame.setClickable(true);
+            frame.setFocusable(true);
+            frame.setContentDescription(adminNotifications ? "Admin notifications" : "Match notifications");
+            frame.setOnClickListener(onClickListener);
         }
 
         frame.addView(notificationButton, new FrameLayout.LayoutParams(dp(42), dp(42)));
@@ -10650,12 +10696,32 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         if (pendingOnly && adminAlertsAutoShownThisVisit) return;
         if (pendingOnly) adminAlertsAutoShownThisVisit = true;
         FirebaseUser adminUser = FirebaseAuth.getInstance().getCurrentUser();
-        if (adminUser == null) return;
+        if (adminUser == null) {
+            showAdminNotificationsEmptyState(
+                    "Admin notifications",
+                    "The Admin PIN opens this dashboard, but notifications require a signed-in Firebase admin account."
+            );
+            if (pendingOnly) adminAlertsAutoShownThisVisit = false;
+            return;
+        }
         adminUser.getIdToken(false).addOnSuccessListener(token -> network.execute(() -> {
+            if (token == null || token.getToken() == null || token.getToken().trim().isEmpty()) {
+                runOnUiThread(() -> {
+                    showAdminNotificationsEmptyState(
+                            "Admin sign-in required",
+                            "Could not get a Firebase sign-in token for this admin account. Please sign in again."
+                    );
+                    if (pendingOnly) adminAlertsAutoShownThisVisit = false;
+                });
+                return;
+            }
             String response = getAuthorized("/api/admin/alerts", token.getToken());
             runOnUiThread(() -> {
                 if (response == null) {
-                    Toast.makeText(this, "Could not load match alerts. Check your connection and try again.", Toast.LENGTH_LONG).show();
+                    showAdminNotificationsEmptyState(
+                            "Could not load notifications",
+                            "Please check your connection and try again."
+                    );
                     if (pendingOnly) adminAlertsAutoShownThisVisit = false;
                     return;
                 }
@@ -10675,16 +10741,45 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                     }
                     updatePendingNotificationCount(pendingCount);
                     if (visibleAlerts.length() == 0) {
-                        Toast.makeText(this, pendingOnly ? "No pending admin alerts" : "No admin notifications", Toast.LENGTH_SHORT).show();
+                        showAdminNotificationsEmptyState(
+                                "Admin notifications",
+                                pendingOnly ? "No pending notifications right now." : "No notifications right now."
+                        );
                         return;
                     }
                     showAdminAlertsDialog(visibleAlerts, token.getToken());
                 } catch (Exception error) {
-                    Toast.makeText(this, "Match alerts could not be read. Try again.", Toast.LENGTH_LONG).show();
+                    Log.e("ADMIN_NOTIFICATIONS", "Could not parse admin notifications", error);
+                    showAdminNotificationsEmptyState(
+                            "Could not read notifications",
+                            "Please try again."
+                    );
                     if (pendingOnly) adminAlertsAutoShownThisVisit = false;
                 }
             });
+        })).addOnFailureListener(error -> runOnUiThread(() -> {
+            Log.e("ADMIN_NOTIFICATIONS", "Could not get admin authentication token", error);
+            showAdminNotificationsEmptyState(
+                    "Admin sign-in required",
+                    "Firebase could not verify this admin account. Please sign in again."
+            );
+            if (pendingOnly) adminAlertsAutoShownThisVisit = false;
         }));
+    }
+
+    private void showAdminNotificationsEmptyState(String title, String message) {
+        Dialog dialog = new Dialog(this);
+        dialog.requestWindowFeature(Window.FEATURE_NO_TITLE);
+        LinearLayout content = themedDialogContent(R.drawable.ic_field_lock, title, message);
+        TextView close = filledButton("Close", GOLD, GOLD_ON);
+        LinearLayout.LayoutParams closeParams = new LinearLayout.LayoutParams(-1, dp(44));
+        closeParams.setMargins(0, dp(12), 0, 0);
+        content.addView(close, closeParams);
+        close.setOnClickListener(view -> dialog.dismiss());
+        dialog.setContentView(content);
+        dialog.setCanceledOnTouchOutside(true);
+        dialog.show();
+        sizeThemedDialog(dialog);
     }
 
     private void showAdminAlertsDialog(JSONArray alerts, String idToken) throws Exception {
