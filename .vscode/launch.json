@@ -1,0 +1,12 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Run Fendly on device",
+            "type": "node-terminal",
+            "request": "launch",
+            "preLaunchTask": "Android: Install debug APK",
+            "command": "/Users/ashok.bagmare/Library/Android/sdk/platform-tools/adb shell am start -n com.example.fendly/.SplashActivity"
+        }
+    ]
+}
