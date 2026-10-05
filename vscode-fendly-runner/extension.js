@@ -50,7 +50,7 @@ function activate(context) {
                 return;
             }
 
-            const javaHome = process.env.JAVA_HOME ||
+            const javaHome = process.env.FENDLY_JAVA_HOME ||
                 "/opt/homebrew/opt/openjdk@17/libexec/openjdk.jdk/Contents/Home";
             const env = {
                 ...process.env,
