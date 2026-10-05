@@ -2531,30 +2531,77 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         }
         SharedPreferences account = getSharedPreferences("fendly_account", MODE_PRIVATE);
         boolean pinSetupPending = account.getBoolean("pin_setup_pending", false);
+        if (passwordProviderLinked && pinSetupPending) {
+            currentUser.getIdToken(false).addOnSuccessListener(token -> network.execute(() -> {
+                JSONObject payload = new JSONObject();
+                try {
+                    payload.put("username", username);
+                    payload.put("pin", pin);
+                    JSONObject response = postJson(
+                            "/api/auth/complete-registration",
+                            payload.toString(),
+                            token.getToken()
+                    );
+                    boolean completed = response.optBoolean("success", false);
+                    String detail = response.optString(
+                            "detail",
+                            "Could not secure account credentials; please retry"
+                    );
+                    runOnUiThread(() -> {
+                        if (completed) {
+                            finishFirebaseCredentialSetup(username, pin, save, account);
+                        } else {
+                            save.setText("Could not secure account");
+                            save.setEnabled(true);
+                            Toast.makeText(this, detail, Toast.LENGTH_LONG).show();
+                        }
+                    });
+                } catch (Exception error) {
+                    runOnUiThread(() -> {
+                        save.setText("Could not secure account");
+                        save.setEnabled(true);
+                        Toast.makeText(this, "Could not reach account security service. Please retry.", Toast.LENGTH_LONG).show();
+                    });
+                }
+            })).addOnFailureListener(error -> {
+                save.setText("Could not secure account");
+                save.setEnabled(true);
+                Toast.makeText(this, "Your account session expired. Please sign in again and retry.", Toast.LENGTH_LONG).show();
+            });
+            return;
+        }
+
         Task<?> accountTask = passwordProviderLinked
-                ? (pinSetupPending ? currentUser.updatePassword(password) : Tasks.forResult(null))
+                ? Tasks.forResult(null)
                 : currentUser.linkWithCredential(EmailAuthProvider.getCredential(email, password));
         accountTask
-                .addOnSuccessListener(result -> {
-                    saveStoredAccountPin(pin);
-                    String formattedUsername = formatUsernameDisplay(username);
-                    account.edit()
-                            .putBoolean("created", true)
-                            .putBoolean("pin_setup_pending", false)
-                            .putString("username", formattedUsername)
-                            .apply();
-                    accountCreated = true;
-                    saveCloudProfile(formattedUsername, account.getString("full_name", ""), account.getString("email", ""),
-                            account.getString("mobile", ""), account.getString("state", ""), account.getString("city", ""), null);
-                    syncProfileWithBackend();
-                    showHome();
-                    hydrateProfileFromBackend(null);
-                })
+                .addOnSuccessListener(result -> finishFirebaseCredentialSetup(username, pin, save, account))
                 .addOnFailureListener(error -> {
                     save.setText("Could not secure account");
                     save.setEnabled(true);
                     Toast.makeText(this, error.getMessage(), Toast.LENGTH_LONG).show();
                 });
+    }
+
+    private void finishFirebaseCredentialSetup(
+            String username,
+            String pin,
+            TextView save,
+            SharedPreferences account
+    ) {
+        saveStoredAccountPin(pin);
+        String formattedUsername = formatUsernameDisplay(username);
+        account.edit()
+                .putBoolean("created", true)
+                .putBoolean("pin_setup_pending", false)
+                .putString("username", formattedUsername)
+                .apply();
+        accountCreated = true;
+        saveCloudProfile(formattedUsername, account.getString("full_name", ""), account.getString("email", ""),
+                account.getString("mobile", ""), account.getString("state", ""), account.getString("city", ""), null);
+        syncProfileWithBackend();
+        showHome();
+        hydrateProfileFromBackend(null);
     }
 
     private void changeAccountPin(String username, String currentPin, String newPin, TextView saveButton) {

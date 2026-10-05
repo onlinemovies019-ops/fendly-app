@@ -21,7 +21,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from database import get_db
-from models import EmailOTPChallenge, SmsOTPChallenge, SmsOTPRateLimit, User
+from models import EmailOTPChallenge, SmsOTPChallenge, SmsOTPRateLimit, User, UsernameReservation
 from profile_service import update_profile_record
 from schemas import ProfileUpdate
 
@@ -205,6 +205,12 @@ class EmailOTPRequest(BaseModel):
 class VerifyEmailOTPRequest(BaseModel):
     email: EmailStr
     otp: str = Field(min_length=6, max_length=6)
+
+
+class CompleteRegistrationRequest(BaseModel):
+    username: str = Field(min_length=3, max_length=32, pattern=r"^[A-Za-z0-9_]+$")
+    pin: str = Field(pattern=r"^\d{4}$")
+
 
 # — Endpoints —
 
@@ -409,6 +415,65 @@ async def verify_otp(
         "token_type": "Bearer",
         "expires_in": token_expiration - now,
     }
+
+
+@router.post("/complete-registration")
+def complete_registration(
+    payload: CompleteRegistrationRequest,
+    session: Session = Depends(get_db),
+    uid: str = Depends(get_current_user),
+) -> dict[str, bool]:
+    username = payload.username.strip().lower()
+    try:
+        reservation = session.get(UsernameReservation, username)
+        profile = session.scalar(select(User).where(User.firebase_uid == uid))
+    except SQLAlchemyError as exc:
+        session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Account setup is temporarily unavailable",
+        ) from exc
+
+    if reservation is None or reservation.firebase_uid != uid:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Username reservation does not match this account",
+        )
+    if profile is not None and profile.username:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="This account has already completed registration",
+        )
+
+    app = _firebase_app()
+    try:
+        firebase_user = firebase_auth.get_user(uid, app=app)
+        expected_email = f"{username}@login.fendly.app"
+        if (firebase_user.email or "").strip().lower() != expected_email:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Username does not match this Firebase account",
+            )
+        firebase_auth.update_user(
+            uid,
+            password=f"Fendly!{username}#{payload.pin}",
+            app=app,
+        )
+    except HTTPException:
+        raise
+    except firebase_auth.UserNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Firebase account is unavailable; sign in again",
+        ) from exc
+    except firebase_admin.exceptions.FirebaseError as exc:
+        logger.exception("Firebase registration credential setup failed")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Could not secure account credentials; please retry",
+        ) from exc
+
+    return {"success": True}
 
 
 def _fast2sms_failure_detail(

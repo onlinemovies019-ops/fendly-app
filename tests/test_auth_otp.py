@@ -12,7 +12,14 @@ from sqlalchemy.pool import StaticPool
 import auth
 import main
 
-from auth import EmailOTPRequest, SendOTPRequest, VerifyEmailOTPRequest, VerifyOTPRequest
+from auth import (
+    CompleteRegistrationRequest,
+    EmailOTPRequest,
+    SendOTPRequest,
+    VerifyEmailOTPRequest,
+    VerifyOTPRequest,
+    complete_registration,
+)
 from models import Base, EmailOTPChallenge, SmsOTPChallenge, SmsOTPRateLimit, User, UsernameReservation
 from schemas import ProfileUpdate, UsernameRequest
 from routers.users import (
@@ -343,6 +350,72 @@ def test_registration_username_availability_checks_firebase_auth_records(
     result = check_registration_username("Firebase_User", session=profile_session)
 
     assert result == {"username": "firebase_user", "available": False}
+
+
+def test_complete_registration_sets_password_for_reserved_incomplete_account(
+    monkeypatch, profile_session
+):
+    uid = "registration-uid"
+    profile_session.add_all(
+        [
+            UsernameReservation(username="new_person", firebase_uid=uid),
+            User(firebase_uid=uid),
+        ]
+    )
+    profile_session.commit()
+    updated = []
+    app = object()
+    monkeypatch.setattr(auth, "_firebase_app", lambda: app)
+    monkeypatch.setattr(
+        auth.firebase_auth,
+        "get_user",
+        lambda target_uid, app: SimpleNamespace(email="new_person@login.fendly.app"),
+    )
+    monkeypatch.setattr(
+        auth.firebase_auth,
+        "update_user",
+        lambda target_uid, password, app: updated.append((target_uid, password, app)),
+    )
+
+    result = complete_registration(
+        CompleteRegistrationRequest(username="New_Person", pin="1234"),
+        session=profile_session,
+        uid=uid,
+    )
+
+    assert result == {"success": True}
+    assert updated == [(uid, "Fendly!new_person#1234", app)]
+
+
+def test_complete_registration_rejects_username_not_reserved_by_authenticated_uid(profile_session):
+    with pytest.raises(HTTPException) as exc:
+        complete_registration(
+            CompleteRegistrationRequest(username="new_person", pin="1234"),
+            session=profile_session,
+            uid="different-uid",
+        )
+
+    assert exc.value.status_code == 409
+
+
+def test_complete_registration_cannot_reset_credentials_for_completed_profile(profile_session):
+    uid = "completed-registration-uid"
+    profile_session.add_all(
+        [
+            UsernameReservation(username="active_person", firebase_uid=uid),
+            User(firebase_uid=uid, username="active_person"),
+        ]
+    )
+    profile_session.commit()
+
+    with pytest.raises(HTTPException) as exc:
+        complete_registration(
+            CompleteRegistrationRequest(username="active_person", pin="1234"),
+            session=profile_session,
+            uid=uid,
+        )
+
+    assert exc.value.status_code == 409
 
 
 @pytest.mark.asyncio
