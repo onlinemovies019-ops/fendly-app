@@ -311,7 +311,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
     private String adminReportFilter = "";
     private String discoveryCity = "";
     private int discoveryRequestGeneration;
-    private String discoveryCategory = "items";
+    private String myReportsCategory = "items";
     private boolean discoveryReportsLoaded;
     private final List<JSONObject> discoveryReports = new ArrayList<>();
     private int unreadUserNotificationCount = 0;
@@ -3330,8 +3330,6 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         });
         addField(root, cityFilter);
 
-        LinearLayout categoryLabel = fieldLabel(localizeReportsText("Browse by category"));
-        addField(root, categoryLabel);
         TextView discoveryStatus = text(
                 localizeReportsText("Loading reports..."),
                 14,
@@ -3341,10 +3339,6 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         discoveryStatus.setGravity(Gravity.CENTER);
         LinearLayout discoveryResults = new LinearLayout(this);
         discoveryResults.setOrientation(LinearLayout.VERTICAL);
-        LinearLayout categoryTabs = new LinearLayout(this);
-        categoryTabs.setOrientation(LinearLayout.HORIZONTAL);
-        populateDiscoveryCategoryTabs(categoryTabs, discoveryResults, discoveryStatus);
-        addField(root, categoryTabs);
         root.addView(discoveryStatus, contentParams(-1, -2, dp(8)));
         root.addView(discoveryResults, new LinearLayout.LayoutParams(-1, -2));
         discoveryReportsLoaded = false;
@@ -3447,11 +3441,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         });
     }
 
-    private void populateDiscoveryCategoryTabs(
-            LinearLayout tabs,
-            LinearLayout resultsContainer,
-            TextView statusView
-    ) {
+    private void populateMyReportCategoryTabs(LinearLayout tabs, Runnable rerenderReports) {
         tabs.removeAllViews();
         String[] categories = {"items", "animals", "people"};
         String[] icons = {"🔍", "🐾", "❤️"};
@@ -3470,10 +3460,9 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                     emergency
             );
             tab.setOnClickListener(view -> {
-                if (discoveryCategory.equals(category)) return;
-                discoveryCategory = category;
-                populateDiscoveryCategoryTabs(tabs, resultsContainer, statusView);
-                renderDiscoveryReports(resultsContainer, statusView);
+                if (myReportsCategory.equals(category)) return;
+                myReportsCategory = category;
+                rerenderReports.run();
             });
             LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(0, dp(112), 1);
             params.setMargins(dp(3), 0, dp(3), 0);
@@ -3487,7 +3476,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             String label,
             boolean emergency
     ) {
-        boolean selected = discoveryCategory.equals(category);
+        boolean selected = myReportsCategory.equals(category);
         int urgentColor = Color.rgb(190, 45, 55);
         int backgroundColor = selected
                 ? emergency ? urgentColor : Color.rgb(24, 112, 82)
@@ -3539,23 +3528,13 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
     private void renderDiscoveryReports(LinearLayout resultsContainer, TextView statusView) {
         resultsContainer.removeAllViews();
         if (!discoveryReportsLoaded) return;
-        List<JSONObject> visibleReports = new ArrayList<>();
-        for (JSONObject report : discoveryReports) {
-            if (discoveryReportMatchesCategory(report, discoveryCategory)) {
-                visibleReports.add(report);
-            }
-        }
-        if (visibleReports.isEmpty()) {
-            statusView.setText(localizeReportsText(
-                    discoveryReports.isEmpty()
-                            ? "No active reports found."
-                            : "No reports in this category."
-            ));
+        if (discoveryReports.isEmpty()) {
+            statusView.setText(localizeReportsText("No active reports found."));
             statusView.setVisibility(View.VISIBLE);
             return;
         }
         statusView.setVisibility(View.GONE);
-        for (JSONObject report : visibleReports) {
+        for (JSONObject report : discoveryReports) {
             resultsContainer.addView(createDiscoveryReportCard(report));
         }
     }
@@ -3759,7 +3738,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                 draftReportCategory = category;
                 showReport(type);
             });
-            addField(root, option);
+            root.addView(option, contentParams(-1, dp(68), dp(8)));
         }
 
         addWizardSectionTitle(root, "Report type");
@@ -6042,6 +6021,14 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         screenRenderer = this::showReports;
         LinearLayout root = screenBase(translate("My reports"));
         addHeading(translate("Your reports"), translate("Keep track of items you are helping to reunite."));
+        addField(activeContent, fieldLabel(localizeReportsText("Browse by category")));
+        LinearLayout categoryTabs = new LinearLayout(this);
+        categoryTabs.setOrientation(LinearLayout.HORIZONTAL);
+        populateMyReportCategoryTabs(
+                categoryTabs,
+                () -> renderMergedReports(backendReports, firestoreReports)
+        );
+        activeContent.addView(categoryTabs, contentParams(-1, dp(112), dp(12)));
 
         Map<String, JSONObject> reportMap = new LinkedHashMap<>();
         try {
@@ -6069,7 +6056,10 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             List<JSONObject> allReports = new ArrayList<>(reportMap.values());
             Collections.sort(allReports, (a, b) -> Long.compare(parseReportCreatedAtMillis(b), parseReportCreatedAtMillis(a)));
 
+            int visibleReportCount = 0;
             for (JSONObject report : allReports) {
+                if (!discoveryReportMatchesCategory(report, myReportsCategory)) continue;
+                visibleReportCount++;
                 String type = report.optString("type", "ITEM");
                 String title = report.optString("title", "Untitled item");
                 String detail = report.optString("description", "");
@@ -6131,6 +6121,8 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
 
             if (allReports.isEmpty()) {
                 addField(activeContent, text(localizeReportsText("No reports yet."), 16, secondaryTextColor(), Typeface.NORMAL));
+            } else if (visibleReportCount == 0) {
+                addField(activeContent, text(localizeReportsText("No reports in this category."), 16, secondaryTextColor(), Typeface.NORMAL));
             }
         } catch (Exception error) {
             addField(activeContent, text(localizeReportsText("No reports yet."), 16, secondaryTextColor(), Typeface.NORMAL));
