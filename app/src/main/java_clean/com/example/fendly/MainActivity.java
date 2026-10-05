@@ -2373,13 +2373,19 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
 
     private void finishProfileSetup(String username, String pin, TextView save) {
         FirebaseAuth auth = FirebaseAuth.getInstance();
-        if (auth.getCurrentUser() == null) {
+        FirebaseUser currentUser = auth.getCurrentUser();
+        if (currentUser == null) {
             save.setText(translate("Sign in first"));
+            return;
+        }
+        SharedPreferences account = getSharedPreferences("fendly_account", MODE_PRIVATE);
+        if (account.getBoolean("pin_setup_pending", false)) {
+            saveFirebaseCredential(username, pin, save);
             return;
         }
         save.setText(translate("Checking username..."));
         save.setEnabled(false);
-        auth.getCurrentUser().getIdToken(false).addOnSuccessListener(token -> network.execute(() -> {
+        currentUser.getIdToken(false).addOnSuccessListener(token -> network.execute(() -> {
             int reservationCode = reserveUsername(username, token.getToken());
             runOnUiThread(() -> {
                 if (reservationCode != 201 && reservationCode != 200) {
