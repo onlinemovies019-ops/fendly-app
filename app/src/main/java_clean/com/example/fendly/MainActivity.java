@@ -1502,7 +1502,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                 resetFreshAccountDrafts();
                 auth.signOut();
                 profileHydrated = false;
-                String initialPassword = java.util.UUID.randomUUID().toString();
+                String initialPassword = generateTemporaryFirebasePassword();
                 auth.createUserWithEmailAndPassword(credentialEmail(name), initialPassword)
                     .addOnSuccessListener(result -> {
                         clearAllLocalAccountData();
@@ -1518,11 +1518,27 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                     .addOnFailureListener(error -> {
                         createAccount.setEnabled(true);
                         createAccount.setText(loginText("create"));
+                        String errorCode = error instanceof FirebaseAuthException
+                                ? ((FirebaseAuthException) error).getErrorCode()
+                                : error.getClass().getSimpleName();
+                        String diagnostic = error.getMessage();
+                        if (diagnostic != null) {
+                            java.util.regex.Matcher firebaseCode =
+                                    java.util.regex.Pattern.compile("\\[\\s*([A-Z0-9_]+)\\s*\\]")
+                                            .matcher(diagnostic);
+                            if (firebaseCode.find()
+                                    && (!(error instanceof FirebaseAuthException)
+                                    || "ERROR_INTERNAL_ERROR".equalsIgnoreCase(errorCode))) {
+                                errorCode = firebaseCode.group(1);
+                            }
+                        }
+                        Log.w("AUTH", "Firebase account creation failed: " + errorCode
+                                + (diagnostic == null ? "" : " - " + diagnostic));
                         if (isUsernameAlreadyTaken(error)) {
                             username.setError("User already exists");
                             username.requestFocus();
                         } else {
-                            username.setError("Could not create account. Please try again.");
+                            username.setError(accountCreationErrorMessage(errorCode, diagnostic));
                             username.requestFocus();
                         }
                     });
@@ -1559,6 +1575,36 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                 || message.contains("credential already in use")
                 || message.contains("email address is already in use")
                 || message.contains("already in use");
+    }
+
+    private String accountCreationErrorMessage(String errorCode, String diagnostic) {
+        if ("ERROR_OPERATION_NOT_ALLOWED".equalsIgnoreCase(errorCode)) {
+            return "Email/password sign-up is disabled in Firebase Authentication.";
+        }
+        if ("CONFIGURATION_NOT_FOUND".equalsIgnoreCase(errorCode)) {
+            return "Firebase Authentication is not configured for this project. Enable Email/Password sign-in in Firebase Console.";
+        }
+        if ("ERROR_NETWORK_REQUEST_FAILED".equalsIgnoreCase(errorCode)) {
+            return "Network error. Check your connection and try again.";
+        }
+        if ("ERROR_TOO_MANY_REQUESTS".equalsIgnoreCase(errorCode)) {
+            return "Too many attempts. Please wait and try again.";
+        }
+        if ("ERROR_INVALID_EMAIL".equalsIgnoreCase(errorCode)) {
+            return "Firebase rejected the account email. Check the username and try again.";
+        }
+        if ("ERROR_APP_NOT_AUTHORIZED".equalsIgnoreCase(errorCode)
+                || "ERROR_INVALID_API_KEY".equalsIgnoreCase(errorCode)) {
+            return "This app is not authorized for the configured Firebase project.";
+        }
+        if (diagnostic != null && !diagnostic.trim().isEmpty()) {
+            String readableDiagnostic = diagnostic.replaceAll("\\s+", " ").trim();
+            if (readableDiagnostic.length() > 140) {
+                readableDiagnostic = readableDiagnostic.substring(0, 137) + "...";
+            }
+            return "Firebase could not create the account: " + readableDiagnostic;
+        }
+        return "Could not create account (" + errorCode + "). Please try again.";
     }
 
     private interface UsernameAvailabilityCallback {
@@ -2551,6 +2597,30 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
 
     private String credentialEmail(String username) {
         return username.trim().toLowerCase(Locale.US) + "@login.fendly.app";
+    }
+
+    private String generateTemporaryFirebasePassword() {
+        SecureRandom secureRandom = new SecureRandom();
+        String upper = "ABCDEFGHJKLMNPQRSTUVWXYZ";
+        String lower = "abcdefghijkmnopqrstuvwxyz";
+        String digits = "23456789";
+        String symbols = "!@#$%&*+-_";
+        String all = upper + lower + digits + symbols;
+        char[] password = new char[24];
+        password[0] = upper.charAt(secureRandom.nextInt(upper.length()));
+        password[1] = lower.charAt(secureRandom.nextInt(lower.length()));
+        password[2] = digits.charAt(secureRandom.nextInt(digits.length()));
+        password[3] = symbols.charAt(secureRandom.nextInt(symbols.length()));
+        for (int i = 4; i < password.length; i++) {
+            password[i] = all.charAt(secureRandom.nextInt(all.length()));
+        }
+        for (int i = password.length - 1; i > 0; i--) {
+            int swapIndex = secureRandom.nextInt(i + 1);
+            char current = password[i];
+            password[i] = password[swapIndex];
+            password[swapIndex] = current;
+        }
+        return new String(password);
     }
 
     private String credentialPassword(String username, String pin) {
