@@ -426,6 +426,22 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             return;
         }
 
+        if (firebaseUser == null
+                && !getSharedPreferences("fendly_onboarding", MODE_PRIVATE)
+                        .getBoolean("welcome_seen", false)) {
+            showWelcomeOnboarding(() -> {
+                getSharedPreferences("fendly_onboarding", MODE_PRIVATE)
+                        .edit()
+                        .putBoolean("welcome_seen", true)
+                        .apply();
+                restoreProfileDrafts();
+                applySystemBarColors();
+                restoreScreenState();
+                FcmRegistration.registerCurrentToken();
+            });
+            return;
+        }
+
         restoreProfileDrafts();
         applySystemBarColors();
         restoreScreenState();
@@ -436,6 +452,134 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             checkAndReloadUserVerification();
             refreshAnnualSubscription(null);
         }
+    }
+
+    private void showWelcomeOnboarding() {
+        showWelcomeOnboarding(() -> {});
+    }
+
+    private void showWelcomeOnboarding(Runnable onContinue) {
+        Dialog dialog = new Dialog(this);
+        dialog.requestWindowFeature(Window.FEATURE_NO_TITLE);
+        dialog.setCancelable(false);
+
+        LinearLayout screen = new LinearLayout(this);
+        screen.setOrientation(LinearLayout.VERTICAL);
+        screen.setPadding(dp(14), dp(14), dp(14), dp(14));
+        screen.setBackgroundColor(backgroundColor());
+        WindowInsetsHelper.applySafeArea(screen);
+
+        LinearLayout card = new LinearLayout(this);
+        card.setOrientation(LinearLayout.VERTICAL);
+        card.setPadding(dp(22), dp(24), dp(22), dp(20));
+        card.setBackground(roundWithStroke(surfaceColor(), 28, borderColor()));
+        card.setElevation(dp(8));
+        screen.addView(card, new LinearLayout.LayoutParams(-1, 0, 1f));
+
+        TextView title = text(onboardingText("title"), 23, primaryTextColor(), Typeface.BOLD);
+        title.setGravity(Gravity.CENTER);
+        title.setTextAlignment(View.TEXT_ALIGNMENT_CENTER);
+        title.setPadding(0, 0, 0, dp(18));
+        card.addView(title, new LinearLayout.LayoutParams(-1, -2));
+
+        ScrollView scroll = new ScrollView(this);
+        scroll.setFillViewport(false);
+        scroll.setVerticalScrollBarEnabled(true);
+        LinearLayout content = new LinearLayout(this);
+        content.setOrientation(LinearLayout.VERTICAL);
+        scroll.addView(content, new ScrollView.LayoutParams(-1, -2));
+        card.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1f));
+
+        addWelcomeSection(content, "purpose_heading", "purpose_body");
+        addWelcomeHeading(content, "how_heading");
+        addWelcomeItem(content, "lost_lead", "lost_body");
+        addWelcomeItem(content, "found_lead", "found_body");
+        addWelcomeHeading(content, "steps_heading");
+        addWelcomeItem(content, "step1_lead", "step1_body");
+        addWelcomeItem(content, "step2_lead", "step2_body");
+        addWelcomeItem(content, "step3_lead", "step3_body");
+
+        LinearLayout actionsRow = new LinearLayout(this);
+        actionsRow.setOrientation(LinearLayout.HORIZONTAL);
+        actionsRow.setGravity(Gravity.CENTER_VERTICAL);
+
+        TextView continueButton = actionButton(onboardingText("continue"), true);
+        continueButton.setOnClickListener(view -> {
+            dialog.dismiss();
+            onContinue.run();
+        });
+        actionsRow.addView(continueButton, new LinearLayout.LayoutParams(0, dp(48), 1f));
+
+        ImageView voiceButton = new ImageView(this);
+        voiceButton.setImageResource(android.R.drawable.ic_media_play);
+        voiceButton.setColorFilter(primaryTextColor());
+        voiceButton.setBackground(roundWithStroke(surfaceColor(), 10, fieldBorderColor()));
+        voiceButton.setPadding(dp(10), dp(10), dp(10), dp(10));
+        voiceButton.setContentDescription(onboardingText("listen"));
+        voiceButton.setOnClickListener(view -> speakOrStop(buildWelcomeSpeechText(), voiceButton));
+        LinearLayout.LayoutParams voiceParams = new LinearLayout.LayoutParams(dp(48), dp(48));
+        voiceParams.setMargins(dp(8), 0, 0, 0);
+        actionsRow.addView(voiceButton, voiceParams);
+        LinearLayout.LayoutParams actionsParams = new LinearLayout.LayoutParams(-1, -2);
+        actionsParams.setMargins(0, dp(8), 0, 0);
+        card.addView(actionsRow, actionsParams);
+
+        dialog.setContentView(screen);
+        dialog.setCanceledOnTouchOutside(false);
+        dialog.setOnDismissListener(ignored -> stopGuideSpeech());
+        dialog.show();
+        Window window = dialog.getWindow();
+        if (window != null) {
+            window.setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
+            window.setLayout(WindowManager.LayoutParams.MATCH_PARENT, WindowManager.LayoutParams.MATCH_PARENT);
+            window.setStatusBarColor(backgroundColor());
+            window.setNavigationBarColor(backgroundColor());
+        }
+    }
+
+    private String onboardingText(String key) {
+        return LanguageManager.onboardingText(this, key);
+    }
+
+    private void addWelcomeHeading(LinearLayout parent, String key) {
+        TextView sectionHeading = text(onboardingText(key), 16, primaryTextColor(), Typeface.BOLD);
+        sectionHeading.setPadding(0, dp(8), 0, dp(8));
+        parent.addView(sectionHeading, new LinearLayout.LayoutParams(-1, -2));
+    }
+
+    private void addWelcomeSection(LinearLayout parent, String headingKey, String bodyKey) {
+        addWelcomeHeading(parent, headingKey);
+        TextView body = text(onboardingText(bodyKey), 14, secondaryTextColor(), Typeface.NORMAL);
+        body.setLineSpacing(dp(3), 1.12f);
+        body.setPadding(0, 0, 0, dp(10));
+        parent.addView(body, new LinearLayout.LayoutParams(-1, -2));
+    }
+
+    private void addWelcomeItem(LinearLayout parent, String leadKey, String bodyKey) {
+        String leadText = onboardingText(leadKey);
+        if ("lost_lead".equals(leadKey) || "found_lead".equals(leadKey)) {
+            leadText = "• " + leadText;
+        }
+        TextView lead = text(leadText, 14, primaryTextColor(), Typeface.BOLD);
+        lead.setPadding(0, dp(4), 0, dp(2));
+        parent.addView(lead, new LinearLayout.LayoutParams(-1, -2));
+
+        TextView body = text(onboardingText(bodyKey), 14, secondaryTextColor(), Typeface.NORMAL);
+        body.setLineSpacing(dp(3), 1.12f);
+        body.setPadding(dp(10), 0, 0, dp(8));
+        parent.addView(body, new LinearLayout.LayoutParams(-1, -2));
+    }
+
+    private String buildWelcomeSpeechText() {
+        return onboardingText("title") + ". "
+                + onboardingText("purpose_heading") + " " + onboardingText("purpose_body") + " "
+                + onboardingText("how_heading") + " "
+                + onboardingText("lost_lead") + " " + onboardingText("lost_body") + " "
+                + onboardingText("found_lead") + " " + onboardingText("found_body") + " "
+                + onboardingText("steps_heading") + " "
+                + onboardingText("step1_lead") + " " + onboardingText("step1_body") + " "
+                + onboardingText("step2_lead") + " " + onboardingText("step2_body") + " "
+                + onboardingText("step3_lead") + " " + onboardingText("step3_body");
     }
 
     private void checkAndReloadUserVerification() {
@@ -1050,8 +1194,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         authCard.setClipToOutline(true);
         if (Build.VERSION.SDK_INT >= 29) authCard.setForceDarkAllowed(false);
 
-        LinearLayout emblemWrap = new LinearLayout(this);
-        emblemWrap.setGravity(Gravity.CENTER);
+        FrameLayout emblemWrap = new FrameLayout(this);
         emblemWrap.setPadding(dp(10), dp(10), dp(10), dp(10));
         emblemWrap.setBackground(roundWithStroke(Color.argb(30, 232, 178, 74), 22, Color.argb(80, 232, 178, 74)));
 
@@ -1071,11 +1214,19 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             }
             return true;
         });
-        LinearLayout.LayoutParams emblemParams = new LinearLayout.LayoutParams(dp(180), dp(124));
-        emblemParams.gravity = Gravity.CENTER_HORIZONTAL;
-        emblemParams.setMargins(0, dp(4), 0, dp(10));
+        FrameLayout.LayoutParams emblemParams = new FrameLayout.LayoutParams(dp(180), dp(108), Gravity.CENTER);
         emblemWrap.addView(emblem, emblemParams);
-        LinearLayout.LayoutParams emblemWrapParams = new LinearLayout.LayoutParams(-1, dp(150));
+        TextView authTagline = text("Lost or Found anything? We Connect the Dots.", 12, primaryTextColor(), Typeface.BOLD);
+        authTagline.setGravity(Gravity.CENTER);
+        authTagline.setTextAlignment(View.TEXT_ALIGNMENT_CENTER);
+        authTagline.setIncludeFontPadding(false);
+        authTagline.setSingleLine(true);
+        authTagline.setTextSize(responsiveTextSize(11));
+        authTagline.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        FrameLayout.LayoutParams taglineParams = new FrameLayout.LayoutParams(-1, dp(24), Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL);
+        taglineParams.bottomMargin = dp(4);
+        emblemWrap.addView(authTagline, taglineParams);
+        LinearLayout.LayoutParams emblemWrapParams = new LinearLayout.LayoutParams(-1, dp(176));
         emblemWrapParams.setMargins(0, 0, 0, dp(14));
         authCard.addView(emblemWrap, emblemWrapParams);
 
@@ -2786,6 +2937,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         search.setHint(translateUi("State") != null ? translateUi("State") : "Search state");
         search.setSingleLine(true);
         search.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_CAP_WORDS);
+        styleLocationPickerSearch(search);
         search.setBackground(roundWithStroke(surfaceColor(), 10, fieldBorderColor()));
         search.setPadding(dp(12), dp(8), dp(12), dp(8));
         applyIcon(search, R.drawable.ic_field_search);
@@ -2872,6 +3024,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         search.setSingleLine(true);
         search.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_CAP_WORDS);
         search.setShowSoftInputOnFocus(false);
+        styleLocationPickerSearch(search);
         search.setBackground(roundWithStroke(surfaceColor(), 10, fieldBorderColor()));
         search.setPadding(dp(12), dp(8), dp(12), dp(8));
         applyIcon(search, R.drawable.ic_field_search);
@@ -2948,6 +3101,9 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
     }
 
     private void styleLocationPickerDialog(AlertDialog dialog) {
+        if (Build.VERSION.SDK_INT >= 29 && dialog.getWindow() != null) {
+            dialog.getWindow().getDecorView().setForceDarkAllowed(false);
+        }
         TextView title = dialog.findViewById(androidx.appcompat.R.id.alertTitle);
         if (title != null) {
             title.setTextColor(primaryTextColor());
@@ -2955,6 +3111,19 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         }
         TextView negativeButton = dialog.getButton(AlertDialog.BUTTON_NEGATIVE);
         if (negativeButton != null) negativeButton.setTextColor(primaryTextColor());
+    }
+
+    private void styleLocationPickerSearch(EditText search) {
+        search.setTextColor(primaryTextColor());
+        search.setHintTextColor(secondaryTextColor());
+        search.setTypeface(localizedScriptTypeface(search.getText(), Typeface.NORMAL));
+        search.addTextChangedListener(new TextWatcher() {
+            @Override public void beforeTextChanged(CharSequence value, int start, int count, int after) { }
+            @Override public void onTextChanged(CharSequence value, int start, int before, int count) {
+                search.setTypeface(localizedScriptTypeface(value, Typeface.NORMAL));
+            }
+            @Override public void afterTextChanged(Editable value) { }
+        });
     }
 
     private ArrayAdapter<String> localizedLocationAdapter(String[] values) {
@@ -3011,7 +3180,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         profileScrollY = 0;
         screenRenderer = this::showHome;
         LinearLayout root = screenBase("Home");
-        addHeading("Find what matters.", "Lost or Found? We Connect the Dots.");
+        addHeading("Find what matters.", "Lost or Found anything? We Connect the Dots.");
         LinearLayout choices = new LinearLayout(this);
         choices.setOrientation(LinearLayout.HORIZONTAL);
         TextView lost = actionButton(LanguageManager.profileText(this, "lost_theft_button"), true);
@@ -9720,6 +9889,16 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             LinearLayout.LayoutParams langParams = new LinearLayout.LayoutParams(dp(42), dp(42));
             langParams.setMargins(dp(6), 0, 0, 0);
             expandedIconsContainer.addView(languageIconView, langParams);
+
+            TextView welcomeInfoIcon = text("i", 20, accentColor(), Typeface.BOLD);
+            welcomeInfoIcon.setGravity(Gravity.CENTER);
+            welcomeInfoIcon.setBackground(roundWithStroke(surfaceColor(), 14, borderColor()));
+            welcomeInfoIcon.setElevation(dp(2));
+            welcomeInfoIcon.setContentDescription(onboardingText("info"));
+            welcomeInfoIcon.setOnClickListener(view -> showWelcomeOnboarding());
+            LinearLayout.LayoutParams infoParams = new LinearLayout.LayoutParams(dp(42), dp(42));
+            infoParams.setMargins(dp(6), 0, 0, 0);
+            expandedIconsContainer.addView(welcomeInfoIcon, infoParams);
 
             FrameLayout themeIconView = new FrameLayout(this);
             int themeBg = darkMode ? surfaceColor() : Color.rgb(244, 239, 232);

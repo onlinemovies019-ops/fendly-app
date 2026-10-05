@@ -159,7 +159,7 @@ fun SafeTradeCheckScreen(onBack: () -> Unit, darkMode: Boolean) {
                     modifier = Modifier
                         .fillMaxWidth()
                         .background(MaterialTheme.colorScheme.background)
-                        .padding(horizontal = 8.dp, vertical = 8.dp),
+                        .padding(horizontal = 8.dp, vertical = 12.dp),
                 ) {
                     Text(
                         text = "SafeTrade IMEI check",
@@ -173,12 +173,6 @@ fun SafeTradeCheckScreen(onBack: () -> Unit, darkMode: Boolean) {
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
-                    TextButton(
-                        onClick = onBack,
-                        modifier = Modifier.align(Alignment.CenterStart),
-                    ) {
-                        Text("Back")
-                    }
                 }
             }
         ) { contentPadding ->
@@ -193,7 +187,7 @@ fun SafeTradeCheckScreen(onBack: () -> Unit, darkMode: Boolean) {
                         .fillMaxSize()
                         .padding(contentPadding)
                         .verticalScroll(rememberScrollState())
-                        .padding(horizontal = 22.dp, vertical = 16.dp),
+                        .padding(horizontal = 22.dp, vertical = 24.dp),
                     verticalArrangement = Arrangement.spacedBy(18.dp),
                     ) {
                         Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -337,6 +331,11 @@ fun SafeTradeCheckScreen(onBack: () -> Unit, darkMode: Boolean) {
                         Text("Verify IMEI")
                     }
                 }
+
+                FendlySecondaryButton(
+                    text = "Back home",
+                    onClick = onBack,
+                )
 
                 when (state) {
                     VerificationState.CLEAN -> VerificationBanner(
