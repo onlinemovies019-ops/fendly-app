@@ -1130,7 +1130,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                 FirebaseAuth.getInstance().signOut();
             } catch (Exception ignored) {}
             Toast.makeText(MainActivity.this, translate("Signed out successfully"), Toast.LENGTH_SHORT).show();
-            buildScreen();
+            finishAffinity();
         });
 
         dialog.setContentView(content);
@@ -3279,78 +3279,6 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         screenRenderer = this::showHome;
         LinearLayout root = screenBase("Home");
         addHeading("Find what matters.", "Lost or Found anything? We Connect the Dots.");
-        TextView discoveryLabel = text(
-                localizeReportsText("Discover active reports"),
-                15,
-                primaryTextColor(),
-                Typeface.BOLD
-        );
-        addField(root, discoveryLabel);
-
-        Map<String, String[]> stateCities = indiaStateCityMap();
-        LinkedHashSet<String> uniqueCities = new LinkedHashSet<>();
-        for (String[] cities : stateCities.values()) {
-            uniqueCities.addAll(Arrays.asList(cities));
-        }
-        List<String> discoveryCities = new ArrayList<>(uniqueCities);
-        Collections.sort(discoveryCities, String.CASE_INSENSITIVE_ORDER);
-        String[] localizedCities = localizedCityChoices(discoveryCities.toArray(new String[0]));
-        String[] cityOptions = new String[localizedCities.length + 1];
-        cityOptions[0] = localizeReportsText("All cities");
-        System.arraycopy(localizedCities, 0, cityOptions, 1, localizedCities.length);
-
-        LinearLayout cityFilterLabel = fieldLabel(localizeReportsText("Filter reports by city"));
-        addField(root, cityFilterLabel);
-        AutoCompleteTextView cityFilter = new AutoCompleteTextView(this);
-        cityFilter.setHint(localizeReportsText("All cities"));
-        cityFilter.setThreshold(0);
-        cityFilter.setSingleLine(true);
-        cityFilter.setAdapter(localizedLocationAdapter(cityOptions));
-        applyLocationFieldStyle(cityFilter);
-        cityFilter.setText(
-                discoveryCity.isEmpty()
-                        ? cityOptions[0]
-                        : localizeProfileDisplayValue("city", discoveryCity),
-                false
-        );
-        cityFilter.setOnClickListener(view -> cityFilter.showDropDown());
-        cityFilter.setOnItemClickListener((parent, view, position, id) -> {
-            String selectedOption = String.valueOf(parent.getItemAtPosition(position));
-            if (cityOptions[0].equals(selectedOption)) {
-                discoveryCity = "";
-            } else {
-                for (int index = 0; index < localizedCities.length; index++) {
-                    if (selectedOption.equals(localizedCities[index])) {
-                        discoveryCity = discoveryCities.get(index);
-                        break;
-                    }
-                }
-            }
-            showHome();
-        });
-        addField(root, cityFilter);
-
-        TextView discoveryStatus = text(
-                localizeReportsText("Loading reports..."),
-                14,
-                secondaryTextColor(),
-                Typeface.NORMAL
-        );
-        discoveryStatus.setGravity(Gravity.CENTER);
-        LinearLayout discoveryResults = new LinearLayout(this);
-        discoveryResults.setOrientation(LinearLayout.VERTICAL);
-        root.addView(discoveryStatus, contentParams(-1, -2, dp(8)));
-        root.addView(discoveryResults, new LinearLayout.LayoutParams(-1, -2));
-        discoveryReportsLoaded = false;
-        discoveryStatus.setOnClickListener(view -> {
-            int retryGeneration = ++discoveryRequestGeneration;
-            discoveryReportsLoaded = false;
-            discoveryStatus.setText(localizeReportsText("Loading reports..."));
-            discoveryStatus.setVisibility(View.VISIBLE);
-            loadDiscoveryReports(discoveryCity, discoveryResults, discoveryStatus, retryGeneration);
-        });
-        int requestGeneration = ++discoveryRequestGeneration;
-        loadDiscoveryReports(discoveryCity, discoveryResults, discoveryStatus, requestGeneration);
 
         LinearLayout choices = new LinearLayout(this);
         choices.setOrientation(LinearLayout.HORIZONTAL);
@@ -3528,13 +3456,23 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
     private void renderDiscoveryReports(LinearLayout resultsContainer, TextView statusView) {
         resultsContainer.removeAllViews();
         if (!discoveryReportsLoaded) return;
-        if (discoveryReports.isEmpty()) {
-            statusView.setText(localizeReportsText("No active reports found."));
+        List<JSONObject> visibleReports = new ArrayList<>();
+        for (JSONObject report : discoveryReports) {
+            if (discoveryReportMatchesCategory(report, myReportsCategory)) {
+                visibleReports.add(report);
+            }
+        }
+        if (visibleReports.isEmpty()) {
+            statusView.setText(localizeReportsText(
+                    discoveryReports.isEmpty()
+                            ? "No active reports found."
+                            : "No reports in this category."
+            ));
             statusView.setVisibility(View.VISIBLE);
             return;
         }
         statusView.setVisibility(View.GONE);
-        for (JSONObject report : discoveryReports) {
+        for (JSONObject report : visibleReports) {
             resultsContainer.addView(createDiscoveryReportCard(report));
         }
     }
@@ -6029,6 +5967,89 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                 () -> renderMergedReports(backendReports, firestoreReports)
         );
         activeContent.addView(categoryTabs, contentParams(-1, dp(112), dp(12)));
+
+        TextView discoveryLabel = text(
+                localizeReportsText("Discover active reports"),
+                15,
+                primaryTextColor(),
+                Typeface.BOLD
+        );
+        addField(activeContent, discoveryLabel);
+
+        Map<String, String[]> stateCities = indiaStateCityMap();
+        LinkedHashSet<String> uniqueCities = new LinkedHashSet<>();
+        for (String[] cities : stateCities.values()) {
+            uniqueCities.addAll(Arrays.asList(cities));
+        }
+        List<String> discoveryCities = new ArrayList<>(uniqueCities);
+        Collections.sort(discoveryCities, String.CASE_INSENSITIVE_ORDER);
+        String[] localizedCities = localizedCityChoices(discoveryCities.toArray(new String[0]));
+        String[] cityOptions = new String[localizedCities.length + 1];
+        cityOptions[0] = localizeReportsText("All cities");
+        System.arraycopy(localizedCities, 0, cityOptions, 1, localizedCities.length);
+
+        LinearLayout cityFilterLabel = fieldLabel(localizeReportsText("Filter reports by city"));
+        addField(activeContent, cityFilterLabel);
+        AutoCompleteTextView cityFilter = new AutoCompleteTextView(this);
+        cityFilter.setHint(localizeReportsText("All cities"));
+        cityFilter.setThreshold(0);
+        cityFilter.setSingleLine(true);
+        cityFilter.setAdapter(localizedLocationAdapter(cityOptions));
+        applyLocationFieldStyle(cityFilter);
+        cityFilter.setText(
+                discoveryCity.isEmpty()
+                        ? cityOptions[0]
+                        : localizeProfileDisplayValue("city", discoveryCity),
+                false
+        );
+        cityFilter.setOnClickListener(view -> cityFilter.showDropDown());
+        cityFilter.setOnItemClickListener((parent, view, position, id) -> {
+            String selectedOption = String.valueOf(parent.getItemAtPosition(position));
+            if (cityOptions[0].equals(selectedOption)) {
+                discoveryCity = "";
+            } else {
+                for (int index = 0; index < localizedCities.length; index++) {
+                    if (selectedOption.equals(localizedCities[index])) {
+                        discoveryCity = discoveryCities.get(index);
+                        break;
+                    }
+                }
+            }
+            renderMergedReports(backendReports, firestoreReports);
+        });
+        addField(activeContent, cityFilter);
+
+        TextView discoveryStatus = text(
+                localizeReportsText("Loading reports..."),
+                14,
+                secondaryTextColor(),
+                Typeface.NORMAL
+        );
+        discoveryStatus.setGravity(Gravity.CENTER);
+        LinearLayout discoveryResults = new LinearLayout(this);
+        discoveryResults.setOrientation(LinearLayout.VERTICAL);
+        activeContent.addView(discoveryStatus, contentParams(-1, -2, dp(8)));
+        activeContent.addView(discoveryResults, new LinearLayout.LayoutParams(-1, -2));
+        discoveryReportsLoaded = false;
+        discoveryStatus.setOnClickListener(view -> {
+            int retryGeneration = ++discoveryRequestGeneration;
+            discoveryReportsLoaded = false;
+            discoveryStatus.setText(localizeReportsText("Loading reports..."));
+            discoveryStatus.setVisibility(View.VISIBLE);
+            loadDiscoveryReports(discoveryCity, discoveryResults, discoveryStatus, retryGeneration);
+        });
+        int requestGeneration = ++discoveryRequestGeneration;
+        loadDiscoveryReports(discoveryCity, discoveryResults, discoveryStatus, requestGeneration);
+
+        TextView userReportsLabel = text(
+                localizeReportsText("Your reports"),
+                15,
+                primaryTextColor(),
+                Typeface.BOLD
+        );
+        LinearLayout.LayoutParams userReportsLabelParams = new LinearLayout.LayoutParams(-1, -2);
+        userReportsLabelParams.setMargins(0, dp(16), 0, dp(8));
+        activeContent.addView(userReportsLabel, userReportsLabelParams);
 
         Map<String, JSONObject> reportMap = new LinkedHashMap<>();
         try {
