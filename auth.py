@@ -460,6 +460,7 @@ def complete_registration(
             detail="Account setup is temporarily unavailable",
         ) from exc
 
+    already_completed = False
     if profile is not None and profile.username:
         if profile.username.strip().lower() != username:
             raise HTTPException(
@@ -471,7 +472,7 @@ def complete_registration(
                 status_code=status.HTTP_409_CONFLICT,
                 detail="Registration is already complete; sign in with your existing username and PIN",
             )
-        return {"success": True, "already_completed": True}
+        already_completed = True
 
     try:
         reservation = session.get(UsernameReservation, username)
@@ -557,6 +558,8 @@ def complete_registration(
             detail="Could not secure account credentials; please retry",
         ) from exc
 
+    if already_completed:
+        return {"success": True, "already_completed": True}
     return {"success": True}
 
 

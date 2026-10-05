@@ -471,7 +471,7 @@ def test_complete_registration_rejects_reservation_owned_by_another_active_user(
     assert "another active account" in exc.value.detail
 
 
-def test_complete_registration_recognizes_same_completed_account_without_resetting_pin(
+def test_complete_registration_retry_updates_pin_for_same_completed_account(
     monkeypatch, profile_session
 ):
     uid = "completed-registration-uid"
@@ -508,7 +508,16 @@ def test_complete_registration_recognizes_same_completed_account_without_resetti
     )
 
     assert result == {"success": True, "already_completed": True}
-    assert updated == []
+    assert updated == [
+        (
+            (uid,),
+            {
+                "email": "active_person@login.fendly.app",
+                "password": "Fendly!active_person#1234",
+                "app": app,
+            },
+        )
+    ]
 
 
 def test_complete_registration_rejects_completed_profile_with_different_username(
