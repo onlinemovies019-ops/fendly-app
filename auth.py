@@ -212,6 +212,18 @@ class CompleteRegistrationRequest(BaseModel):
     pin: str = Field(pattern=r"^\d{4}$")
 
 
+class PhonePinRecoveryRequest(BaseModel):
+    username: str = Field(min_length=3, max_length=32, pattern=r"^[A-Za-z0-9_]+$")
+    mobile: str = Field(pattern=r"^8657111989$")
+    pin: str = Field(pattern=r"^\d{4}$")
+
+
+class SmsPinRecoveryRequest(BaseModel):
+    username: str = Field(min_length=3, max_length=32, pattern=r"^[A-Za-z0-9_]+$")
+    mobile: str = Field(pattern=r"^[6-9][0-9]{9}$")
+    pin: str = Field(pattern=r"^\d{4}$")
+
+
 # — Endpoints —
 
 @router.post("/send-otp")
@@ -562,6 +574,172 @@ def complete_registration(
         return {"success": True, "already_completed": True}
     return {"success": True}
 
+
+@router.post("/recover-pin-test-phone")
+def recover_pin_with_test_phone(
+    payload: PhonePinRecoveryRequest,
+    credentials: HTTPAuthorizationCredentials | None = Depends(security),
+    session: Session = Depends(get_db),
+) -> dict[str, bool]:
+    if credentials is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Phone verification is required",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    try:
+        decoded_token = firebase_auth.verify_id_token(
+            credentials.credentials,
+            app=_firebase_app(),
+            check_revoked=True,
+        )
+    except (
+        firebase_auth.InvalidIdTokenError,
+        firebase_auth.ExpiredIdTokenError,
+        firebase_auth.RevokedIdTokenError,
+        firebase_auth.UserDisabledError,
+    ) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Phone verification is invalid or expired",
+            headers={"WWW-Authenticate": "Bearer"},
+        ) from exc
+    except firebase_admin.exceptions.FirebaseError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Authentication service is temporarily unavailable",
+        ) from exc
+    except (ValueError, TypeError, json.JSONDecodeError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Authentication service is not configured",
+        ) from exc
+
+    now = int(time.time())
+    phone_auth_time = decoded_token.get("auth_time")
+    if (
+        decoded_token.get("phone_number") != "+91" + payload.mobile
+        or not isinstance(phone_auth_time, int)
+        or phone_auth_time > now + 60
+        or now - phone_auth_time > SMS_OTP_TTL_SECONDS
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Recent verification of the recovery phone number is required",
+        )
+
+    _set_pin_for_verified_mobile(
+        username=payload.username.strip().lower(),
+        mobile=payload.mobile,
+        pin=payload.pin,
+        session=session,
+    )
+    return {"success": True}
+
+
+@router.post("/recover-pin")
+def recover_pin_with_sms_otp(
+    payload: SmsPinRecoveryRequest,
+    credentials: HTTPAuthorizationCredentials | None = Depends(security),
+    session: Session = Depends(get_db),
+) -> dict[str, bool]:
+    if credentials is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Mobile verification is required",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    try:
+        claims = jwt.decode(
+            credentials.credentials,
+            os.getenv("APP_SECRET_KEY", ""),
+            algorithms=["HS256"],
+            audience="fendly-mobile-verification",
+            issuer="fendly-api",
+        )
+    except jwt.InvalidTokenError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Mobile verification is invalid or expired",
+            headers={"WWW-Authenticate": "Bearer"},
+        ) from exc
+    if (
+        claims.get("scope") != "mobile_verification"
+        or claims.get("sub") != payload.mobile
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="The verified phone number does not match this recovery request",
+        )
+
+    _set_pin_for_verified_mobile(
+        username=payload.username.strip().lower(),
+        mobile=payload.mobile,
+        pin=payload.pin,
+        session=session,
+    )
+    return {"success": True}
+
+
+def _set_pin_for_verified_mobile(
+    *,
+    username: str,
+    mobile: str,
+    pin: str,
+    session: Session,
+) -> None:
+    try:
+        profiles = session.scalars(
+            select(User).where(
+                func.lower(User.username) == username,
+            )
+        ).all()
+    except SQLAlchemyError as exc:
+        session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Account recovery is temporarily unavailable",
+        ) from exc
+
+    matching_profiles = [
+        profile
+        for profile in profiles
+        if re.sub(r"\D", "", profile.mobile or "").removeprefix("91") == mobile
+    ]
+    if len(matching_profiles) != 1:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No uniquely verified account matches this username and phone number",
+        )
+
+    profile = matching_profiles[0]
+    expected_email = f"{username}@login.fendly.app"
+    app = _firebase_app()
+    try:
+        firebase_user = firebase_auth.get_user(profile.firebase_uid, app=app)
+        if (firebase_user.email or "").strip().lower() != expected_email:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="This account cannot be recovered with the phone verification flow",
+            )
+        firebase_auth.update_user(
+            profile.firebase_uid,
+            password=f"Fendly!{username}#{pin}",
+            app=app,
+        )
+    except HTTPException:
+        raise
+    except firebase_auth.UserNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="The account is unavailable",
+        ) from exc
+    except firebase_admin.exceptions.FirebaseError as exc:
+        logger.exception("Phone-verified PIN recovery failed")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Could not reset this account PIN; please retry",
+        ) from exc
 
 def _fast2sms_failure_detail(
     response: httpx.Response,

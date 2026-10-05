@@ -111,6 +111,7 @@ import java.security.SecureRandom;
 
 import com.google.firebase.auth.GetTokenResult;
 import com.google.firebase.auth.UserInfo;
+import com.google.firebase.FirebaseException;
 import com.google.firebase.firestore.DocumentSnapshot;
 import com.google.firebase.firestore.QuerySnapshot;
 import com.google.firebase.Timestamp;
@@ -130,6 +131,9 @@ import com.google.firebase.auth.FirebaseUser;
 import com.google.firebase.auth.FirebaseAuthUserCollisionException;
 import com.google.firebase.auth.EmailAuthProvider;
 import com.google.firebase.auth.AuthResult;
+import com.google.firebase.auth.PhoneAuthCredential;
+import com.google.firebase.auth.PhoneAuthOptions;
+import com.google.firebase.auth.PhoneAuthProvider;
 import com.google.android.gms.auth.api.phone.SmsRetriever;
 import java.util.concurrent.TimeUnit;
 import com.google.firebase.firestore.FirebaseFirestore;
@@ -352,6 +356,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
     private long lastProfileHydrationAttemptMs = 0L;
     private static final long PROFILE_HYDRATION_RETRY_WINDOW_MS = 10000L;
     private static final String API_BASE = "https://fendly-api.onrender.com";
+    private static final String TEST_PHONE_PIN_RECOVERY_MOBILE = "8657111989";
     /**
      * Temporary testing toggle: set to true to restore the mobile OTP requirement later.
      * Keep the old validation logic in place while it is disabled for the current testing phase.
@@ -2852,10 +2857,17 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
     private void showForgotPinDialog(EditText loginUsername) {
         Dialog dialog = new Dialog(this);
         dialog.requestWindowFeature(Window.FEATURE_NO_TITLE);
+        String savedMobile = getSharedPreferences("fendly_account", MODE_PRIVATE)
+                .getString("mobile", "").trim();
+        boolean usesFirebaseTestCode = TEST_PHONE_PIN_RECOVERY_MOBILE.equals(
+                normalizeIndianMobileDigits(savedMobile)
+        );
         LinearLayout content = themedDialogContent(
                 R.drawable.ic_field_key,
                 translate("Reset PIN?"),
-                translate("A temporary 4-digit PIN will be sent after mobile verification.")
+                translate(usesFirebaseTestCode
+                        ? "A temporary 4-digit PIN will be created after Firebase phone verification."
+                        : "A temporary 4-digit PIN will be sent after mobile verification.")
         );
         LinearLayout actions = new LinearLayout(this);
         actions.setGravity(Gravity.END | Gravity.CENTER_VERTICAL);
@@ -2935,6 +2947,10 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
     private void startForgotPinPhoneVerification(String username, String mobile, String temporaryPin, Dialog parentDialog) {
         phoneVerificationHandled = false;
         phoneVerificationMobile = normalizeIndianMobileDigits(mobile);
+        if (TEST_PHONE_PIN_RECOVERY_MOBILE.equals(phoneVerificationMobile)) {
+            startFirebaseTestPhonePinRecovery(username, mobile, temporaryPin, parentDialog);
+            return;
+        }
         network.execute(() -> {
             try {
                 JSONObject payload = new JSONObject();
@@ -2961,6 +2977,171 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         });
     }
 
+    private void startFirebaseTestPhonePinRecovery(
+            String username,
+            String mobile,
+            String temporaryPin,
+            Dialog parentDialog
+    ) {
+        PhoneAuthOptions options = PhoneAuthOptions.newBuilder(FirebaseAuth.getInstance())
+                .setPhoneNumber("+91" + TEST_PHONE_PIN_RECOVERY_MOBILE)
+                .setTimeout(60L, TimeUnit.SECONDS)
+                .setActivity(this)
+                .setCallbacks(new PhoneAuthProvider.OnVerificationStateChangedCallbacks() {
+                    @Override
+                    public void onVerificationCompleted(PhoneAuthCredential credential) {
+                        recoverPinWithTestPhoneCredential(
+                                username, mobile, temporaryPin, parentDialog, null, credential
+                        );
+                    }
+
+                    @Override
+                    public void onVerificationFailed(FirebaseException error) {
+                        parentDialog.dismiss();
+                        Toast.makeText(
+                                MainActivity.this,
+                                "Firebase phone verification failed: " + error.getMessage(),
+                                Toast.LENGTH_LONG
+                        ).show();
+                    }
+
+                    @Override
+                    public void onCodeSent(
+                            String verificationId,
+                            PhoneAuthProvider.ForceResendingToken resendToken
+                    ) {
+                        showThemedOtpDialog(
+                                translate("Enter Firebase test code"),
+                                translate("Enter the test code configured for your phone in Firebase Console."),
+                                translate("6-digit test code"),
+                                (value, otpDialog, verifyButton, codeCells) -> {
+                                    if (value.length() != 6) {
+                                        Toast.makeText(
+                                                MainActivity.this,
+                                                translate("Enter the 6-digit OTP"),
+                                                Toast.LENGTH_LONG
+                                        ).show();
+                                        return;
+                                    }
+                                    verifyButton.setText(translate("Verifying..."));
+                                    verifyButton.setEnabled(false);
+                                    PhoneAuthCredential credential =
+                                            PhoneAuthProvider.getCredential(verificationId, value);
+                                    recoverPinWithTestPhoneCredential(
+                                            username,
+                                            mobile,
+                                            temporaryPin,
+                                            parentDialog,
+                                            otpDialog,
+                                            credential
+                                    );
+                                },
+                                parentDialog::dismiss
+                        );
+                    }
+                })
+                .build();
+        PhoneAuthProvider.verifyPhoneNumber(options);
+    }
+
+    private void recoverPinWithTestPhoneCredential(
+            String username,
+            String mobile,
+            String pin,
+            Dialog parentDialog,
+            Dialog otpDialog,
+            PhoneAuthCredential credential
+    ) {
+        if (phoneVerificationHandled) return;
+        phoneVerificationHandled = true;
+        FirebaseAuth auth = FirebaseAuth.getInstance();
+        auth.signInWithCredential(credential)
+                .addOnSuccessListener(result -> {
+                    FirebaseUser verifiedPhoneUser = result.getUser();
+                    if (verifiedPhoneUser == null) {
+                        auth.signOut();
+                        showPinRecoveryFailure(parentDialog, otpDialog, "Phone verification did not return an account");
+                        return;
+                    }
+                    verifiedPhoneUser.getIdToken(false)
+                            .addOnSuccessListener(token -> network.execute(() -> {
+                                boolean recovered = false;
+                                String detail = "Could not reset this account PIN; please retry";
+                                try {
+                                    JSONObject payload = new JSONObject();
+                                    payload.put("username", username);
+                                    payload.put("mobile", TEST_PHONE_PIN_RECOVERY_MOBILE);
+                                    payload.put("pin", pin);
+                                    JSONObject response = postJson(
+                                            "/api/auth/recover-pin-test-phone",
+                                            payload.toString(),
+                                            token.getToken()
+                                    );
+                                    recovered = response.optBoolean("success", false);
+                                    detail = response.optString("detail", detail);
+                                } catch (Exception error) {
+                                    detail = "Could not reach account recovery service. Please retry.";
+                                }
+                                boolean recoverySucceeded = recovered;
+                                String recoveryDetail = detail;
+                                runOnUiThread(() -> {
+                                    auth.signOut();
+                                    if (recoverySucceeded) {
+                                        if (otpDialog != null && otpDialog.isShowing()) {
+                                            otpDialog.dismiss();
+                                        }
+                                        saveRecoveredPinLocally(username, mobile, pin, parentDialog);
+                                    } else {
+                                        showPinRecoveryFailure(
+                                                parentDialog, otpDialog, recoveryDetail
+                                        );
+                                    }
+                                });
+                            }))
+                            .addOnFailureListener(error -> {
+                                auth.signOut();
+                                showPinRecoveryFailure(
+                                        parentDialog,
+                                        otpDialog,
+                                        "Could not verify the Firebase phone session"
+                                );
+                            });
+                })
+                .addOnFailureListener(error -> showPinRecoveryFailure(
+                        parentDialog,
+                        otpDialog,
+                        "The Firebase test code was not accepted"
+                ));
+    }
+
+    private void showPinRecoveryFailure(Dialog parentDialog, Dialog otpDialog, String message) {
+        if (otpDialog != null && otpDialog.isShowing()) {
+            otpDialog.dismiss();
+        }
+        if (parentDialog != null && parentDialog.isShowing()) {
+            parentDialog.dismiss();
+        }
+        Toast.makeText(this, message, Toast.LENGTH_LONG).show();
+    }
+
+    private void saveRecoveredPinLocally(String username, String mobile, String pin, Dialog parentDialog) {
+        getSharedPreferences("fendly_account", MODE_PRIVATE).edit()
+                .putBoolean("created", true)
+                .putString("username", username)
+                .putString("mobile", mobile)
+                .putString("account_pin", pin)
+                .apply();
+        saveStoredAccountPin(pin);
+        if (parentDialog != null && parentDialog.isShowing()) {
+            parentDialog.dismiss();
+        }
+        new AlertDialog.Builder(this)
+                .setTitle(translate("Temporary PIN"))
+                .setMessage(translate("Your new 4-digit PIN is ") + pin + ". " + translate("Use it to log in, then change it from My Profile."))
+                .setPositiveButton(translate("OK"), null)
+                .show();
+    }
+
     private void showForgotOtpDialog(String username, String mobile, String pin, Dialog parentDialog) {
         showThemedOtpDialog(translate("Enter OTP"), translate("Enter the 6-digit code sent to your mobile number."), translate("6-digit OTP"),
             (value, dialog, verifyInDialog, codeCells) -> {
@@ -2985,40 +3166,38 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                 payload.put("otp", otpValue);
                 JSONObject response = postJson("/api/auth/verify-otp", payload.toString(), null);
                 boolean verified = response != null && (response.optBoolean("success", false) || "success".equalsIgnoreCase(response.optString("status", "")));
+                String verificationToken = response == null
+                        ? ""
+                        : response.optString("verification_token", "");
+                if (verified && !verificationToken.isEmpty()) {
+                    finishSmsVerifiedPinRecovery(
+                            username,
+                            mobile,
+                            pin,
+                            parentDialog,
+                            dialog,
+                            verificationToken
+                    );
+                    return;
+                }
                 runOnUiThread(() -> {
-                    if (verified) {
-                        if (dialog != null && dialog.isShowing()) {
-                            dialog.dismiss();
-                        }
-                        getSharedPreferences("fendly_account", MODE_PRIVATE).edit()
-                                .putBoolean("created", true)
-                                .putString("username", username)
-                                .putString("mobile", mobile)
-                                .putString("account_pin", pin)
-                                .apply();
-                        saveStoredAccountPin(pin);
-                        parentDialog.dismiss();
-                        new AlertDialog.Builder(this)
-                                .setTitle(translate("Temporary PIN"))
-                                .setMessage(translate("Your new 4-digit PIN is ") + pin + ". " + translate("Use it to log in, then change it from My Profile."))
-                                .setPositiveButton(translate("OK"), null)
-                                .show();
-                    } else {
-                        phoneVerificationHandled = false;
-                        if (verifyInDialog != null) {
-                            verifyInDialog.setText(translate("Verify"));
-                            verifyInDialog.setEnabled(true);
-                        }
-                        if (codeCells != null) {
-                            for (EditText cell : codeCells) {
-                                if (cell != null) cell.setText("");
-                            }
-                            if (codeCells.length > 0 && codeCells[0] != null) {
-                                codeCells[0].requestFocus();
-                            }
-                        }
-                        Toast.makeText(this, translate("Incorrect OTP. Please try again."), Toast.LENGTH_LONG).show();
+                    phoneVerificationHandled = false;
+                    if (verifyInDialog != null) {
+                        verifyInDialog.setText(translate("Verify"));
+                        verifyInDialog.setEnabled(true);
                     }
+                    if (codeCells != null) {
+                        for (EditText cell : codeCells) {
+                            if (cell != null) cell.setText("");
+                        }
+                        if (codeCells.length > 0 && codeCells[0] != null) {
+                            codeCells[0].requestFocus();
+                        }
+                    }
+                    String message = verified
+                            ? "Mobile verification did not return a recovery token"
+                            : translate("Incorrect OTP. Please try again.");
+                    Toast.makeText(this, message, Toast.LENGTH_LONG).show();
                 });
             } catch (Exception error) {
                 runOnUiThread(() -> {
@@ -3031,6 +3210,47 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                 });
             }
         });
+    }
+
+    private void finishSmsVerifiedPinRecovery(
+            String username,
+            String mobile,
+            String pin,
+            Dialog parentDialog,
+            Dialog otpDialog,
+            String verificationToken
+    ) {
+        try {
+            JSONObject payload = new JSONObject();
+            payload.put("username", username);
+            payload.put("mobile", phoneVerificationMobile);
+            payload.put("pin", pin);
+            JSONObject response = postJson(
+                    "/api/auth/recover-pin",
+                    payload.toString(),
+                    verificationToken
+            );
+            boolean recovered = response != null && response.optBoolean("success", false);
+            String detail = response == null
+                    ? "Could not reset this account PIN; please retry"
+                    : response.optString("detail", "Could not reset this account PIN; please retry");
+            runOnUiThread(() -> {
+                if (recovered) {
+                    if (otpDialog != null && otpDialog.isShowing()) {
+                        otpDialog.dismiss();
+                    }
+                    saveRecoveredPinLocally(username, mobile, pin, parentDialog);
+                } else {
+                    showPinRecoveryFailure(parentDialog, otpDialog, detail);
+                }
+            });
+        } catch (Exception error) {
+            runOnUiThread(() -> showPinRecoveryFailure(
+                    parentDialog,
+                    otpDialog,
+                    "Could not reach account recovery service. Please retry."
+            ));
+        }
     }
 
     private boolean validEmail(String value) {

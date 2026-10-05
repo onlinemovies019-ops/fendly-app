@@ -15,10 +15,14 @@ import main
 from auth import (
     CompleteRegistrationRequest,
     EmailOTPRequest,
+    PhonePinRecoveryRequest,
     SendOTPRequest,
+    SmsPinRecoveryRequest,
     VerifyEmailOTPRequest,
     VerifyOTPRequest,
     complete_registration,
+    recover_pin_with_test_phone,
+    recover_pin_with_sms_otp,
 )
 from models import Base, EmailOTPChallenge, SmsOTPChallenge, SmsOTPRateLimit, User, UsernameReservation
 from schemas import ProfileUpdate, UsernameRequest
@@ -578,6 +582,175 @@ def test_complete_registration_requires_matching_firebase_email_for_completed_pr
 
     assert exc.value.status_code == 409
     assert "sign in with your existing username and PIN" in exc.value.detail
+
+
+def test_test_phone_recovery_updates_only_matching_verified_account(
+    monkeypatch, profile_session
+):
+    uid = "recovery-account-uid"
+    profile_session.add(
+        User(
+            firebase_uid=uid,
+            username="active_person",
+            mobile="+91 8657111989",
+            mobile_verified=True,
+        )
+    )
+    profile_session.commit()
+    app = object()
+    updates = []
+    monkeypatch.setattr(auth, "_firebase_app", lambda: app)
+    monkeypatch.setattr(
+        auth.firebase_auth,
+        "verify_id_token",
+        lambda token, app, check_revoked: {
+            "uid": "phone-test-uid",
+            "phone_number": "+918657111989",
+            "auth_time": int(auth.time.time()),
+        },
+    )
+    monkeypatch.setattr(
+        auth.firebase_auth,
+        "get_user",
+        lambda target_uid, app: SimpleNamespace(
+            email="active_person@login.fendly.app"
+        ),
+    )
+    monkeypatch.setattr(
+        auth.firebase_auth,
+        "update_user",
+        lambda *args, **kwargs: updates.append((args, kwargs)),
+    )
+
+    result = recover_pin_with_test_phone(
+        PhonePinRecoveryRequest(
+            username="Active_Person",
+            mobile="8657111989",
+            pin="1234",
+        ),
+        credentials=SimpleNamespace(credentials="verified-phone-token"),
+        session=profile_session,
+    )
+
+    assert result == {"success": True}
+    assert updates == [
+        (
+            (uid,),
+            {
+                "password": "Fendly!active_person#1234",
+                "app": app,
+            },
+        )
+    ]
+
+
+def test_test_phone_recovery_rejects_phone_token_for_another_number(
+    monkeypatch, profile_session
+):
+    profile_session.add(
+        User(
+            firebase_uid="recovery-account-uid",
+            username="active_person",
+            mobile="8657111989",
+            mobile_verified=True,
+        )
+    )
+    profile_session.commit()
+    updates = []
+    monkeypatch.setattr(auth, "_firebase_app", lambda: object())
+    monkeypatch.setattr(
+        auth.firebase_auth,
+        "verify_id_token",
+        lambda token, app, check_revoked: {
+            "uid": "other-phone-uid",
+            "phone_number": "+919876543210",
+        },
+    )
+    monkeypatch.setattr(
+        auth.firebase_auth,
+        "update_user",
+        lambda *args, **kwargs: updates.append((args, kwargs)),
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        recover_pin_with_test_phone(
+            PhonePinRecoveryRequest(
+                username="active_person",
+                mobile="8657111989",
+                pin="1234",
+            ),
+            credentials=SimpleNamespace(credentials="other-phone-token"),
+            session=profile_session,
+        )
+
+    assert exc.value.status_code == 403
+    assert updates == []
+
+
+def test_sms_phone_recovery_updates_firebase_credentials_after_verified_otp(
+    monkeypatch, profile_session
+):
+    uid = "sms-recovery-account-uid"
+    profile_session.add(
+        User(
+            firebase_uid=uid,
+            username="active_person",
+            mobile="8657111989",
+            mobile_verified=True,
+        )
+    )
+    profile_session.commit()
+    app = object()
+    updates = []
+    secret = "test-app-secret-0123456789abcdef"
+    monkeypatch.setenv("APP_SECRET_KEY", secret)
+    monkeypatch.setattr(auth, "_firebase_app", lambda: app)
+    monkeypatch.setattr(
+        auth.firebase_auth,
+        "get_user",
+        lambda target_uid, app: SimpleNamespace(
+            email="active_person@login.fendly.app"
+        ),
+    )
+    monkeypatch.setattr(
+        auth.firebase_auth,
+        "update_user",
+        lambda *args, **kwargs: updates.append((args, kwargs)),
+    )
+    verification_token = jwt.encode(
+        {
+            "sub": "8657111989",
+            "scope": "mobile_verification",
+            "iss": "fendly-api",
+            "aud": "fendly-mobile-verification",
+            "iat": int(auth.time.time()),
+            "exp": int(auth.time.time()) + 600,
+            "jti": "verified-otp-token",
+        },
+        secret,
+        algorithm="HS256",
+    )
+
+    result = recover_pin_with_sms_otp(
+        SmsPinRecoveryRequest(
+            username="Active_Person",
+            mobile="8657111989",
+            pin="5678",
+        ),
+        credentials=SimpleNamespace(credentials=verification_token),
+        session=profile_session,
+    )
+
+    assert result == {"success": True}
+    assert updates == [
+        (
+            (uid,),
+            {
+                "password": "Fendly!active_person#5678",
+                "app": app,
+            },
+        )
+    ]
 
 
 @pytest.mark.asyncio
