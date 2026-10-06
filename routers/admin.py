@@ -284,11 +284,18 @@ async def list_match_alerts(
     session: Session = Depends(get_db),
     _: str = Depends(require_admin),
 ) -> list[dict[str, object]]:
-    response = _supabase_admin_alert_request(
-        "GET",
-        "admin_match_alerts",
-        params={"select": "*", "order": "created_at.desc", "limit": "50"},
-    )
+    try:
+        response = _supabase_admin_alert_request(
+            "GET",
+            "admin_match_alerts",
+            params={"select": "*", "order": "created_at.desc", "limit": "50"},
+        )
+    except HTTPException as error:
+        logger.warning(
+            "Supabase admin alerts request failed with status %s; falling back to the application database",
+            error.status_code,
+        )
+        response = None
     if response is not None:
         raw_alerts = response.json()
         if isinstance(raw_alerts, list):

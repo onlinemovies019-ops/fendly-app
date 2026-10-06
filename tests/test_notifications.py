@@ -92,3 +92,30 @@ async def test_admin_alert_list_does_not_include_user_inbox(notification_session
 
     assert len(result) == 1
     assert result[0]["id"] == "admin-alert-1"
+
+
+@pytest.mark.asyncio
+async def test_admin_alert_list_falls_back_to_database_when_supabase_is_unavailable(
+    notification_session, monkeypatch, caplog
+):
+    alert = AdminMatchAlert(
+        id="admin-alert-1",
+        found_item_id="found-1",
+        lost_item_id="lost-1",
+        found_title="Found wallet",
+        lost_title="Lost wallet",
+        confidence=0.91,
+        reason="Possible match",
+    )
+    notification_session.add(alert)
+    notification_session.commit()
+
+    def fail_supabase(*args, **kwargs):
+        raise admin_module.HTTPException(503, "Supabase unavailable")
+
+    monkeypatch.setattr(admin_module, "_supabase_admin_alert_request", fail_supabase)
+
+    result = await admin_module.list_match_alerts(session=notification_session, _="admin-uid")
+
+    assert [item["id"] for item in result] == ["admin-alert-1"]
+    assert "falling back to the application database" in caplog.text
