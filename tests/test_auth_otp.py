@@ -1069,8 +1069,13 @@ async def test_email_otp_is_bound_to_uid_and_verified_before_success(monkeypatch
     monkeypatch.setattr(auth, "RESEND_API_KEY", "test-key")
     monkeypatch.setenv("APP_SECRET_KEY", "test-app-secret-0123456789abcdef")
     monkeypatch.setattr(auth.httpx, "AsyncClient", lambda: fake_client)
-    monkeypatch.setattr(auth, "_firebase_app", lambda: object())
-    monkeypatch.setattr(auth.firebase_auth, "update_user", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        auth.firebase_auth,
+        "update_user",
+        lambda *args, **kwargs: pytest.fail(
+            "Profile email verification must not change the Firebase sign-in email"
+        ),
+    )
     result = await auth.send_email_otp(
         EmailOTPRequest(email="User@example.com"),
         session=profile_session,
@@ -1116,7 +1121,7 @@ async def test_email_otp_is_bound_to_uid_and_verified_before_success(monkeypatch
     assert profile_session.get(EmailOTPChallenge, "firebase-user") is None
 
 
-def test_email_otp_conflict_explains_safe_resolution_and_preserves_challenge(
+def test_email_otp_allows_email_used_by_another_firebase_account(
     monkeypatch, profile_session
 ):
     monkeypatch.setenv("APP_SECRET_KEY", "test-app-secret-0123456789abcdef")
@@ -1134,8 +1139,6 @@ def test_email_otp_conflict_explains_safe_resolution_and_preserves_challenge(
     )
     profile_session.add(challenge)
     profile_session.commit()
-    monkeypatch.setattr(auth, "_firebase_app", lambda: object())
-
     def email_in_use(*args, **kwargs):
         raise auth.firebase_auth.EmailAlreadyExistsError(
             "email already exists", None, None
@@ -1143,17 +1146,17 @@ def test_email_otp_conflict_explains_safe_resolution_and_preserves_challenge(
 
     monkeypatch.setattr(auth.firebase_auth, "update_user", email_in_use)
 
-    with pytest.raises(HTTPException) as exc:
-        auth.verify_email_otp(
-            VerifyEmailOTPRequest(email=email, otp="123456"),
-            session=profile_session,
-            uid=uid,
-        )
+    verified = auth.verify_email_otp(
+        VerifyEmailOTPRequest(email=email, otp="123456"),
+        session=profile_session,
+        uid=uid,
+    )
 
-    assert exc.value.status_code == 409
-    assert "sign in to the account currently using it" in exc.value.detail
-    assert "Do not delete the account" in exc.value.detail
-    assert profile_session.get(EmailOTPChallenge, uid) is not None
+    saved_user = profile_session.query(User).filter_by(firebase_uid=uid).one()
+    assert verified["success"] is True
+    assert saved_user.email == email
+    assert saved_user.email_verified is True
+    assert profile_session.get(EmailOTPChallenge, uid) is None
 
 
 def test_email_otp_rejects_invalid_code_and_expires(monkeypatch):

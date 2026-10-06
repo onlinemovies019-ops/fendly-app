@@ -1156,27 +1156,6 @@ def verify_email_otp(
             detail="Email verification is temporarily unavailable",
         ) from exc
 
-    try:
-        app = _firebase_app()
-        firebase_auth.update_user(uid, email=email, email_verified=True, app=app)
-    except firebase_auth.EmailAlreadyExistsError as exc:
-        session.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=(
-                "This email address is linked to a different Fendly account. "
-                "To use it here, sign in to the account currently using it and change "
-                "that account's email first, then retry. Do not delete the account just "
-                "to free the email, since that may remove access to its Fendly data."
-            ),
-        ) from exc
-    except firebase_admin.exceptions.FirebaseError as exc:
-        session.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Authentication service is temporarily unavailable",
-        ) from exc
-
     user = session.scalar(select(User).where(User.firebase_uid == uid))
     if user is None:
         user = User(firebase_uid=uid)
