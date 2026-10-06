@@ -1445,7 +1445,11 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                     .addOnFailureListener(error -> {
                         login.setText(loginText("login"));
                         login.setEnabled(true);
-                        Toast.makeText(this, "Incorrect username or PIN", Toast.LENGTH_LONG).show();
+                        Toast.makeText(
+                                this,
+                                firebaseLoginFailureMessage(error),
+                                Toast.LENGTH_LONG
+                        ).show();
                     });
         });
         LinearLayout loginRow = new LinearLayout(this);
@@ -2702,6 +2706,34 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         return "Fendly!" + username.trim().toLowerCase(Locale.US) + "#" + pin;
     }
 
+    private String firebaseLoginFailureMessage(Exception error) {
+        if (!(error instanceof FirebaseAuthException)) {
+            Log.w("AUTH", "Firebase sign-in failed: " + error.getClass().getSimpleName());
+            return "Could not contact the sign-in service. Check your connection and try again.";
+        }
+
+        String code = ((FirebaseAuthException) error).getErrorCode();
+        String normalizedCode = code == null ? "" : code.toUpperCase(Locale.US);
+        Log.w("AUTH", "Firebase sign-in failed: " + normalizedCode);
+        if (normalizedCode.contains("WRONG_PASSWORD")
+                || normalizedCode.contains("USER_NOT_FOUND")
+                || normalizedCode.contains("INVALID_CREDENTIAL")
+                || normalizedCode.contains("INVALID_LOGIN_CREDENTIALS")) {
+            return "Firebase did not accept this username and PIN. Check both, or tap Forgot PIN to recover your account.";
+        }
+        if (normalizedCode.contains("NETWORK_REQUEST_FAILED")) {
+            return "Could not reach Firebase. Check your internet connection and try again.";
+        }
+        if (normalizedCode.contains("TOO_MANY_REQUESTS")) {
+            return "Too many sign-in attempts. Wait a while, then try again.";
+        }
+        if (normalizedCode.contains("USER_DISABLED")) {
+            return "This account is disabled. Contact Fendly support.";
+        }
+        return "Sign-in failed (" + (normalizedCode.isEmpty() ? "unknown error" : normalizedCode)
+                + "). Please try again.";
+    }
+
     private void showPinLogin() {
         screenRenderer = this::showPinLogin;
         LinearLayout root = screenBase(translate("Login with PIN"));
@@ -2748,7 +2780,11 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                     .addOnFailureListener(error -> {
                         login.setText(translate("Try again"));
                         login.setEnabled(true);
-                        Toast.makeText(this, translate("Incorrect username or PIN"), Toast.LENGTH_LONG).show();
+                        Toast.makeText(
+                                this,
+                                firebaseLoginFailureMessage(error),
+                                Toast.LENGTH_LONG
+                        ).show();
                     });
         });
         addField(root, login);
@@ -2836,8 +2872,11 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                                 .addOnSuccessListener(authResult -> {
                                     handleSuccessfulLogin(username, pin, MainActivity.this::showHome);
                                 })
-                                .addOnFailureListener(error -> Toast.makeText(MainActivity.this,
-                                        translate("Could not sign in with fingerprint"), Toast.LENGTH_LONG).show());
+                                .addOnFailureListener(error -> Toast.makeText(
+                                        MainActivity.this,
+                                        firebaseLoginFailureMessage(error),
+                                        Toast.LENGTH_LONG
+                                ).show());
                     }
 
                     @Override
