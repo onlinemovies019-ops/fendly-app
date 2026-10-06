@@ -84,12 +84,35 @@ function activate(context) {
     const output = vscode.window.createOutputChannel("Fendly Device Runner");
     context.subscriptions.push(output);
     let automaticReconnectRunning = false;
+    let automaticReconnectFinished = false;
+    let startupWarningShown = false;
+    let startupReconnect;
+    let disposed = false;
+    const scheduleAutomaticReconnect = (delay = 5000) => {
+        startupReconnect = setTimeout(async () => {
+            if (disposed || automaticReconnectFinished) return;
+            if (automaticReconnectRunning) {
+                scheduleAutomaticReconnect(10000);
+                return;
+            }
+            automaticReconnectRunning = true;
+            try {
+                await vscode.commands.executeCommand("fendly.reconnectWifiAdb", true);
+            } finally {
+                if (!disposed && !automaticReconnectFinished) {
+                    scheduleAutomaticReconnect(30000);
+                }
+            }
+        }, delay);
+    };
     context.subscriptions.push(
         vscode.commands.registerCommand("fendly.reconnectWifiAdb", async (automatic = false) => {
             const adb = resolveAdb();
             if (!adb) {
                 if (!automatic) {
                     vscode.window.showErrorMessage("Android Debug Bridge (adb) was not found.");
+                } else {
+                    automaticReconnectRunning = false;
                 }
                 return;
             }
@@ -126,7 +149,10 @@ function activate(context) {
                 );
                 if (connectedWifi) {
                     await context.globalState.update("fendly.wifiAdbEndpoint", connectedWifi.serial);
-                    vscode.window.showInformationMessage(`Redmi is connected over Wi-Fi at ${connectedWifi.serial}.`);
+                    automaticReconnectFinished = true;
+                    if (!automatic) {
+                        vscode.window.showInformationMessage(`Redmi is connected over Wi-Fi at ${connectedWifi.serial}.`);
+                    }
                     return;
                 }
 
@@ -168,6 +194,12 @@ function activate(context) {
                     const message = "After a Redmi reboot, Android 10 disables Wi-Fi ADB. Connect it to this Mac with USB once, unlock it, and ensure both devices are on the same Wi-Fi.";
                     if (automatic) {
                         output.appendLine(message);
+                        if (!startupWarningShown) {
+                            startupWarningShown = true;
+                            vscode.window.showWarningMessage(
+                                "Redmi Wi-Fi ADB is off. Connect it to this Mac by USB once; Fendly will keep retrying automatically."
+                            );
+                        }
                         return;
                     }
                     throw new Error(message);
@@ -195,6 +227,7 @@ function activate(context) {
                 }
 
                 await context.globalState.update("fendly.wifiAdbEndpoint", endpoint);
+                automaticReconnectFinished = true;
                 if (!automatic) {
                     vscode.window.showInformationMessage(`Redmi connected over Wi-Fi at ${endpoint}. You can unplug USB now.`);
                 } else {
@@ -296,13 +329,13 @@ function activate(context) {
             );
         }),
     );
-    const startupReconnect = setTimeout(() => {
-        if (!automaticReconnectRunning) {
-            automaticReconnectRunning = true;
-            vscode.commands.executeCommand("fendly.reconnectWifiAdb", true);
-        }
-    }, 5000);
-    context.subscriptions.push({ dispose: () => clearTimeout(startupReconnect) });
+    scheduleAutomaticReconnect();
+    context.subscriptions.push({
+        dispose: () => {
+            disposed = true;
+            clearTimeout(startupReconnect);
+        },
+    });
 }
 
 function deactivate() {}

@@ -5,11 +5,13 @@ This is an Android limitation: if both the phone and Mac were switched off, the
 phone must be connected to the Mac by USB once after startup to enable Wi-Fi
 ADB again.
 
-When VS Code starts, the extension now automatically checks for the Redmi and
-tries to reconnect to the remembered Wi-Fi ADB address. If USB is attached, it
-waits for the phone and Wi-Fi to come up, enables ADB on port 5555, and connects
-over Wi-Fi. Keep the USB cable connected through startup if you want this to
-happen automatically after both devices have been powered off.
+When VS Code starts, the extension automatically checks for the Redmi and
+tries to reconnect to the remembered Wi-Fi ADB address. It keeps retrying while
+VS Code stays open. If USB is attached, it waits for the phone and Wi-Fi to
+come up, enables ADB on port 5555, and connects over Wi-Fi. This also handles
+connecting USB after VS Code has started. Keep the USB cable connected through
+startup if you want reconnection to happen without any further action after
+both devices have been powered off.
 
 ## Reconnect after a reboot
 
