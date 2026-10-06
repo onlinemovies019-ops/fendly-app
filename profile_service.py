@@ -7,6 +7,11 @@ from models import User
 from schemas import ProfileUpdate
 
 
+def _normalized_mobile(value: str | None) -> str:
+    digits = re.sub(r"\D", "", value or "")
+    return digits[2:] if len(digits) == 12 and digits.startswith("91") else digits
+
+
 def update_profile_record(session: Session, payload: ProfileUpdate, uid: str) -> None:
     user = session.scalar(select(User).where(User.firebase_uid == uid))
     if user is None:
@@ -23,6 +28,8 @@ def update_profile_record(session: Session, payload: ProfileUpdate, uid: str) ->
             user.email = email
             user.email_verified = False
     if payload.mobile and payload.mobile.strip():
+        if _normalized_mobile(user.mobile) != _normalized_mobile(payload.mobile):
+            user.mobile_verified = False
         user.mobile = payload.mobile.strip()
     if payload.state and payload.state.strip():
         user.state = payload.state.strip()

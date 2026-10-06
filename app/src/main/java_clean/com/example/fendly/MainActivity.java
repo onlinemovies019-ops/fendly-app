@@ -2339,13 +2339,29 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                 payload.put("otp", otpValue);
                 JSONObject response = postJson("/api/auth/verify-otp", payload.toString(), null);
                 boolean verified = response != null && (response.optBoolean("success", false) || "success".equalsIgnoreCase(response.optString("status", "")));
+                String verificationToken = response == null ? "" : response.optString("verification_token", "");
                 runOnUiThread(() -> {
                     if (verified) {
-                        if (dialog != null && dialog.isShowing()) {
-                            dialog.dismiss();
-                        }
-                        getSharedPreferences("fendly_account", MODE_PRIVATE).edit().putBoolean("mobile_verified", true).apply();
-                        finishProfileSetup(username, pin, save);
+                        confirmVerifiedMobileOnBackend(mobile, verificationToken, confirmed -> {
+                            if (!confirmed) {
+                                phoneVerificationHandled = false;
+                                save.setText(translate("Could not save mobile verification"));
+                                save.setEnabled(true);
+                                Toast.makeText(this, translate("Could not save mobile verification. Please request a new code and try again."), Toast.LENGTH_LONG).show();
+                                return;
+                            }
+                            if (dialog != null && dialog.isShowing()) {
+                                dialog.dismiss();
+                            }
+                            SharedPreferences account = getSharedPreferences("fendly_account", MODE_PRIVATE);
+                            account.edit()
+                                    .putString("mobile", mobile)
+                                    .putString("verified_mobile", mobile)
+                                    .putBoolean("mobile_verified", true)
+                                    .apply();
+                            saveVerifiedMobileToCloud(mobile);
+                            finishProfileSetup(username, pin, save);
+                        });
                     } else {
                         phoneVerificationHandled = false;
                         if (verifyInDialog != null) {
@@ -5941,6 +5957,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                                          Dialog dialog, TextView verifyInDialog, EditText[] codeCells) {
         network.execute(() -> {
             boolean verified = false;
+            String verificationToken = "";
             try {
                 JSONObject payload = new JSONObject();
                 payload.put("mobile", normalizeIndianMobileDigits(mobileValue));
@@ -5948,51 +5965,97 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                 JSONObject response = postJson("/api/auth/verify-otp", payload.toString(), null);
                 if (response != null) {
                     verified = response.optBoolean("success", false) || "success".equalsIgnoreCase(response.optString("status", ""));
+                    verificationToken = response.optString("verification_token", "");
                 }
-            } catch (Exception ignored) {
+            } catch (Exception error) {
+                Log.e("MOBILE_VERIFICATION", "OTP verification request failed", error);
             }
 
             final boolean finalVerified = verified;
+            final String finalVerificationToken = verificationToken;
             runOnUiThread(() -> {
                 if (finalVerified) {
-                    if (dialog != null && dialog.isShowing()) {
-                        dialog.dismiss();
-                    }
-                    getSharedPreferences("fendly_account", MODE_PRIVATE).edit()
-                            .putString("mobile", mobileValue)
-                            .putBoolean("mobile_verified", true)
-                            .apply();
-                    saveVerifiedMobileToCloud(mobileValue);
-                    lockVerifiedMobileField(mobileTarget, verifyButton);
-                    if (mobileTarget instanceof EditText) {
-                        ((EditText) mobileTarget).setText(mobileValue);
-                    } else if (mobileTarget instanceof EditText[]) {
-                        setMobileCells((EditText[]) mobileTarget, mobileValue);
-                    }
-                    Toast.makeText(this, "Mobile verified", Toast.LENGTH_SHORT).show();
+                    confirmVerifiedMobileOnBackend(mobileValue, finalVerificationToken, confirmed -> {
+                        if (confirmed) {
+                            if (dialog != null && dialog.isShowing()) {
+                                dialog.dismiss();
+                            }
+                            getSharedPreferences("fendly_account", MODE_PRIVATE).edit()
+                                    .putString("mobile", mobileValue)
+                                    .putString("verified_mobile", mobileValue)
+                                    .putBoolean("mobile_verified", true)
+                                    .apply();
+                            saveVerifiedMobileToCloud(mobileValue);
+                            lockVerifiedMobileField(mobileTarget, verifyButton);
+                            if (mobileTarget instanceof EditText) {
+                                ((EditText) mobileTarget).setText(mobileValue);
+                            } else if (mobileTarget instanceof EditText[]) {
+                                setMobileCells((EditText[]) mobileTarget, mobileValue);
+                            }
+                            Toast.makeText(this, "Mobile verified", Toast.LENGTH_SHORT).show();
+                        } else {
+                            resetMobileVerificationControls(verifyButton, verifyInDialog, codeCells);
+                            Toast.makeText(this, "Could not save mobile verification. Please request a new code and try again.", Toast.LENGTH_LONG).show();
+                        }
+                    });
                 } else {
-                    if (verifyInDialog != null) {
-                        verifyInDialog.setText(translate("Verify"));
-                        verifyInDialog.setEnabled(true);
-                    }
-                    if (codeCells != null) {
-                        for (EditText cell : codeCells) {
-                            if (cell != null) cell.setText("");
-                        }
-                        if (codeCells.length > 0 && codeCells[0] != null) {
-                            codeCells[0].requestFocus();
-                        }
-                    }
-                    verifyButton.setText(translate("Enter OTP"));
-                    verifyButton.setEnabled(true);
-                    verifyButton.setClickable(true);
-                    verifyButton.setFocusable(true);
-                    verifyButton.setBackground(round(GOLD, 24));
-                    verifyButton.setTextColor(GOLD_ON);
+                    resetMobileVerificationControls(verifyButton, verifyInDialog, codeCells);
                     Toast.makeText(this, "Could not verify mobile. Check the code and try again.", Toast.LENGTH_LONG).show();
                 }
             });
         });
+    }
+
+    private interface MobileVerificationCallback {
+        void onComplete(boolean confirmed);
+    }
+
+    private void confirmVerifiedMobileOnBackend(String mobileValue, String verificationToken,
+                                                MobileVerificationCallback callback) {
+        FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
+        if (user == null || verificationToken == null || verificationToken.trim().isEmpty()) {
+            callback.onComplete(false);
+            return;
+        }
+        user.getIdToken(false).addOnSuccessListener(idToken -> network.execute(() -> {
+            boolean confirmed = false;
+            try {
+                JSONObject payload = new JSONObject();
+                payload.put("mobile", normalizeIndianMobileDigits(mobileValue));
+                payload.put("verification_token", verificationToken);
+                JSONObject response = postJson("/api/auth/confirm-mobile", payload.toString(), idToken.getToken());
+                confirmed = response != null && response.optBoolean("success", false);
+            } catch (Exception error) {
+                Log.e("MOBILE_VERIFICATION", "Could not persist verified mobile", error);
+            }
+            boolean finalConfirmed = confirmed;
+            runOnUiThread(() -> callback.onComplete(finalConfirmed));
+        })).addOnFailureListener(error -> {
+            Log.e("MOBILE_VERIFICATION", "Could not get Firebase token to persist mobile verification", error);
+            callback.onComplete(false);
+        });
+    }
+
+    private void resetMobileVerificationControls(TextView verifyButton, TextView verifyInDialog,
+                                                 EditText[] codeCells) {
+        if (verifyInDialog != null) {
+            verifyInDialog.setText(translate("Verify"));
+            verifyInDialog.setEnabled(true);
+        }
+        if (codeCells != null) {
+            for (EditText cell : codeCells) {
+                if (cell != null) cell.setText("");
+            }
+            if (codeCells.length > 0 && codeCells[0] != null) {
+                codeCells[0].requestFocus();
+            }
+        }
+        verifyButton.setText(translate("Enter OTP"));
+        verifyButton.setEnabled(true);
+        verifyButton.setClickable(true);
+        verifyButton.setFocusable(true);
+        verifyButton.setBackground(round(GOLD, 24));
+        verifyButton.setTextColor(GOLD_ON);
     }
 
 
@@ -6034,6 +6097,8 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         Map<String, Object> update = new LinkedHashMap<>();
         update.put("uid", user.getUid());
         update.put("mobile", mobileValue);
+        update.put("mobileVerified", true);
+        update.put("mobile_verified", true);
         FirebaseFirestore.getInstance().collection("users").document(getProfileDocumentKey())
                 .set(update, SetOptions.merge())
                 .addOnFailureListener(error -> Log.e("FIREBASE_ERROR", "Mobile verification cloud save failed: ", error));
@@ -7643,6 +7708,11 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         profile.put("profile_surname", sn);
         profile.put("email", email);
         profile.put("mobile", mobile);
+        boolean mobileVerified = account.getBoolean("mobile_verified", false)
+                && normalizeIndianMobileDigits(account.getString("verified_mobile", ""))
+                .equals(normalizeIndianMobileDigits(mobile));
+        profile.put("mobileVerified", mobileVerified);
+        profile.put("mobile_verified", mobileVerified);
         profile.put("state", state);
         profile.put("city", city);
         String savedPhotoUrl = imageUrl == null ? "" : imageUrl.trim();

@@ -199,6 +199,12 @@ class VerifyOTPRequest(BaseModel):
     mobile: str = Field(pattern=r"^[6-9][0-9]{9}$")
     otp: str = Field(min_length=6, max_length=6, pattern=r"^[0-9]{6}$")
 
+
+class ConfirmMobileVerificationRequest(BaseModel):
+    mobile: str = Field(pattern=r"^[6-9][0-9]{9}$")
+    verification_token: str = Field(min_length=20, max_length=4096)
+
+
 class EmailOTPRequest(BaseModel):
     email: EmailStr
 
@@ -427,6 +433,53 @@ async def verify_otp(
         "token_type": "Bearer",
         "expires_in": token_expiration - now,
     }
+
+
+@router.post("/confirm-mobile")
+def confirm_mobile_verification(
+    payload: ConfirmMobileVerificationRequest,
+    session: Session = Depends(get_db),
+    uid: str = Depends(get_current_user),
+) -> dict[str, bool]:
+    try:
+        claims = jwt.decode(
+            payload.verification_token,
+            os.getenv("APP_SECRET_KEY", ""),
+            algorithms=["HS256"],
+            audience="fendly-mobile-verification",
+            issuer="fendly-api",
+        )
+    except jwt.InvalidTokenError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Mobile verification is invalid or expired",
+        ) from exc
+
+    if (
+        claims.get("scope") != "mobile_verification"
+        or claims.get("sub") != payload.mobile
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="The verification code does not match this mobile number",
+        )
+
+    try:
+        user = session.scalar(select(User).where(User.firebase_uid == uid))
+        if user is None:
+            user = User(firebase_uid=uid, email_verified=False)
+            session.add(user)
+        user.mobile = payload.mobile
+        user.mobile_verified = True
+        session.commit()
+    except SQLAlchemyError as exc:
+        session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Could not save mobile verification; please retry",
+        ) from exc
+
+    return {"success": True}
 
 
 @router.post("/complete-registration")

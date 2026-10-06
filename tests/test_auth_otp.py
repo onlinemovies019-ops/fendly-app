@@ -13,6 +13,7 @@ import auth
 import main
 
 from auth import (
+    ConfirmMobileVerificationRequest,
     CompleteRegistrationRequest,
     EmailOTPRequest,
     PhonePinRecoveryRequest,
@@ -20,11 +21,13 @@ from auth import (
     SmsPinRecoveryRequest,
     VerifyEmailOTPRequest,
     VerifyOTPRequest,
+    confirm_mobile_verification,
     complete_registration,
     recover_pin_with_test_phone,
     recover_pin_with_sms_otp,
 )
 from models import Base, EmailOTPChallenge, SmsOTPChallenge, SmsOTPRateLimit, User, UsernameReservation
+from profile_service import update_profile_record
 from schemas import ProfileUpdate, UsernameRequest
 from routers.users import (
     check_registration_username,
@@ -102,6 +105,108 @@ async def test_sms_otp_send_and_verify_use_short_lived_hashed_challenge(monkeypa
     assert claims["scope"] == "mobile_verification"
     assert len(calls) == 1
     assert profile_session.query(SmsOTPChallenge).count() == 0
+
+
+def test_confirm_mobile_verification_persists_only_matching_signed_token(
+    monkeypatch, profile_session
+):
+    uid = "verified-mobile-uid"
+    profile_session.add(User(firebase_uid=uid))
+    profile_session.commit()
+    secret = "test-app-secret-0123456789abcdef"
+    monkeypatch.setenv("APP_SECRET_KEY", secret)
+    now = int(auth.time.time())
+    token = jwt.encode(
+        {
+            "sub": "9876543210",
+            "scope": "mobile_verification",
+            "iss": "fendly-api",
+            "aud": "fendly-mobile-verification",
+            "iat": now,
+            "exp": now + 300,
+        },
+        secret,
+        algorithm="HS256",
+    )
+
+    result = confirm_mobile_verification(
+        ConfirmMobileVerificationRequest(
+            mobile="9876543210",
+            verification_token=token,
+        ),
+        session=profile_session,
+        uid=uid,
+    )
+
+    saved_user = profile_session.query(User).filter_by(firebase_uid=uid).one()
+    assert result == {"success": True}
+    assert saved_user.mobile == "9876543210"
+    assert saved_user.mobile_verified is True
+
+
+def test_confirm_mobile_verification_rejects_token_for_another_number(
+    monkeypatch, profile_session
+):
+    uid = "verified-mobile-uid"
+    user = User(firebase_uid=uid, mobile="9876543210", mobile_verified=False)
+    profile_session.add(user)
+    profile_session.commit()
+    secret = "test-app-secret-0123456789abcdef"
+    monkeypatch.setenv("APP_SECRET_KEY", secret)
+    now = int(auth.time.time())
+    token = jwt.encode(
+        {
+            "sub": "9876543210",
+            "scope": "mobile_verification",
+            "iss": "fendly-api",
+            "aud": "fendly-mobile-verification",
+            "iat": now,
+            "exp": now + 300,
+        },
+        secret,
+        algorithm="HS256",
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        confirm_mobile_verification(
+            ConfirmMobileVerificationRequest(
+                mobile="9123456789",
+                verification_token=token,
+            ),
+            session=profile_session,
+            uid=uid,
+        )
+
+    profile_session.refresh(user)
+    assert exc.value.status_code == 403
+    assert user.mobile == "9876543210"
+    assert user.mobile_verified is False
+
+
+def test_profile_mobile_update_clears_verification_only_when_number_changes(profile_session):
+    uid = "verified-mobile-uid"
+    user = User(
+        firebase_uid=uid,
+        mobile="+91 9876543210",
+        mobile_verified=True,
+    )
+    profile_session.add(user)
+    profile_session.commit()
+
+    update_profile_record(
+        profile_session,
+        ProfileUpdate(mobile="9876543210"),
+        uid,
+    )
+    assert user.mobile_verified is True
+
+    update_profile_record(
+        profile_session,
+        ProfileUpdate(mobile="9123456789"),
+        uid,
+    )
+    assert user.mobile == "9123456789"
+    assert user.mobile_verified is False
 
 
 @pytest.mark.asyncio
