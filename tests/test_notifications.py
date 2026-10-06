@@ -3,7 +3,7 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
-from models import AdminMatchAlert, Base, DeviceToken, UserNotification
+from models import AdminMatchAlert, Base, DeviceToken, User, UserNotification
 from notifications import send_match_notifications
 from routers import admin as admin_module
 from routers import users as users_module
@@ -63,6 +63,55 @@ def test_user_inbox_and_read_state_are_scoped_to_authenticated_uid(notification_
     ).all()
     assert own.is_read is True
     assert other.is_read is False
+
+
+def test_admin_auth_allows_allowlisted_firebase_uid(notification_session, monkeypatch):
+    monkeypatch.setenv("ADMIN_FIREBASE_UIDS", "admin-uid")
+
+    assert admin_module.require_admin(uid="admin-uid", session=notification_session) == "admin-uid"
+
+
+def test_admin_auth_allows_only_profile_with_verified_configured_admin_email(
+    notification_session, monkeypatch
+):
+    monkeypatch.setenv("ADMIN_FIREBASE_UIDS", "different-admin-uid")
+    monkeypatch.setenv("ADMIN_EMAIL", "Info.Fendly@gmail.com")
+    notification_session.add_all([
+        User(
+            firebase_uid="matching-email-uid",
+            email="info.fendly@gmail.com",
+            email_verified=True,
+        ),
+        User(
+            firebase_uid="unverified-email-uid",
+            email="info.fendly@gmail.com",
+            email_verified=False,
+        ),
+        User(
+            firebase_uid="different-email-uid",
+            email="another@example.com",
+            email_verified=True,
+        ),
+    ])
+    notification_session.commit()
+
+    assert admin_module.require_admin(
+        uid="matching-email-uid", session=notification_session
+    ) == "matching-email-uid"
+    for uid in ("unverified-email-uid", "different-email-uid"):
+        with pytest.raises(admin_module.HTTPException) as error:
+            admin_module.require_admin(uid=uid, session=notification_session)
+        assert error.value.status_code == 403
+
+
+def test_admin_auth_requires_some_admin_configuration(notification_session, monkeypatch):
+    monkeypatch.delenv("ADMIN_FIREBASE_UIDS", raising=False)
+    monkeypatch.delenv("ADMIN_EMAIL", raising=False)
+
+    with pytest.raises(admin_module.HTTPException) as error:
+        admin_module.require_admin(uid="user-uid", session=notification_session)
+
+    assert error.value.status_code == 503
 
 
 @pytest.mark.asyncio

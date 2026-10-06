@@ -84,12 +84,24 @@ def _parse_admin_uids(raw_value: str | None) -> set[str]:
     return candidates
 
 
-def require_admin(uid: str = Depends(get_current_user)) -> str:
+def require_admin(
+    uid: str = Depends(get_current_user),
+    session: Session = Depends(get_db),
+) -> str:
     allowed = _parse_admin_uids(os.getenv("ADMIN_FIREBASE_UIDS"))
-    if not allowed:
+    configured_admin_email = (os.getenv("ADMIN_EMAIL") or "").strip().lower()
+    if not allowed and not configured_admin_email:
         raise HTTPException(503, "Admin access is not configured")
     if uid in allowed:
         return uid
+    if configured_admin_email:
+        user = session.scalar(select(User).where(User.firebase_uid == uid))
+        if (
+            user is not None
+            and user.email_verified
+            and (user.email or "").strip().lower() == configured_admin_email
+        ):
+            return uid
     logger.warning("Rejected request for an admin-only endpoint")
     raise HTTPException(403, "Admin access required")
 
