@@ -2905,7 +2905,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                 R.drawable.ic_field_key,
                 translate("Reset PIN?"),
                 translate(usesFirebaseTestCode
-                        ? "A temporary 4-digit PIN will be created after Firebase phone verification."
+                        ? "A temporary PIN will be created after your Firebase test code, or by SMS if Firebase billing is unavailable."
                         : "A temporary 4-digit PIN will be sent after mobile verification.")
         );
         LinearLayout actions = new LinearLayout(this);
@@ -2990,6 +2990,17 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             startFirebaseTestPhonePinRecovery(username, mobile, temporaryPin, parentDialog);
             return;
         }
+        startFast2SmsForgotPinVerification(username, mobile, temporaryPin, parentDialog);
+    }
+
+    private void startFast2SmsForgotPinVerification(
+            String username,
+            String mobile,
+            String temporaryPin,
+            Dialog parentDialog
+    ) {
+        phoneVerificationHandled = false;
+        phoneVerificationMobile = normalizeIndianMobileDigits(mobile);
         network.execute(() -> {
             try {
                 JSONObject payload = new JSONObject();
@@ -3036,12 +3047,27 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
 
                     @Override
                     public void onVerificationFailed(FirebaseException error) {
-                        parentDialog.dismiss();
-                        Toast.makeText(
-                                MainActivity.this,
-                                "Firebase phone verification failed: " + error.getMessage(),
-                                Toast.LENGTH_LONG
-                        ).show();
+                        String diagnostic = error.getMessage();
+                        if (diagnostic != null && diagnostic.contains("BILLING_NOT_ENABLED")) {
+                            Toast.makeText(
+                                    MainActivity.this,
+                                    "Firebase phone verification requires billing. Sending a Fast2SMS recovery code instead.",
+                                    Toast.LENGTH_LONG
+                            ).show();
+                            startFast2SmsForgotPinVerification(
+                                    username,
+                                    mobile,
+                                    temporaryPin,
+                                    parentDialog
+                            );
+                        } else {
+                            parentDialog.dismiss();
+                            Toast.makeText(
+                                    MainActivity.this,
+                                    "Firebase phone verification failed: " + error.getMessage(),
+                                    Toast.LENGTH_LONG
+                            ).show();
+                        }
                     }
 
                     @Override
