@@ -43,8 +43,19 @@ function isRedmiDevice(device) {
     return /(?:product:violet|model:Redmi_Note_7_Pro)/.test(device.details);
 }
 
+function adbTransportId(device) {
+    const match = device.details.match(/\btransport_id:(\d+)/);
+    return match ? match[1] : null;
+}
+
 function wait(milliseconds) {
     return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
+async function refreshScrcpyMirror() {
+    await vscode.commands.executeCommand("vscode-scrcpy.stopMirror");
+    await wait(700);
+    await vscode.commands.executeCommand("vscode-scrcpy.startMirror");
 }
 
 function resolveAdb() {
@@ -84,8 +95,8 @@ function activate(context) {
     const output = vscode.window.createOutputChannel("Fendly Device Runner");
     context.subscriptions.push(output);
     let automaticReconnectRunning = false;
-    let automaticReconnectFinished = false;
     let startupWarningShown = false;
+    let observedWifiTransportId = context.globalState.get("fendly.wifiAdbTransportId");
     let startupReconnect;
     let disposed = false;
     context.subscriptions.push(
@@ -110,9 +121,7 @@ function activate(context) {
                     throw new Error("Redmi is not connected to ADB. Use Reconnect Fendly over Wi-Fi first.");
                 }
 
-                await vscode.commands.executeCommand("vscode-scrcpy.stopMirror");
-                await wait(700);
-                await vscode.commands.executeCommand("vscode-scrcpy.startMirror");
+                await refreshScrcpyMirror();
                 vscode.window.showInformationMessage(
                     "Scrcpy mirror restarted. Select the Redmi's current Wi-Fi connection if prompted."
                 );
@@ -123,7 +132,7 @@ function activate(context) {
     );
     const scheduleAutomaticReconnect = (delay = 5000) => {
         startupReconnect = setTimeout(async () => {
-            if (disposed || automaticReconnectFinished) return;
+            if (disposed) return;
             if (automaticReconnectRunning) {
                 scheduleAutomaticReconnect(10000);
                 return;
@@ -132,9 +141,7 @@ function activate(context) {
             try {
                 await vscode.commands.executeCommand("fendly.reconnectWifiAdb", true);
             } finally {
-                if (!disposed && !automaticReconnectFinished) {
-                    scheduleAutomaticReconnect(30000);
-                }
+                if (!disposed) scheduleAutomaticReconnect(15000);
             }
         }, delay);
     };
@@ -153,8 +160,10 @@ function activate(context) {
             const root = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || process.cwd();
             const env = { ...process.env, PATH: `${path.dirname(adb)}:${process.env.PATH || ""}` };
             const savedEndpoint = context.globalState.get("fendly.wifiAdbEndpoint");
-            output.clear();
-            output.show(true);
+            if (!automatic) {
+                output.clear();
+                output.show(true);
+            }
             output.appendLine(automatic
                 ? "Automatically reconnecting Redmi over Wi-Fi..."
                 : "Checking Fendly device Wi-Fi connection...");
@@ -163,18 +172,6 @@ function activate(context) {
                 const checkDevices = async () =>
                     adbDevices(await run(adb, ["devices", "-l"], root, env, output));
                 let devices = await checkDevices();
-                if (automatic) {
-                    for (let attempt = 0; attempt < 12; attempt += 1) {
-                        const hasRedmi = devices.some(isRedmiDevice);
-                        const hasSavedWifiDevice = savedEndpoint && devices.some((device) =>
-                            device.serial === savedEndpoint && device.state === "device"
-                        );
-                        if (hasRedmi || hasSavedWifiDevice) break;
-                        output.appendLine("Waiting for Redmi ADB to become available...");
-                        await wait(5000);
-                        devices = await checkDevices();
-                    }
-                }
                 const connectedWifi = devices.find((device) =>
                     device.state === "device"
                     && device.serial.includes(":")
@@ -182,7 +179,23 @@ function activate(context) {
                 );
                 if (connectedWifi) {
                     await context.globalState.update("fendly.wifiAdbEndpoint", connectedWifi.serial);
-                    automaticReconnectFinished = true;
+                    const currentTransportId = adbTransportId(connectedWifi);
+                    const transportChanged = observedWifiTransportId !== currentTransportId;
+                    observedWifiTransportId = currentTransportId;
+                    if (currentTransportId) {
+                        await context.globalState.update(
+                            "fendly.wifiAdbTransportId",
+                            currentTransportId
+                        );
+                    }
+                    if (automatic && transportChanged) {
+                        try {
+                            await refreshScrcpyMirror();
+                            output.appendLine("Refreshed VS Scrcpy for the current ADB transport.");
+                        } catch (error) {
+                            output.appendLine(`Redmi is online; reopen the mirror if needed: ${error.message}`);
+                        }
+                    }
                     if (!automatic) {
                         vscode.window.showInformationMessage(`Redmi is connected over Wi-Fi at ${connectedWifi.serial}.`);
                     }
@@ -199,7 +212,7 @@ function activate(context) {
                 if (usbDevice) {
                     output.appendLine(`Preparing Wi-Fi ADB from USB device ${usbDevice.serial}...`);
                     let ipMatch = null;
-                    const attempts = automatic ? 12 : 1;
+                    const attempts = automatic ? 1 : 12;
                     for (let attempt = 0; attempt < attempts; attempt += 1) {
                         const ipOutput = await run(
                             adb,
@@ -240,7 +253,7 @@ function activate(context) {
 
                 output.appendLine(`Connecting to ${endpoint}...`);
                 let connected = false;
-                const attempts = automatic ? 12 : 1;
+                const attempts = automatic ? 1 : 12;
                 for (let attempt = 0; attempt < attempts; attempt += 1) {
                     await run(adb, ["connect", endpoint], root, env, output);
                     devices = await checkDevices();
@@ -260,11 +273,27 @@ function activate(context) {
                 }
 
                 await context.globalState.update("fendly.wifiAdbEndpoint", endpoint);
-                automaticReconnectFinished = true;
+                const connectedRedmi = devices.find((device) =>
+                    device.serial === endpoint && device.state === "device"
+                );
+                const currentTransportId = connectedRedmi && adbTransportId(connectedRedmi);
+                if (currentTransportId) {
+                    observedWifiTransportId = currentTransportId;
+                    await context.globalState.update(
+                        "fendly.wifiAdbTransportId",
+                        currentTransportId
+                    );
+                }
                 if (!automatic) {
                     vscode.window.showInformationMessage(`Redmi connected over Wi-Fi at ${endpoint}. You can unplug USB now.`);
                 } else {
                     output.appendLine(`Redmi automatically connected over Wi-Fi at ${endpoint}.`);
+                    try {
+                        await refreshScrcpyMirror();
+                        output.appendLine("Refreshed VS Scrcpy after ADB reconnected.");
+                    } catch (error) {
+                        output.appendLine(`ADB reconnected; reopen the Scrcpy mirror if needed: ${error.message}`);
+                    }
                 }
             } catch (error) {
                 output.appendLine(String(error));

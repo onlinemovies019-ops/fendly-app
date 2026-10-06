@@ -13,6 +13,12 @@ connecting USB after VS Code has started. Keep the USB cable connected through
 startup if you want reconnection to happen without any further action after
 both devices have been powered off.
 
+Android Studio can restart the shared ADB server when it closes. The runner
+continues checking ADB every 15 seconds and reconnects to the remembered Wi-Fi
+endpoint if the server restart drops it. When it detects a changed ADB transport,
+it refreshes the VS Scrcpy mirror so its controls no longer use a stale transport
+ID.
+
 ## Reconnect after a reboot
 
 1. Connect the Redmi and Mac to the same Wi-Fi network.
