@@ -11178,18 +11178,23 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                 });
                 return;
             }
-            String response = getAuthorized("/api/admin/alerts", token.getToken());
+            AuthorizedResponse apiResponse = getAuthorizedResponse("/api/admin/alerts", token.getToken());
             runOnUiThread(() -> {
-                if (response == null) {
+                if (apiResponse.statusCode < 200 || apiResponse.statusCode >= 300) {
+                    Log.e(
+                            "ADMIN_NOTIFICATIONS",
+                            "Admin alerts request failed with HTTP " + apiResponse.statusCode
+                                    + (apiResponse.body.isEmpty() ? "" : ": " + apiResponse.body)
+                    );
                     showAdminNotificationsEmptyState(
                             "Could not load notifications",
-                            "Please check your connection and try again."
+                            adminAlertsRequestError(apiResponse)
                     );
                     if (pendingOnly) adminAlertsAutoShownThisVisit = false;
                     return;
                 }
                 try {
-                    JSONArray alerts = new JSONArray(response);
+                    JSONArray alerts = new JSONArray(apiResponse.body);
                     JSONArray visibleAlerts = new JSONArray();
                     int pendingCount = 0;
                     for (int index = 0; index < alerts.length(); index++) {
@@ -11454,6 +11459,61 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         } finally {
             if (connection != null) connection.disconnect();
         }
+    }
+
+    private static final class AuthorizedResponse {
+        final int statusCode;
+        final String body;
+
+        AuthorizedResponse(int statusCode, String body) {
+            this.statusCode = statusCode;
+            this.body = body;
+        }
+    }
+
+    private AuthorizedResponse getAuthorizedResponse(String path, String idToken) {
+        HttpURLConnection connection = null;
+        try {
+            connection = (HttpURLConnection) new URL(API_BASE + path).openConnection();
+            connection.setRequestMethod("GET");
+            connection.setConnectTimeout(15000);
+            connection.setReadTimeout(30000);
+            connection.setRequestProperty("Authorization", "Bearer " + idToken);
+            int statusCode = connection.getResponseCode();
+            InputStream stream = statusCode >= 200 && statusCode < 300
+                    ? connection.getInputStream()
+                    : connection.getErrorStream();
+            String body = stream == null ? "" : readStream(stream);
+            return new AuthorizedResponse(statusCode, body);
+        } catch (Exception error) {
+            Log.e("ADMIN_NOTIFICATIONS", "Admin alerts network request failed", error);
+            return new AuthorizedResponse(-1, "");
+        } finally {
+            if (connection != null) connection.disconnect();
+        }
+    }
+
+    private String adminAlertsRequestError(AuthorizedResponse response) {
+        if (response.statusCode < 0) {
+            return "Could not reach the Fendly server. Check your connection and try again.";
+        }
+        String detail = "";
+        try {
+            detail = new JSONObject(response.body).optString("detail", "").trim();
+        } catch (Exception ignored) {
+        }
+        if (response.statusCode == 401) {
+            return "Firebase sign-in was rejected. Sign out and sign in again.";
+        }
+        if (response.statusCode == 403) {
+            return "This Firebase account is not authorized for admin notifications. Check its UID in ADMIN_FIREBASE_UIDS.";
+        }
+        if (response.statusCode == 503) {
+            return "The admin notifications service is unavailable."
+                    + (detail.isEmpty() ? "" : " " + detail);
+        }
+        return "The server returned HTTP " + response.statusCode
+                + (detail.isEmpty() ? " while loading notifications." : ": " + detail);
     }
 
     private final class AuthLabelView extends View {
