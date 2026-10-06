@@ -1163,7 +1163,12 @@ def verify_email_otp(
         session.rollback()
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="This email address is already linked to another account",
+            detail=(
+                "This email address is linked to a different Fendly account. "
+                "To use it here, sign in to the account currently using it and change "
+                "that account's email first, then retry. Do not delete the account just "
+                "to free the email, since that may remove access to its Fendly data."
+            ),
         ) from exc
     except firebase_admin.exceptions.FirebaseError as exc:
         session.rollback()
