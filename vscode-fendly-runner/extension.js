@@ -88,6 +88,39 @@ function activate(context) {
     let startupWarningShown = false;
     let startupReconnect;
     let disposed = false;
+    context.subscriptions.push(
+        vscode.commands.registerCommand("fendly.refreshScrcpyMirror", async () => {
+            try {
+                const adb = resolveAdb();
+                if (!adb) {
+                    throw new Error("Android Debug Bridge (adb) was not found.");
+                }
+                const root = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || process.cwd();
+                const env = { ...process.env, PATH: `${path.dirname(adb)}:${process.env.PATH || ""}` };
+                const connectedDevices = adbDevices(
+                    await run(adb, ["devices", "-l"], root, env, output)
+                );
+                const wifiEndpoint = context.globalState.get("fendly.wifiAdbEndpoint");
+                const redmiConnected = connectedDevices.some((device) =>
+                    device.state === "device"
+                    && isRedmiDevice(device)
+                    && (!wifiEndpoint || device.serial === wifiEndpoint)
+                );
+                if (!redmiConnected) {
+                    throw new Error("Redmi is not connected to ADB. Use Reconnect Fendly over Wi-Fi first.");
+                }
+
+                await vscode.commands.executeCommand("vscode-scrcpy.stopMirror");
+                await wait(700);
+                await vscode.commands.executeCommand("vscode-scrcpy.startMirror");
+                vscode.window.showInformationMessage(
+                    "Scrcpy mirror restarted. Select the Redmi's current Wi-Fi connection if prompted."
+                );
+            } catch (error) {
+                vscode.window.showErrorMessage(`Could not refresh Scrcpy mirror: ${error.message}`);
+            }
+        }),
+    );
     const scheduleAutomaticReconnect = (delay = 5000) => {
         startupReconnect = setTimeout(async () => {
             if (disposed || automaticReconnectFinished) return;

@@ -29,3 +29,7 @@ USB.
 Confirm the connection in a terminal with `adb devices -l`; the Redmi should
 appear as an IP address ending in `:5555` with state `device`. Use **Build,
 Install & Run Fendly** in the same panel to launch the app.
+
+If VS Scrcpy reports `no device with transport id`, the mirror still has an old
+ADB session cached. Click **Refresh Scrcpy Mirror** in the panel; it restarts
+only the mirror, then rediscovers the currently connected Redmi transport.
