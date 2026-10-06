@@ -2,7 +2,7 @@
     "name": "fendly-device-runner",
     "displayName": "Fendly Device Runner",
     "description": "Reconnect Redmi over Wi-Fi and build, install, and launch Fendly from VS Scrcpy.",
-    "version": "0.1.3",
+    "version": "0.1.4",
     "publisher": "fendly",
     "engines": {
         "vscode": "^1.85.0"
@@ -12,7 +12,8 @@
     ],
     "activationEvents": [
         "onCommand:fendly.runOnDevice",
-        "onCommand:fendly.reconnectWifiAdb"
+        "onCommand:fendly.reconnectWifiAdb",
+        "onStartupFinished"
     ],
     "main": "./extension.js",
     "contributes": {
