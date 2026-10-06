@@ -6097,8 +6097,6 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         Map<String, Object> update = new LinkedHashMap<>();
         update.put("uid", user.getUid());
         update.put("mobile", mobileValue);
-        update.put("mobileVerified", true);
-        update.put("mobile_verified", true);
         FirebaseFirestore.getInstance().collection("users").document(getProfileDocumentKey())
                 .set(update, SetOptions.merge())
                 .addOnFailureListener(error -> Log.e("FIREBASE_ERROR", "Mobile verification cloud save failed: ", error));
@@ -7267,18 +7265,6 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                         }
                         editor.putBoolean("email_verified", emailVerifiedFinal);
 
-                        boolean cloudMobileVerified = parseBooleanValue(document.get("mobileVerified"))
-                                || parseBooleanValue(document.get("isMobileVerified"))
-                                || parseBooleanValue(document.get("mobile_verified"));
-                        String cloudMobile = document.getString("mobile");
-                        String localMobile = accountPrefs.getString("mobile", "").trim();
-                        boolean localMobileVerified = accountPrefs.getBoolean("mobile_verified", false);
-
-                        boolean mobileVerifiedFinal = localMobileVerified || cloudMobileVerified;
-                        if (!mobileVerifiedFinal && !localMobile.isEmpty() && cloudMobile != null && !cloudMobile.isEmpty() && localMobile.equals(cloudMobile)) {
-                            mobileVerifiedFinal = localMobileVerified;
-                        }
-                        editor.putBoolean("mobile_verified", mobileVerifiedFinal);
                         editor.apply();
                         if (visibleAvatar != null && cloudImageChanged) {
                             runOnUiThread(() -> bindProfilePhoto(visibleAvatar, account));
@@ -7708,11 +7694,6 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         profile.put("profile_surname", sn);
         profile.put("email", email);
         profile.put("mobile", mobile);
-        boolean mobileVerified = account.getBoolean("mobile_verified", false)
-                && normalizeIndianMobileDigits(account.getString("verified_mobile", ""))
-                .equals(normalizeIndianMobileDigits(mobile));
-        profile.put("mobileVerified", mobileVerified);
-        profile.put("mobile_verified", mobileVerified);
         profile.put("state", state);
         profile.put("city", city);
         String savedPhotoUrl = imageUrl == null ? "" : imageUrl.trim();
@@ -8228,9 +8209,6 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         boolean isVerified = parseBooleanValue(document.get("emailVerified"))
                 || parseBooleanValue(document.get("isEmailVerified"))
                 || parseBooleanValue(document.get("email_verified"));
-        boolean mobileVerified = parseBooleanValue(document.get("mobileVerified"))
-                || parseBooleanValue(document.get("isMobileVerified"))
-                || parseBooleanValue(document.get("mobile_verified"));
         String cloudEmail = document.getString("email");
         String cloudMobile = document.getString("mobile");
         String fullName = document.getString("full_name");
@@ -8245,7 +8223,6 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         String cloudState = document.getString("state");
         String cloudCity = document.getString("city");
         if (isVerified) editor.putBoolean("email_verified", true);
-        if (mobileVerified) editor.putBoolean("mobile_verified", true);
         if (cloudEmail != null && !cloudEmail.trim().isEmpty() && !cloudEmail.endsWith("@login.fendly.app")) {
             editor.putString("email", cloudEmail.trim());
         }
