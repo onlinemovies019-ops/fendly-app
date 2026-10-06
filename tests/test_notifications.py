@@ -136,7 +136,10 @@ def test_admin_auth_explains_uid_allowlist_mismatch(
         admin_module.require_admin(uid="signed-in-uid", session=notification_session)
 
     assert error.value.status_code == 403
-    assert "UID is not in ADMIN_FIREBASE_UIDS" in error.value.detail
+    assert "Firebase UID 'signed-in-uid'" in error.value.detail
+    assert "UID allowlisted=False" in error.value.detail
+    assert "profile email verified=True" in error.value.detail
+    assert "profile email matches ADMIN_EMAIL=False" in error.value.detail
 
 
 @pytest.mark.asyncio

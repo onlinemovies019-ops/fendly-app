@@ -109,9 +109,17 @@ def require_admin(
         if not user.email_verified
         else "The verified profile email does not match the configured admin email."
     )
+    admin_email_matches = bool(
+        user is not None
+        and user.email_verified
+        and (user.email or "").strip().lower() == configured_admin_email
+    )
     detail = (
-        "Admin access denied. The signed-in Firebase UID is not in ADMIN_FIREBASE_UIDS. "
-        f"{reason} Alternatively, add this account's Firebase UID to ADMIN_FIREBASE_UIDS."
+        f"Admin access denied for Firebase UID {uid!r}: UID allowlisted={uid in allowed}, "
+        f"profile exists={user is not None}, "
+        f"profile email verified={bool(user and user.email_verified)}, "
+        f"profile email matches ADMIN_EMAIL={admin_email_matches}. {reason} "
+        "Verify the admin email by OTP in this Fendly account or add this exact UID to ADMIN_FIREBASE_UIDS."
     )
     logger.warning(
         "Rejected admin request: uid_allowlisted=%s profile_exists=%s profile_email_verified=%s admin_email_configured=%s",
