@@ -102,6 +102,10 @@ def test_admin_auth_allows_only_profile_with_verified_configured_admin_email(
         with pytest.raises(admin_module.HTTPException) as error:
             admin_module.require_admin(uid=uid, session=notification_session)
         assert error.value.status_code == 403
+        if uid == "unverified-email-uid":
+            assert "verify its email by OTP" in error.value.detail
+        else:
+            assert "does not match the configured admin email" in error.value.detail
 
 
 def test_admin_auth_requires_some_admin_configuration(notification_session, monkeypatch):
@@ -112,6 +116,27 @@ def test_admin_auth_requires_some_admin_configuration(notification_session, monk
         admin_module.require_admin(uid="user-uid", session=notification_session)
 
     assert error.value.status_code == 503
+
+
+def test_admin_auth_explains_uid_allowlist_mismatch(
+    notification_session, monkeypatch
+):
+    monkeypatch.setenv("ADMIN_FIREBASE_UIDS", "configured-admin-uid")
+    monkeypatch.setenv("ADMIN_EMAIL", "info.fendly@gmail.com")
+    notification_session.add(
+        User(
+            firebase_uid="signed-in-uid",
+            email="another@example.com",
+            email_verified=True,
+        )
+    )
+    notification_session.commit()
+
+    with pytest.raises(admin_module.HTTPException) as error:
+        admin_module.require_admin(uid="signed-in-uid", session=notification_session)
+
+    assert error.value.status_code == 403
+    assert "UID is not in ADMIN_FIREBASE_UIDS" in error.value.detail
 
 
 @pytest.mark.asyncio

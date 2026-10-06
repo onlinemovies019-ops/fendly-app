@@ -94,16 +94,33 @@ def require_admin(
         raise HTTPException(503, "Admin access is not configured")
     if uid in allowed:
         return uid
+    user = session.scalar(select(User).where(User.firebase_uid == uid))
     if configured_admin_email:
-        user = session.scalar(select(User).where(User.firebase_uid == uid))
         if (
             user is not None
             and user.email_verified
             and (user.email or "").strip().lower() == configured_admin_email
         ):
             return uid
-    logger.warning("Rejected request for an admin-only endpoint")
-    raise HTTPException(403, "Admin access required")
+    reason = (
+        "The signed-in app profile is missing."
+        if user is None
+        else "The signed-in app profile must verify its email by OTP."
+        if not user.email_verified
+        else "The verified profile email does not match the configured admin email."
+    )
+    detail = (
+        "Admin access denied. The signed-in Firebase UID is not in ADMIN_FIREBASE_UIDS. "
+        f"{reason} Alternatively, add this account's Firebase UID to ADMIN_FIREBASE_UIDS."
+    )
+    logger.warning(
+        "Rejected admin request: uid_allowlisted=%s profile_exists=%s profile_email_verified=%s admin_email_configured=%s",
+        uid in allowed,
+        user is not None,
+        bool(user and user.email_verified),
+        bool(configured_admin_email),
+    )
+    raise HTTPException(403, detail)
 
 
 def _is_dummy_text(text: str | None) -> bool:

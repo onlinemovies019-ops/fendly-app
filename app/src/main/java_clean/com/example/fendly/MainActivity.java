@@ -11506,7 +11506,9 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             return "Firebase sign-in was rejected. Sign out and sign in again.";
         }
         if (response.statusCode == 403) {
-            return "This Firebase account is not authorized for admin notifications. Check its UID in ADMIN_FIREBASE_UIDS.";
+            return detail.isEmpty()
+                    ? "This account is not authorized for admin notifications. Verify the configured admin email by OTP in your Fendly profile, or check ADMIN_FIREBASE_UIDS."
+                    : detail;
         }
         if (response.statusCode == 503) {
             return "The admin notifications service is unavailable."
