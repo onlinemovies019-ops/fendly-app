@@ -2105,8 +2105,8 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             } else if (!mobileValue.matches("^\\d{10}$")) {
                 Toast.makeText(this, "Enter valid 10-digit mobile number", Toast.LENGTH_SHORT).show();
                 mobileCells[0].requestFocus();
-            } else if (!validEmail(emailValue)) {
-                email.setError("Enter a valid email like Gmail, Yahoo, Hotmail, Outlook, etc.");
+            } else if (!emailValue.isEmpty() && !validEmail(emailValue)) {
+                email.setError("Enter a valid email address or leave this field blank");
                 email.requestFocus();
             } else if (!pinValue.matches("^\\d{4}$")) {
                 Toast.makeText(this, "Create a valid 4-digit PIN", Toast.LENGTH_LONG).show();
@@ -3320,19 +3320,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
 
     private boolean validEmail(String value) {
         String email = value == null ? "" : value.trim().toLowerCase(Locale.US);
-        if (email.isEmpty() || !email.matches("^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$")) {
-            return false;
-        }
-        String[] allowedDomains = new String[]{
-                "gmail.com", "yahoo.com", "hotmail.com", "outlook.com", "live.com",
-                "icloud.com", "aol.com", "protonmail.com", "rediffmail.com", "ymail.com"
-        };
-        for (String domain : allowedDomains) {
-            if (email.endsWith("@" + domain)) {
-                return true;
-            }
-        }
-        return false;
+        return !email.isEmpty() && email.matches("^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$");
     }
 
     private Map<String, String[]> indiaStateCityMap() {
