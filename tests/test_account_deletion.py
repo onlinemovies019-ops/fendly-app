@@ -13,6 +13,7 @@ from models import (
     EmailOTPChallenge,
     FoundItem,
     LostItem,
+    SocialPublication,
     User,
     UserNotification,
     UsernameReservation,
@@ -273,6 +274,21 @@ def test_delete_account_removes_reports_and_related_data(
                 lng=4.0,
                 image_url="https://api.example.test/static/uploads/report.jpg",
             ),
+            SocialPublication(
+                id="social-lost-1",
+                report_id="lost-1",
+                report_type="lost",
+                provider="facebook",
+                status="published",
+                external_post_id="public-post-1",
+            ),
+            SocialPublication(
+                id="social-found-1",
+                report_id="found-1",
+                report_type="found",
+                provider="instagram",
+                status="pending",
+            ),
         ]
     )
     deletion_session.commit()
@@ -301,6 +317,7 @@ def test_delete_account_removes_reports_and_related_data(
     assert deletion_session.get(EmailOTPChallenge, uid) is None
     assert deletion_session.get(LostItem, "lost-1") is None
     assert deletion_session.get(FoundItem, "found-1") is None
+    assert deletion_session.query(SocialPublication).count() == 0
     assert deletion_session.query(AdminMatchAlert).count() == 0
     assert deletion_session.query(DeviceToken).filter_by(firebase_uid=uid).count() == 0
     assert deletion_session.query(UserNotification).filter_by(firebase_uid=uid).count() == 0

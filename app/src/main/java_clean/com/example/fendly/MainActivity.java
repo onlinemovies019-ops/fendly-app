@@ -61,6 +61,7 @@ import android.widget.SeekBar;
 import android.widget.TextView;
 import android.widget.Button;
 import android.widget.RadioButton;
+import android.widget.CheckBox;
 import android.widget.Space;
 import android.widget.EditText;
 import android.widget.ProgressBar;
@@ -282,6 +283,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
     private String draftReportCategory = "item";
     private int reportWizardStep = 1;
     private String draftImei = "";
+    private boolean draftSocialShareConsent;
     private String localEmailOtp = "";
     private String draftFullName = "";
     private String draftEmail = "";
@@ -310,6 +312,8 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
     private static final int PAGE_ADMIN_SUBSCRIPTIONS = 8;
     private Handler adminPressHandler = new Handler();
     private boolean adminAlertsAutoShownThisVisit;
+    private boolean adminSocialPageOpen;
+    private boolean socialAuthorizationPending;
     private int pendingNotificationCount = 0;
     private TextView pendingNotificationBadge;
     private String adminReportFilter = "";
@@ -439,6 +443,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             draftReportCategory = savedInstanceState.getString("state_draft_report_category", "item");
             reportWizardStep = savedInstanceState.getInt("state_report_wizard_step", 1);
             draftImei = savedInstanceState.getString("state_draft_imei", "");
+            draftSocialShareConsent = savedInstanceState.getBoolean("state_draft_social_share_consent", false);
             draftFullName = savedInstanceState.getString("state_draft_full_name", "");
             draftEmail = savedInstanceState.getString("state_draft_email", "");
             draftMobile = savedInstanceState.getString("state_draft_mobile", "");
@@ -960,6 +965,14 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                     .remove("draft_city")
                     .apply();
         }
+        if (socialAuthorizationPending && adminSocialPageOpen && currentPage == PAGE_ADMIN) {
+            socialAuthorizationPending = false;
+            new Handler(Looper.getMainLooper()).postDelayed(() -> {
+                if (adminSocialPageOpen && currentPage == PAGE_ADMIN) {
+                    showAdminSocialPublishingPage();
+                }
+            }, 500);
+        }
         if (currentPage == PAGE_PROFILE) {
             if (visibleFirstName != null || visibleAvatar != null || visibleEmail != null) {
                 refreshProfileViewInPlace(false);
@@ -1000,6 +1013,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         outState.putString("state_draft_report_category", draftReportCategory);
         outState.putInt("state_report_wizard_step", reportWizardStep);
         outState.putString("state_draft_imei", draftImei);
+        outState.putBoolean("state_draft_social_share_consent", draftSocialShareConsent);
         outState.putString("state_draft_full_name", draftFullName);
         outState.putString("state_draft_email", draftEmail);
         outState.putString("state_draft_mobile", draftMobile);
@@ -3688,6 +3702,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         draftReportCategory = "item";
         reportWizardStep = 1;
         draftImei = "";
+        draftSocialShareConsent = false;
         selectedImage = null;
         capturedImage = null;
         Arrays.fill(reportImages, null);
@@ -4250,6 +4265,25 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         addWizardSummaryRow(root, "Location", locationValue);
         addWizardSummaryRow(root, "Date", date.getText().toString().trim());
         addWizardSummaryRow(root, "Identifying details", submissionDescription);
+        if (editingReportId == null) {
+            CheckBox shareConsent = new CheckBox(this);
+            shareConsent.setText(localizeReportWizardText(
+                    "Allow Fendly to share this report on its Facebook, Instagram and X accounts"
+            ));
+            shareConsent.setTextColor(primaryTextColor());
+            shareConsent.setChecked(draftSocialShareConsent);
+            shareConsent.setOnCheckedChangeListener((button, checked) -> draftSocialShareConsent = checked);
+            addField(root, shareConsent);
+            TextView shareDisclosure = text(
+                    localizeReportWizardText(
+                            "Optional. Report type and title may be public. Facebook/Instagram may receive the photo; X receives text only. Details, location, contact info and IMEI stay private. Instagram needs a public JPEG photo; Reels are not supported."
+                    ),
+                    12,
+                    secondaryTextColor(),
+                    Typeface.NORMAL
+            );
+            addField(root, shareDisclosure);
+        }
 
         TextView editCategory = actionButton(localizeReportWizardText("Edit category"), false);
         editCategory.setOnClickListener(view -> {
@@ -4827,6 +4861,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                 publish.setEnabled(true);
                 return;
             }
+            boolean shareConsent = draftSocialShareConsent;
             network.execute(() -> {
                 ItemSubmissionResult submission = postItem(
                         type, title, details, location.getText().toString().trim(),
@@ -4834,7 +4869,8 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                         images, cameraImages, token.getToken(), paymentId,
                         "LOST".equalsIgnoreCase(type) && "item".equals(draftReportCategory)
                                 ? draftImei
-                                : "");
+                                : "",
+                        shareConsent);
                 runOnUiThread(() -> {
                     publish.setEnabled(true);
                     int code = submission.statusCode;
@@ -4870,7 +4906,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         }
     }
 
-    private ItemSubmissionResult postItem(String type, String title, String description, String location, String date, double latitude, double longitude, Uri[] images, Bitmap[] cameraImages, String idToken, String paymentId, String imeiNumber) {
+    private ItemSubmissionResult postItem(String type, String title, String description, String location, String date, double latitude, double longitude, Uri[] images, Bitmap[] cameraImages, String idToken, String paymentId, String imeiNumber, boolean socialShareConsent) {
         lastSubmissionError = null;
         try {
             List<String> imageUrls = new ArrayList<>();
@@ -4889,7 +4925,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                     title, description, imageUrl, imageUrls, type, latitude, longitude,
                     location, date, paymentId,
                     getTtsLocaleForSelectedLanguage().getLanguage(), idToken, imeiNumber,
-                    backendReportCategory(title, description));
+                    backendReportCategory(title, description), socialShareConsent);
             if (!response.isSuccessful()) {
                 lastSubmissionError = "Could not save report (" + response.getStatusCode() + "): " + response.getErrorMessage();
                 return new ItemSubmissionResult(response.getStatusCode(), lastSubmissionError);
@@ -10067,6 +10103,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
 
     private void showAdminDashboard() {
         currentPage = PAGE_ADMIN;
+        adminSocialPageOpen = false;
         adminEnglishUi = true;
         screenRenderer = this::showAdminDashboard;
         LinearLayout root = screenBase("");
@@ -10082,6 +10119,10 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         adminSubtitle.setTextAlignment(View.TEXT_ALIGNMENT_CENTER);
         adminSubtitle.setMaxLines(2);
         root.addView(adminSubtitle, contentParams(-1, dp(38), dp(14)));
+
+        TextView socialPublishingButton = actionButton("Manage social accounts and posts", false);
+        socialPublishingButton.setOnClickListener(view -> showAdminSocialPublishingPage());
+        root.addView(socialPublishingButton, contentParams(-1, dp(44), dp(10)));
 
         LinearLayout overview = new LinearLayout(this);
         overview.setOrientation(LinearLayout.HORIZONTAL);
@@ -10170,6 +10211,297 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         root.post(() -> {
             if (currentPage == PAGE_ADMIN) fetchPendingNotificationCount();
         });
+    }
+
+    private void showAdminSocialPublishingPage() {
+        currentPage = PAGE_ADMIN;
+        adminSocialPageOpen = true;
+        adminEnglishUi = true;
+        screenRenderer = this::showAdminSocialPublishingPage;
+        LinearLayout root = screenBase("");
+
+        TextView backButton = actionButton("Back to admin workspace", false);
+        backButton.setOnClickListener(view -> showAdminDashboard());
+        root.addView(backButton, contentParams(-1, dp(42), dp(10)));
+
+        TextView title = text("Social publishing", 20, primaryTextColor(), Typeface.NORMAL);
+        title.setGravity(Gravity.CENTER);
+        root.addView(title, contentParams(-1, dp(30), dp(6)));
+        TextView note = text(
+                "Connect Fendly brand accounts here. Reporters still opt in separately for each report.",
+                12, secondaryTextColor(), Typeface.NORMAL);
+        note.setGravity(Gravity.CENTER);
+        root.addView(note, contentParams(-1, -2, dp(12)));
+
+        TextView message = text("", 12, secondaryTextColor(), Typeface.NORMAL);
+        root.addView(message, contentParams(-1, -2, dp(8)));
+        LinearLayout channels = new LinearLayout(this);
+        channels.setOrientation(LinearLayout.VERTICAL);
+        root.addView(channels, contentParams(-1, -2, dp(16)));
+
+        TextView historyTitle = text("Recent publication jobs", 15, primaryTextColor(), Typeface.NORMAL);
+        root.addView(historyTitle, contentParams(-1, dp(24), dp(8)));
+        LinearLayout history = new LinearLayout(this);
+        history.setOrientation(LinearLayout.VERTICAL);
+        root.addView(history, contentParams(-1, -2, dp(12)));
+
+        TextView refreshButton = actionButton("Refresh status", true);
+        refreshButton.setOnClickListener(view ->
+                loadAdminSocialPublishing(channels, history, message));
+        root.addView(refreshButton, contentParams(-1, dp(44), dp(8)));
+        loadAdminSocialPublishing(channels, history, message);
+    }
+
+    private void loadAdminSocialPublishing(
+            LinearLayout channels,
+            LinearLayout history,
+            TextView message
+    ) {
+        FirebaseUser adminUser = FirebaseAuth.getInstance().getCurrentUser();
+        if (adminUser == null) {
+            message.setText("Sign in to manage Fendly's social accounts.");
+            return;
+        }
+        message.setText("Loading social account status…");
+        adminUser.getIdToken(false).addOnSuccessListener(token -> network.execute(() -> {
+            AuthorizedResponse statusResponse = getAuthorizedResponse(
+                    "/api/social/status", token.getToken());
+            AuthorizedResponse historyResponse = getAuthorizedResponse(
+                    "/api/social/publications?limit=20", token.getToken());
+            runOnUiThread(() -> {
+                if (!adminSocialPageOpen || currentPage != PAGE_ADMIN) return;
+                if (statusResponse.statusCode != 200) {
+                    message.setText(socialPublishingRequestError(statusResponse));
+                    return;
+                }
+                channels.removeAllViews();
+                history.removeAllViews();
+                try {
+                    JSONObject status = new JSONObject(statusResponse.body);
+                    boolean facebookConnected = socialProviderConnected(status, "facebook");
+                    boolean instagramConnected = socialProviderConnected(status, "instagram");
+                    boolean xConnected = socialProviderConnected(status, "x");
+                    addSocialProviderRow(
+                            channels,
+                            "Meta (Facebook Page and Instagram)",
+                            facebookConnected || instagramConnected,
+                            facebookConnected
+                                    ? socialProviderName(status, "facebook")
+                                    : instagramConnected ? socialProviderName(status, "instagram") : "",
+                            "meta",
+                            "facebook"
+                    );
+                    addSocialProviderRow(
+                            channels,
+                            "X",
+                            xConnected,
+                            socialProviderName(status, "x"),
+                            "x",
+                            "x"
+                    );
+                    message.setText(
+                            "Photos can be sent to Facebook/Instagram. X posts text only. "
+                                    + "Failed or interrupted jobs are not automatically retried."
+                    );
+                } catch (Exception error) {
+                    Log.e("SOCIAL_PUBLISHING", "Could not parse social account status", error);
+                    message.setText("The server returned invalid social account status.");
+                    return;
+                }
+
+                if (historyResponse.statusCode != 200) {
+                    addSocialHistoryEntry(history, socialPublishingRequestError(historyResponse));
+                    return;
+                }
+                try {
+                    JSONArray publications = new JSONArray(historyResponse.body);
+                    if (publications.length() == 0) {
+                        addSocialHistoryEntry(history, "No report publication jobs yet.");
+                    }
+                    for (int index = 0; index < publications.length(); index++) {
+                        JSONObject item = publications.getJSONObject(index);
+                        String row = item.optString("report_type", "report").toUpperCase(Locale.ROOT)
+                                + " · " + item.optString("provider", "platform")
+                                + " · " + item.optString("status", "unknown")
+                                + "\nReport ID: " + item.optString("report_id", "unavailable");
+                        String error = item.optString("last_error", "");
+                        if (!error.isEmpty()) row += "\n" + error;
+                        addSocialHistoryEntry(history, row);
+                    }
+                } catch (Exception error) {
+                    Log.e("SOCIAL_PUBLISHING", "Could not parse publication history", error);
+                    addSocialHistoryEntry(history, "The server returned invalid publication history.");
+                }
+            });
+        })).addOnFailureListener(error -> runOnUiThread(() -> {
+            Log.e("SOCIAL_PUBLISHING", "Could not retrieve Firebase admin token", error);
+            message.setText("Could not verify your Fendly sign-in. Please try again.");
+        }));
+    }
+
+    private boolean socialProviderConnected(JSONObject status, String provider) {
+        return status.optJSONObject(provider) != null
+                && status.optJSONObject(provider).optBoolean("connected", false);
+    }
+
+    private String socialProviderName(JSONObject status, String provider) {
+        JSONObject account = status.optJSONObject(provider);
+        return account == null ? "" : account.optString("account_name", "");
+    }
+
+    private void addSocialProviderRow(
+            LinearLayout parent,
+            String label,
+            boolean connected,
+            String accountName,
+            String connectProvider,
+            String disconnectProvider
+    ) {
+        LinearLayout card = new LinearLayout(this);
+        card.setOrientation(LinearLayout.VERTICAL);
+        card.setPadding(dp(12), dp(10), dp(12), dp(10));
+        card.setBackground(roundWithStroke(surfaceColor(), 14, borderColor()));
+        TextView account = text(
+                label + ": " + (connected ? "Connected" : "Not connected")
+                        + (accountName.isEmpty() ? "" : " as " + accountName),
+                13, primaryTextColor(), Typeface.NORMAL);
+        card.addView(account, new LinearLayout.LayoutParams(-1, -2));
+        LinearLayout actions = new LinearLayout(this);
+        actions.setGravity(Gravity.END);
+        TextView connect = actionButton(connected ? "Reconnect" : "Connect", true);
+        connect.setOnClickListener(view -> startSocialAuthorization(connectProvider));
+        actions.addView(connect, new LinearLayout.LayoutParams(-2, dp(40)));
+        if (connected) {
+            TextView disconnect = actionButton("Disconnect", false);
+            LinearLayout.LayoutParams disconnectParams = new LinearLayout.LayoutParams(-2, dp(40));
+            disconnectParams.setMargins(dp(8), 0, 0, 0);
+            disconnect.setOnClickListener(view ->
+                    confirmSocialDisconnect(disconnectProvider));
+            actions.addView(disconnect, disconnectParams);
+        }
+        LinearLayout.LayoutParams actionsParams = new LinearLayout.LayoutParams(-1, -2);
+        actionsParams.topMargin = dp(8);
+        card.addView(actions, actionsParams);
+        LinearLayout.LayoutParams cardParams = new LinearLayout.LayoutParams(-1, -2);
+        cardParams.bottomMargin = dp(8);
+        parent.addView(card, cardParams);
+    }
+
+    private void startSocialAuthorization(String provider) {
+        FirebaseUser adminUser = FirebaseAuth.getInstance().getCurrentUser();
+        if (adminUser == null) {
+            Toast.makeText(this, "Sign in to connect a social account.", Toast.LENGTH_LONG).show();
+            return;
+        }
+        adminUser.getIdToken(false).addOnSuccessListener(token -> network.execute(() -> {
+            AuthorizedResponse response = socialAuthorizedRequest(
+                    "POST", "/api/social/connect/" + provider, token.getToken());
+            runOnUiThread(() -> {
+                if (response.statusCode < 200 || response.statusCode >= 300) {
+                    Toast.makeText(this, socialPublishingRequestError(response), Toast.LENGTH_LONG).show();
+                    return;
+                }
+                try {
+                    String authorizationUrl = new JSONObject(response.body).optString("authorization_url", "");
+                    Uri uri = Uri.parse(authorizationUrl);
+                    String host = uri.getHost();
+                    boolean permittedHost = "meta".equals(provider)
+                            ? "facebook.com".equalsIgnoreCase(host)
+                                    || (host != null && host.endsWith(".facebook.com"))
+                            : "x.com".equalsIgnoreCase(host)
+                                    || (host != null && host.endsWith(".x.com"));
+                    if (!"https".equalsIgnoreCase(uri.getScheme()) || !permittedHost) {
+                        throw new IllegalArgumentException("Unexpected authorization URL");
+                    }
+                    socialAuthorizationPending = true;
+                    startActivity(new Intent(Intent.ACTION_VIEW, uri));
+                } catch (Exception error) {
+                    Log.e("SOCIAL_PUBLISHING", "Could not open provider authorization", error);
+                    Toast.makeText(
+                            this,
+                            "The server returned an invalid authorization link.",
+                            Toast.LENGTH_LONG
+                    ).show();
+                }
+            });
+        })).addOnFailureListener(error -> {
+            Log.e("SOCIAL_PUBLISHING", "Could not retrieve Firebase admin token", error);
+            runOnUiThread(() -> Toast.makeText(
+                    this, "Could not verify your Fendly sign-in.", Toast.LENGTH_LONG).show());
+        });
+    }
+
+    private void confirmSocialDisconnect(String provider) {
+        new AlertDialog.Builder(this)
+                .setTitle("Disconnect social account?")
+                .setMessage("Fendly will stop using the stored authorization. Revoke Fendly in the provider settings to remove platform access too.")
+                .setNegativeButton("Cancel", null)
+                .setPositiveButton("Disconnect", (dialog, which) -> disconnectSocialAccount(provider))
+                .show();
+    }
+
+    private void disconnectSocialAccount(String provider) {
+        FirebaseUser adminUser = FirebaseAuth.getInstance().getCurrentUser();
+        if (adminUser == null) return;
+        adminUser.getIdToken(false).addOnSuccessListener(token -> network.execute(() -> {
+            AuthorizedResponse response = socialAuthorizedRequest(
+                    "DELETE", "/api/social/account/" + provider, token.getToken());
+            runOnUiThread(() -> {
+                if (response.statusCode < 200 || response.statusCode >= 300) {
+                    Toast.makeText(this, socialPublishingRequestError(response), Toast.LENGTH_LONG).show();
+                    return;
+                }
+                showAdminSocialPublishingPage();
+            });
+        })).addOnFailureListener(error -> {
+            Log.e("SOCIAL_PUBLISHING", "Could not retrieve Firebase admin token", error);
+            runOnUiThread(() -> Toast.makeText(
+                    this, "Could not verify your Fendly sign-in.", Toast.LENGTH_LONG).show());
+        });
+    }
+
+    private AuthorizedResponse socialAuthorizedRequest(String method, String path, String idToken) {
+        HttpURLConnection connection = null;
+        try {
+            connection = (HttpURLConnection) new URL(API_BASE + path).openConnection();
+            connection.setRequestMethod(method);
+            connection.setConnectTimeout(15000);
+            connection.setReadTimeout(30000);
+            connection.setRequestProperty("Authorization", "Bearer " + idToken);
+            int statusCode = connection.getResponseCode();
+            InputStream stream = statusCode >= 200 && statusCode < 300
+                    ? connection.getInputStream()
+                    : connection.getErrorStream();
+            String body = stream == null ? "" : readStream(stream);
+            return new AuthorizedResponse(statusCode, body);
+        } catch (Exception error) {
+            Log.e("SOCIAL_PUBLISHING", "Social account request failed", error);
+            return new AuthorizedResponse(-1, "");
+        } finally {
+            if (connection != null) connection.disconnect();
+        }
+    }
+
+    private String socialPublishingRequestError(AuthorizedResponse response) {
+        if (response.statusCode < 0) {
+            return "Could not reach the Fendly server. Check your connection and try again.";
+        }
+        try {
+            String detail = new JSONObject(response.body).optString("detail", "").trim();
+            if (!detail.isEmpty()) return detail;
+        } catch (Exception ignored) {
+            Log.w("SOCIAL_PUBLISHING", "Social endpoint returned a non-JSON error response");
+        }
+        return "Social account request failed (HTTP " + response.statusCode + ").";
+    }
+
+    private void addSocialHistoryEntry(LinearLayout parent, String value) {
+        TextView row = text(value, 12, secondaryTextColor(), Typeface.NORMAL);
+        row.setPadding(dp(10), dp(8), dp(10), dp(8));
+        row.setBackground(roundWithStroke(surfaceColor(), 10, borderColor()));
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(-1, -2);
+        params.bottomMargin = dp(6);
+        parent.addView(row, params);
     }
 
     private void populateAdminReportCategoryTabs(

@@ -39,6 +39,12 @@ Required environment variables:
 - `CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_API_KEY`, and `CLOUDINARY_API_SECRET`
 	enable deletion of Fendly-managed Cloudinary images during account/report
 	cleanup. Keep the API secret server-side only.
+- Optional brand-account publishing uses `META_APP_ID`, `META_APP_SECRET`,
+	`META_LOGIN_CONFIG_ID`, `META_GRAPH_API_VERSION`, `META_REDIRECT_URI`,
+	`X_CLIENT_ID`, `X_CLIENT_SECRET`, and `X_REDIRECT_URI`. Keep every secret in
+	the backend host's secret store. Social access tokens are encrypted using
+	`APP_SECRET_KEY`; keep that key stable or reconnect the social accounts
+	after rotating it.
 - `IMAGE_MATCHING_FUNCTION_URL` points the API to the authenticated Firebase
   Cloud Function that indexes Cloudinary report images and performs CLIP visual
   matching. Deploy it with `firebase deploy --only functions:matchReportImages`.
@@ -85,6 +91,11 @@ development writes to `static/uploads`; Render's free filesystem is ephemeral.
   accounts receive a limited potential-match preview, while explicitly listed
   admins can access full report details)
 - `DELETE /api/users/account` (deletes account data and its reports)
+- `GET /api/social/status` and `GET /api/social/publications` (admin-only)
+- `POST /api/social/connect/meta` and `POST /api/social/connect/x` (admin-only;
+  return the platform authorization URL)
+- `DELETE /api/social/account/{provider}` (admin-only; removes
+  Fendly's stored authorization)
 - `/static/delete-account.html` (external account-deletion request page)
 - `GET /api/users/username/{username}`
 - `POST /api/users/username`
@@ -104,6 +115,64 @@ moderation; without it, the backend uses its local safety blocklist.
 Apply `supabase/migrations/20261004090000_safetrade_imei_verification.sql`
 before deploying SafeTrade. It adds a status and keyed-IMEI-hash index for
 lost reports and the persistent public lookup rate-limit table.
+
+## Optional social publishing
+
+Social publishing is disabled until the Fendly administrators connect brand
+accounts. Set the provider app credentials and exact HTTPS callback URLs in
+the backend environment. Register these callback URLs with the providers:
+
+- `https://<your-api-host>/api/social/callback/meta`
+- `https://<your-api-host>/api/social/callback/x`
+
+For Meta, create a Login for Business configuration that grants access to the
+Fendly Facebook Page and its connected Instagram professional account. Its
+Facebook Login for Business permissions need `pages_show_list`,
+`pages_read_engagement`, `pages_manage_posts`, `instagram_basic`, and
+`instagram_content_publish` (singular). Set its configuration ID as
+`META_LOGIN_CONFIG_ID`, set the currently supported Graph API version in
+`META_GRAPH_API_VERSION`, and register the Meta callback URL above. If the
+authorized Meta user manages multiple Pages, set `META_PAGE_ID` to the Fendly
+Page's ID. Fendly's Meta app must be in a mode and have permissions approved
+for the people who will authorize it; development or testing access is not
+production approval. The Meta app must be a business-type app. Access to
+assets managed by people outside the app's roles requires Advanced Access
+through Meta App Review. An Instagram professional account must be linked to
+the selected Page, and the Page must meet Meta's publishing authorization
+requirements. If the Page is assigned through Business Manager, Meta may also
+require `ads_read` and `ads_management` for Instagram publishing.
+
+For X, configure OAuth 2.0 with PKCE, the callback URL above, and the
+`tweet.read`, `tweet.write`, `users.read`, and `offline.access` scopes. Confirm
+that the X developer plan attached to the app permits creating posts and
+review its current usage charges before enabling it.
+
+After configuring secrets and deploying the backend, an authorized Fendly
+administrator can call `POST /api/social/connect/meta` or
+`POST /api/social/connect/x` with a Fendly bearer token, open the returned
+`authorization_url`, and approve the brand account. Use the status and
+publication endpoints to verify connections and review failed jobs. Deleting
+or disconnecting an authorization in Fendly does not revoke it in Meta or X;
+also revoke Fendly from the provider's app settings.
+
+Each report has an unchecked opt-in. A consented report publishes its type and
+title; Facebook and Instagram may also receive the selected photo, while X
+publishes text only. The report description, location, contact details, and
+IMEI are not included. Instagram requires a publicly accessible JPEG photo.
+This version creates standard posts and does not create Reels because reports
+currently have no video source. Already published posts are public copies on
+Fendly's brand accounts and are not automatically removed when the reporter
+deletes their Fendly account. The privacy policy and account-deletion page
+describe this and provide the support contact for removal requests.
+
+Before deploying social publishing, apply
+`supabase/migrations/20261008000000_social_publishing.sql` to the production
+Supabase database. This adds the consent columns and social tables, enables
+row-level security, and removes direct access for `anon` and `authenticated`.
+Apply the migration before deploying the API version that reads or writes these
+columns. Publishing attempts that fail or are interrupted are not automatically
+retried because the provider may already have created a public post; check the
+provider account before taking any manual retry action.
 
 ## Purge reports retained for previously deleted accounts
 

@@ -67,6 +67,24 @@ services:
         sync: false
       - key: APP_SECRET_KEY
         sync: false
+      - key: META_APP_ID
+        sync: false
+      - key: META_APP_SECRET
+        sync: false
+      - key: META_LOGIN_CONFIG_ID
+        sync: false
+      - key: META_PAGE_ID
+        sync: false
+      - key: META_GRAPH_API_VERSION
+        sync: false
+      - key: META_REDIRECT_URI
+        sync: false
+      - key: X_CLIENT_ID
+        sync: false
+      - key: X_CLIENT_SECRET
+        sync: false
+      - key: X_REDIRECT_URI
+        sync: false
       - key: RAZORPAY_KEY_ID
         sync: false
       - key: RAZORPAY_KEY_SECRET

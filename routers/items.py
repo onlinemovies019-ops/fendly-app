@@ -10,7 +10,7 @@ from typing import Literal, Optional
 from uuid import uuid4
 
 import firebase_admin
-from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
+from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Query, UploadFile, status
 from firebase_admin import firestore
 import httpx
 from pydantic import BaseModel, Field
@@ -28,6 +28,7 @@ from models import AdminMatchAlert, FoundItem, LostItem
 from notifications import persist_admin_match_alert, send_admin_match_email, send_match_notifications
 from routers.payments import verify_captured_payment
 from schemas import ItemCreate, ItemResponse, ItemUpdate, MatchPreview, MatchRequest, MatchResponse
+from social_publishing import schedule_report_publications
 from translation import translate_report_fields
 
 router = APIRouter(prefix="/api", tags=["items"])
@@ -186,6 +187,7 @@ class ItemSubmission(BaseModel):
     report_date: str | None = Field(default=None, max_length=32)
     report_location: str | None = Field(default=None, max_length=500)
     category: str = Field(default="other", min_length=1, max_length=80)
+    social_share_consent: bool = False
     payment_id: str | None = Field(default=None, max_length=128)
     imei_number: str | None = Field(default=None, exclude=True)
 
@@ -270,7 +272,13 @@ def resolve_item_category(category: str | None, title: str, description: str) ->
     return infer_item_category(title, description)
 
 
-async def _save_item(payload: ItemCreate, session: Session, uid: str, model: type[LostItem] | type[FoundItem]):
+async def _save_item(
+    payload: ItemCreate,
+    session: Session,
+    uid: str,
+    model: type[LostItem] | type[FoundItem],
+    background_tasks: BackgroundTasks | None = None,
+):
     if payload.imei_number is not None:
         if model is not LostItem:
             raise HTTPException(status.HTTP_400_BAD_REQUEST, "IMEI can only be attached to a lost-item report")
@@ -325,6 +333,13 @@ async def _save_item(payload: ItemCreate, session: Session, uid: str, model: typ
     record = model(**item_values, created_by=uid, embedding=embedding, image_embedding=image_embedding)
 
     session.add(record)
+    session.flush()
+    schedule_report_publications(
+        session,
+        record,
+        "lost" if model is LostItem else "found",
+        background_tasks,
+    )
     session.commit()
     session.refresh(record)
     return record
@@ -447,12 +462,13 @@ async def upload_image(
 @router.post("/items/lost", response_model=ItemResponse, status_code=status.HTTP_201_CREATED)
 async def create_lost_item(
     payload: ItemCreate,
+    background_tasks: BackgroundTasks,
     session: Session | None = Depends(get_db),
     uid: str = Depends(get_current_user),
 ) -> LostItem:
     try:
         session = _require_db_session(session)
-        record = await _save_item(payload, session, uid, LostItem)
+        record = await _save_item(payload, session, uid, LostItem, background_tasks)
         await _process_created_report(record, session)
         return record
     except HTTPException:
@@ -464,12 +480,13 @@ async def create_lost_item(
 @router.post("/items/found", response_model=ItemResponse, status_code=status.HTTP_201_CREATED)
 async def create_found_item(
     payload: ItemCreate,
+    background_tasks: BackgroundTasks,
     session: Session | None = Depends(get_db),
     uid: str = Depends(get_current_user),
 ) -> FoundItem:
     try:
         session = _require_db_session(session)
-        record = await _save_item(payload, session, uid, FoundItem)
+        record = await _save_item(payload, session, uid, FoundItem, background_tasks)
         await _process_created_report(record, session)
         return record
     except HTTPException:
@@ -481,6 +498,7 @@ async def create_found_item(
 @router.post("/items", response_model=ItemResponse, status_code=status.HTTP_201_CREATED)
 async def create_item_compat(
     request: ItemSubmission,
+    background_tasks: BackgroundTasks,
     session: Session | None = Depends(get_db),
     uid: str = Depends(get_current_user),
 ) -> LostItem | FoundItem:
@@ -493,6 +511,7 @@ async def create_item_compat(
             source_language=request.source_language,
             image_url=request.imageUrl,
             image_urls=request.imageUrls,
+            social_share_consent=request.social_share_consent,
             lat=request.lat,
             lng=request.lng,
             report_date=request.report_date,
@@ -502,7 +521,7 @@ async def create_item_compat(
             imei_number=request.imei_number,
         )
         model = LostItem if request.type == "lost" else FoundItem
-        record = await _save_item(payload, session, uid, model)
+        record = await _save_item(payload, session, uid, model, background_tasks)
         await _process_created_report(record, session)
         return record
     except HTTPException:

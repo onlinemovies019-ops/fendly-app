@@ -23,6 +23,7 @@ from models import (
     EmailOTPChallenge,
     FoundItem,
     LostItem,
+    SocialPublication,
     User,
     UserNotification,
     UsernameReservation,
@@ -272,6 +273,9 @@ def delete_account(
         _delete_firestore_account_copies(app, uid, email)
         _delete_supabase_account_matching_data(report_ids)
         if report_ids:
+            session.execute(
+                delete(SocialPublication).where(SocialPublication.report_id.in_(report_ids))
+            )
             session.execute(
                 delete(AdminMatchAlert).where(
                     or_(

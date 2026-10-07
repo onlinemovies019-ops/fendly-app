@@ -26,6 +26,7 @@ from routers.imei import router as imei_router
 from routers.beacon import router as beacon_router
 from routers.vault import router as vault_router
 from schemas import ItemResponse, MatchResponse
+from social_publishing import process_due_publications, router as social_router
 
 logger = logging.getLogger(__name__)
 
@@ -70,6 +71,20 @@ async def lifespan(_: FastAPI):
                 connection.execute(
                     text("ALTER TABLE public.public_imei_lookup_rate_limits ENABLE ROW LEVEL SECURITY")
                 )
+                for table_name in (
+                    "social_accounts",
+                    "social_oauth_states",
+                    "social_publications",
+                ):
+                    connection.execute(
+                        text(f"ALTER TABLE public.{table_name} ENABLE ROW LEVEL SECURITY")
+                    )
+                    connection.execute(
+                        text(
+                            f"REVOKE ALL PRIVILEGES ON TABLE public.{table_name} "
+                            "FROM PUBLIC, anon, authenticated"
+                        )
+                    )
             now = int(time.time())
             connection.execute(
                 delete(EmailOTPChallenge).where(
@@ -181,12 +196,14 @@ async def lifespan(_: FastAPI):
                 )
             )
     cleanup_task = asyncio.create_task(_cleanup_expired_otp_challenges())
+    social_publication_task = asyncio.create_task(_process_social_publication_queue())
     try:
         yield
     finally:
         cleanup_task.cancel()
+        social_publication_task.cancel()
         try:
-            await cleanup_task
+            await asyncio.gather(cleanup_task, social_publication_task)
         except asyncio.CancelledError:
             pass
 
@@ -219,6 +236,15 @@ async def _cleanup_expired_otp_challenges() -> None:
         except SQLAlchemyError:
             logger.exception("Expired verification data cleanup failed")
         await asyncio.sleep(3600)
+
+
+async def _process_social_publication_queue() -> None:
+    while True:
+        try:
+            await asyncio.to_thread(process_due_publications)
+        except Exception:
+            logger.exception("Social publication queue processing failed")
+        await asyncio.sleep(30)
 
 
 app = FastAPI(title="Fendly API", lifespan=lifespan)
@@ -273,6 +299,7 @@ app.include_router(users_router)
 app.include_router(admin_router)
 app.include_router(payments_router)
 app.include_router(imei_router)
+app.include_router(social_router)
 app.include_router(beacon_router)
 app.include_router(vault_router)
 

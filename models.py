@@ -185,6 +185,7 @@ class LostItem(Base):
     report_location: Mapped[str | None] = mapped_column(String(500))
     image_url: Mapped[str | None] = mapped_column(String(1000))
     image_urls: Mapped[list[str] | None] = mapped_column(JSON)
+    social_share_consent: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     edit_count: Mapped[int] = mapped_column(default=0)
     image_embedding: Mapped[list[float] | None] = mapped_column(Vector(512))
     embedding: Mapped[list[float] | None] = mapped_column(Vector(1536))
@@ -210,7 +211,55 @@ class FoundItem(Base):
     report_location: Mapped[str | None] = mapped_column(String(500))
     image_url: Mapped[str | None] = mapped_column(String(1000))
     image_urls: Mapped[list[str] | None] = mapped_column(JSON)
+    social_share_consent: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     edit_count: Mapped[int] = mapped_column(default=0)
     image_embedding: Mapped[list[float] | None] = mapped_column(Vector(512))
     embedding: Mapped[list[float] | None] = mapped_column(Vector(1536))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class SocialAccount(Base):
+    __tablename__ = "social_accounts"
+
+    provider: Mapped[str] = mapped_column(String(16), primary_key=True)
+    account_id: Mapped[str] = mapped_column(String(128))
+    account_name: Mapped[str] = mapped_column(String(160))
+    access_token_encrypted: Mapped[str] = mapped_column(Text)
+    refresh_token_encrypted: Mapped[str | None] = mapped_column(Text)
+    expires_at: Mapped[int | None] = mapped_column(BigInteger)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+class SocialOAuthState(Base):
+    __tablename__ = "social_oauth_states"
+
+    state_digest: Mapped[str] = mapped_column(String(64), primary_key=True)
+    provider: Mapped[str] = mapped_column(String(16), index=True)
+    created_by: Mapped[str] = mapped_column(String(128))
+    expires_at: Mapped[int] = mapped_column(BigInteger, index=True)
+    code_verifier: Mapped[str | None] = mapped_column(String(128))
+
+
+class SocialPublication(Base):
+    __tablename__ = "social_publications"
+    __table_args__ = (
+        UniqueConstraint("report_id", "provider", name="social_publications_report_provider_uq"),
+        Index("social_publications_status_due_idx", "status", "next_attempt_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    report_id: Mapped[str] = mapped_column(String(36), index=True)
+    report_type: Mapped[str] = mapped_column(String(8))
+    provider: Mapped[str] = mapped_column(String(16))
+    status: Mapped[str] = mapped_column(String(16), default="pending", index=True)
+    attempt_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    next_attempt_at: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
+    external_post_id: Mapped[str | None] = mapped_column(String(160))
+    last_error: Mapped[str | None] = mapped_column(String(500))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+    published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
