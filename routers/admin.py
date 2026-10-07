@@ -458,24 +458,54 @@ async def search_users_and_reports(
     session: Session = Depends(get_db),
     _: str = Depends(require_admin),
 ) -> list[dict[str, object]]:
-    query = q.strip().lower()
+    query = q.strip()
     if len(query) < 2:
         return []
-    user_conditions = [
-        User.username.ilike(f"%{query}%"),
-        User.full_name.ilike(f"%{query}%"),
-        User.email.ilike(f"%{query}%"),
-        User.mobile.ilike(f"%{query}%"),
-    ]
-    mobile_query = re.sub(r"\D", "", query)
-    if len(mobile_query) >= 2:
+    phone_query = re.sub(r"\D", "", query)
+    is_phone_search = bool(phone_query) and all(character in "+0123456789 ()-" for character in query)
+    if is_phone_search:
         normalized_mobile = User.mobile
         for character in ("+", " ", "-", "(", ")"):
             normalized_mobile = func.replace(normalized_mobile, character, "")
-        user_conditions.append(normalized_mobile.ilike(f"%{mobile_query}%"))
-    users = session.scalars(select(User).where(
-        or_(*user_conditions)
-    )).all()
+        if len(phone_query) >= 10:
+            local_phone = phone_query[-10:]
+            user_filter = normalized_mobile.in_((local_phone, f"91{local_phone}"))
+            users = session.scalars(select(User).where(user_filter)).all()
+        else:
+            users = []
+    else:
+        canonical_username = query.lower().lstrip("@")
+        users = session.scalars(
+            select(User).where(func.lower(User.username) == canonical_username)
+        ).all()
+        if not users:
+            users = session.scalars(
+                select(User).where(func.lower(User.username).like(f"%{canonical_username}%"))
+            ).all()
+    if is_phone_search and len(phone_query) >= 10:
+        users_by_mobile: dict[str, User] = {}
+        for user in users:
+            mobile_digits = re.sub(r"\D", "", user.mobile or "")
+            if mobile_digits.startswith("91") and len(mobile_digits) == 12:
+                mobile_digits = mobile_digits[2:]
+            existing_user = users_by_mobile.get(mobile_digits)
+            user_rank = (
+                bool(user.email_verified or user.mobile_verified),
+                bool(user.username),
+                bool(user.full_name),
+                bool(user.email),
+                bool(user.annual_subscription_expires_at and user.annual_subscription_expires_at > int(time.time() * 1000)),
+            )
+            existing_rank = (
+                bool(existing_user and (existing_user.email_verified or existing_user.mobile_verified)),
+                bool(existing_user and existing_user.username),
+                bool(existing_user and existing_user.full_name),
+                bool(existing_user and existing_user.email),
+                bool(existing_user and existing_user.annual_subscription_expires_at and existing_user.annual_subscription_expires_at > int(time.time() * 1000)),
+            )
+            if existing_user is None or user_rank > existing_rank:
+                users_by_mobile[mobile_digits] = user
+        users = list(users_by_mobile.values())
     results = []
     for user in users:
         reports = []

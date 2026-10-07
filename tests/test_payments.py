@@ -123,9 +123,14 @@ def test_admin_subscription_override_can_activate_and_cancel_user(payment_sessio
 
 
 @pytest.mark.asyncio
-async def test_admin_user_search_matches_formatted_mobile_number(payment_sessions):
+async def test_admin_user_search_for_phone_matches_only_that_mobile(payment_sessions):
     with payment_sessions() as session:
-        session.add(User(firebase_uid="firebase-phone-search-user", username="phone-search", mobile="+91 98765-43210"))
+        session.add_all([
+            User(firebase_uid="firebase-phone-search-user", username="phone-search", mobile="+91 98765-43210"),
+            User(firebase_uid="firebase-phone-search-duplicate", mobile="9876543210"),
+            User(firebase_uid="firebase-number-in-name", full_name="9876543210", mobile="1111111111"),
+            User(firebase_uid="firebase-number-in-username", username="9876543210", mobile="2222222222"),
+        ])
         session.commit()
 
         results = await admin_module.search_users_and_reports(
@@ -136,3 +141,39 @@ async def test_admin_user_search_matches_formatted_mobile_number(payment_session
 
     assert len(results) == 1
     assert results[0]["user"]["uid"] == "firebase-phone-search-user"
+
+
+@pytest.mark.asyncio
+async def test_admin_user_search_for_username_matches_only_username(payment_sessions):
+    with payment_sessions() as session:
+        session.add_all([
+            User(firebase_uid="firebase-username-match", username="rohan", full_name="Rohan Bagmare"),
+            User(firebase_uid="firebase-name-only-match", username="another-user", full_name="Rohan Bagmare"),
+        ])
+        session.commit()
+
+        results = await admin_module.search_users_and_reports(
+            q="rohan",
+            session=session,
+            _="admin-1",
+        )
+
+    assert [result["user"]["uid"] for result in results] == ["firebase-username-match"]
+
+
+@pytest.mark.asyncio
+async def test_admin_user_search_prefers_exact_username_match_over_partial_matches(payment_sessions):
+    with payment_sessions() as session:
+        session.add_all([
+            User(firebase_uid="firebase-username-partial", username="rohan123", full_name="Rohan Other"),
+            User(firebase_uid="firebase-username-exact", username="rohan", full_name="Rohan Bagmare"),
+        ])
+        session.commit()
+
+        results = await admin_module.search_users_and_reports(
+            q="rohan",
+            session=session,
+            _="admin-1",
+        )
+
+    assert [result["user"]["uid"] for result in results] == ["firebase-username-exact"]
