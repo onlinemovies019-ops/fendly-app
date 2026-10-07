@@ -1,6 +1,7 @@
 from datetime import datetime
+from urllib.parse import urlsplit
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class ItemCreate(BaseModel):
@@ -78,3 +79,41 @@ class ProfileUpdate(BaseModel):
     state: str | None = Field(default=None, max_length=120)
     city: str | None = Field(default=None, max_length=120)
     profile_photo_url: str | None = Field(default=None, max_length=1000)
+    instagram_url: str | None = Field(default=None, max_length=2048)
+    facebook_url: str | None = Field(default=None, max_length=2048)
+    x_url: str | None = Field(default=None, max_length=2048)
+
+    @field_validator("instagram_url", "facebook_url", "x_url")
+    @classmethod
+    def validate_social_url(cls, value: str | None, info):
+        if value is None or not value.strip():
+            return "" if value == "" else None
+        value = value.strip()
+        if any(character.isspace() or ord(character) < 32 for character in value):
+            raise ValueError("Social links must be public HTTPS URLs")
+        try:
+            parsed = urlsplit(value)
+            hostname = (parsed.hostname or "").lower().rstrip(".")
+        except ValueError as exc:
+            raise ValueError("Social links must be public HTTPS URLs") from exc
+        domains = {
+            "instagram_url": ("instagram.com",),
+            "facebook_url": ("facebook.com",),
+            "x_url": ("x.com", "twitter.com"),
+        }
+        allowed_domains = domains[info.field_name]
+        if (
+            parsed.scheme.lower() != "https"
+            or not hostname
+            or not any(
+                hostname == domain or hostname.endswith(f".{domain}")
+                for domain in allowed_domains
+            )
+            or parsed.username is not None
+            or parsed.password is not None
+            or not parsed.netloc
+        ):
+            raise ValueError(
+                f"{info.field_name} must use HTTPS and a supported social host"
+            )
+        return value

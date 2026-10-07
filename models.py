@@ -1,8 +1,8 @@
-from datetime import datetime
+from datetime import date, datetime
 from uuid import uuid4
 
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import BigInteger, Boolean, DateTime, Float, Index, JSON, String, Text, UniqueConstraint, func
+from sqlalchemy import BigInteger, Boolean, Date, DateTime, Float, Index, Integer, JSON, String, Text, UniqueConstraint, func
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -22,6 +22,9 @@ class User(Base):
     state: Mapped[str | None] = mapped_column(String(120), index=True)
     city: Mapped[str | None] = mapped_column(String(120), index=True)
     profile_photo_url: Mapped[str | None] = mapped_column(String(1000))
+    instagram_url: Mapped[str | None] = mapped_column(String(2048))
+    facebook_url: Mapped[str | None] = mapped_column(String(2048))
+    x_url: Mapped[str | None] = mapped_column(String(2048))
     email_verified: Mapped[bool] = mapped_column(Boolean, default=False)
     mobile_verified: Mapped[bool] = mapped_column(Boolean, default=False)
     annual_subscription_expires_at: Mapped[int | None] = mapped_column(BigInteger)
@@ -100,6 +103,45 @@ class UserNotification(Base):
     score: Mapped[float] = mapped_column(Float)
     is_read: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class BeaconEvent(Base):
+    __tablename__ = "beacon_events"
+    __table_args__ = (
+        UniqueConstraint("firebase_uid", "event_id", name="uq_beacon_event_user_event"),
+        Index("beacon_events_received_at_idx", "received_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    firebase_uid: Mapped[str] = mapped_column(String(128), index=True)
+    event_id: Mapped[str] = mapped_column(String(128))
+    latitude: Mapped[float] = mapped_column(Float)
+    longitude: Mapped[float] = mapped_column(Float)
+    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    source: Mapped[str] = mapped_column(String(32))
+    relay_metadata: Mapped[dict | None] = mapped_column(JSON)
+    received_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), index=True
+    )
+
+
+class VaultItem(Base):
+    __tablename__ = "vault_items"
+    __table_args__ = (Index("vault_items_owner_created_idx", "firebase_uid", "created_at"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    firebase_uid: Mapped[str] = mapped_column(String(128), index=True)
+    object_key: Mapped[str] = mapped_column(String(80), unique=True)
+    mime_type: Mapped[str] = mapped_column(String(32))
+    store: Mapped[str | None] = mapped_column(String(160))
+    purchase_date: Mapped[date | None] = mapped_column(Date)
+    item: Mapped[str | None] = mapped_column(String(160))
+    serial_imei: Mapped[str | None] = mapped_column(String(128))
+    warranty_months: Mapped[int | None] = mapped_column(Integer)
+    warranty_expiry: Mapped[date | None] = mapped_column(Date)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), index=True
+    )
 
 
 class AdminMatchAlert(Base):

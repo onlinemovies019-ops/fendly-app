@@ -75,6 +75,9 @@ class ProfileViewModel(
                                     put("state", profile.state)
                                     put("city", profile.city)
                                     put("profile_photo_url", profile.imageUrl ?: "")
+                                    put("instagram_url", profile.instagramUrl ?: "")
+                                    put("facebook_url", profile.facebookUrl ?: "")
+                                    put("x_url", profile.xUrl ?: "")
                                 }.toString()
 
                                 connection.outputStream.use { output ->
@@ -160,6 +163,9 @@ class ProfileViewModel(
                         val city = json.optString("city", "")
                         val username = json.optString("username", "")
                         val photoUrl = json.optString("profile_photo_url", json.optString("imageUrl", ""))
+                        val instagramUrl = json.optString("instagram_url", "")
+                        val facebookUrl = json.optString("facebook_url", "")
+                        val xUrl = json.optString("x_url", "")
                         val emailVerified = json.optBoolean("email_verified", false)
                         val mobileVerified = json.optBoolean("mobile_verified", false)
                         isVerified = json.optBoolean("is_verified", emailVerified)
@@ -173,6 +179,9 @@ class ProfileViewModel(
                             city = city,
                             username = username,
                             imageUrl = photoUrl.ifBlank { null },
+                            instagramUrl = instagramUrl.ifBlank { null },
+                            facebookUrl = facebookUrl.ifBlank { null },
+                            xUrl = xUrl.ifBlank { null },
                             isEmailVerified = emailVerified,
                             isMobileVerified = mobileVerified,
                         )
@@ -194,6 +203,9 @@ class ProfileViewModel(
                         city = backendProfile.city.ifBlank { firestoreProfile.city },
                         username = backendProfile.username.ifBlank { firestoreProfile.username },
                         imageUrl = backendProfile.imageUrl?.ifBlank { firestoreProfile.imageUrl } ?: firestoreProfile.imageUrl,
+                        instagramUrl = backendProfile.instagramUrl?.ifBlank { firestoreProfile.instagramUrl } ?: firestoreProfile.instagramUrl,
+                        facebookUrl = backendProfile.facebookUrl?.ifBlank { firestoreProfile.facebookUrl } ?: firestoreProfile.facebookUrl,
+                        xUrl = backendProfile.xUrl?.ifBlank { firestoreProfile.xUrl } ?: firestoreProfile.xUrl,
                         isEmailVerified = backendProfile.isEmailVerified || firestoreProfile.isEmailVerified,
                         isMobileVerified = backendProfile.isMobileVerified || firestoreProfile.isMobileVerified,
                     )

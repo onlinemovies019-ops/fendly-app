@@ -47,6 +47,11 @@
         </activity>
 
         <activity
+            android:name=".VaultActivity"
+            android:exported="false"
+            android:label="Digital Bill Locker" />
+
+        <activity
             android:name=".SafeTradeCheckActivity"
             android:exported="false"
             android:label="SafeTrade IMEI check"

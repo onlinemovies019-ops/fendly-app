@@ -23,6 +23,8 @@ from routers.users import router as users_router
 from routers.admin import router as admin_router
 from routers.payments import router as payments_router
 from routers.imei import router as imei_router
+from routers.beacon import router as beacon_router
+from routers.vault import router as vault_router
 from schemas import ItemResponse, MatchResponse
 
 logger = logging.getLogger(__name__)
@@ -138,6 +140,9 @@ async def lifespan(_: FastAPI):
             add_column_if_missing("users", "state", "varchar(120)")
             add_column_if_missing("users", "city", "varchar(120)")
             add_column_if_missing("users", "profile_photo_url", "varchar(1000)")
+            add_column_if_missing("users", "instagram_url", "varchar(2048)")
+            add_column_if_missing("users", "facebook_url", "varchar(2048)")
+            add_column_if_missing("users", "x_url", "varchar(2048)")
             add_column_if_missing("users", "email_verified", "boolean", not_null=True, default="false")
             add_column_if_missing("users", "mobile_verified", "boolean", not_null=True, default="false")
             add_column_if_missing("users", "annual_subscription_expires_at", "bigint")
@@ -268,6 +273,8 @@ app.include_router(users_router)
 app.include_router(admin_router)
 app.include_router(payments_router)
 app.include_router(imei_router)
+app.include_router(beacon_router)
+app.include_router(vault_router)
 
 
 @app.get("/health")

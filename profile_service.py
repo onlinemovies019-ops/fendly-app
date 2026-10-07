@@ -37,4 +37,8 @@ def update_profile_record(session: Session, payload: ProfileUpdate, uid: str) ->
         user.city = payload.city.strip()
     if payload.profile_photo_url and payload.profile_photo_url.strip():
         user.profile_photo_url = payload.profile_photo_url.strip()
+    for field in ("instagram_url", "facebook_url", "x_url"):
+        value = getattr(payload, field)
+        if value is not None:
+            setattr(user, field, value.strip() or None)
     session.commit()
