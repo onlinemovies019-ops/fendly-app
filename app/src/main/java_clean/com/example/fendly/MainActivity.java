@@ -13655,7 +13655,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         String[] english = {
                 "Complete your profile", "A little about you", "This helps neighbours know who they are helping.", "Save and continue",
                 "Login with PIN", "Welcome back.", "Use the username and PIN from your Fendly profile.", "Log in",
-                "Home", "Find what matters.", "Lost or Found? We Connect the Dots.", "LOST", "FOUND", "My reports", "My profile",
+                "Home", "Find what matters.", "Lost or Found? Will Connect the Dots..", "LOST", "FOUND", "My reports", "My profile",
                 "Post found item", "Report lost item", "Help it get home.", "Let's find it.", "Add clear details so the right person can recognise it.",
                 "Item name", "Description and identifying details", "Location or landmark", "Date and time", "Upload item image", "Image selected",
                 "Take photo with camera", "Use current location", "Publish found item", "Publish lost item", "Fendly Plus",

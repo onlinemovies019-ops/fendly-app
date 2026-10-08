@@ -106,7 +106,7 @@ object LanguageManager {
                 "மொபைல் எண்", "మొబైల్ నంబర్", "ಮೊಬೈಲ್ ಸಂಖ್ಯೆ", "മൊബൈൽ നമ്പർ"
             )
             "home_tagline" -> arrayOf(
-                "Lost or Found anything? We Connect the Dots.",
+                "Lost or Found anything? Will Connect the Dots..",
                 "कुछ खोया या मिला? हम कड़ियाँ जोड़ते हैं।",
                 "काही हरवले किंवा सापडले? आम्ही धागेदोरे जोडतो.",
                 "કંઈ ખોવાયું કે મળ્યું? અમે કડીઓ જોડીએ છીએ.",
@@ -128,7 +128,7 @@ object LanguageManager {
                 "എന്തെങ്കിലും നഷ്ടപ്പെട്ടോ കിട്ടിയോ?"
             )
             "home_tagline_bottom" -> arrayOf(
-                "We Connect the Dots.",
+                "Will Connect the Dots..",
                 "हम कड़ियाँ जोड़ते हैं।",
                 "आम्ही धागेदोरे जोडतो.",
                 "અમે કડીઓ જોડીએ છીએ.",
