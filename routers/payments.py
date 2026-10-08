@@ -167,7 +167,10 @@ def verify_captured_payment(payment_id: str, uid: str) -> None:
         payment = client.payment.fetch(payment_id)
         order = client.order.fetch(payment["order_id"])
     except Exception as exc:
-        raise HTTPException(status.HTTP_402_PAYMENT_REQUIRED, "A valid payment is required") from exc
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "Payment verification is temporarily unavailable. Please try again.",
+        ) from exc
     notes = order.get("notes") or {}
     if (
         notes.get("firebase_uid") != uid
@@ -176,3 +179,20 @@ def verify_captured_payment(payment_id: str, uid: str) -> None:
         or payment.get("status") != "captured"
     ):
         raise HTTPException(status.HTTP_402_PAYMENT_REQUIRED, "A valid payment is required")
+
+
+def require_lost_report_entitlement(
+    session: Session,
+    uid: str,
+    payment_id: str | None,
+) -> None:
+    user = session.scalar(select(User).where(User.firebase_uid == uid))
+    if (
+        user is not None
+        and user.annual_subscription_expires_at is not None
+        and user.annual_subscription_expires_at > int(time.time() * 1000)
+    ):
+        return
+    if not payment_id:
+        raise HTTPException(status.HTTP_402_PAYMENT_REQUIRED, "A valid payment is required")
+    verify_captured_payment(payment_id, uid)

@@ -2,6 +2,7 @@ import time
 from types import SimpleNamespace
 
 import pytest
+from fastapi import HTTPException
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
@@ -177,3 +178,55 @@ async def test_admin_user_search_prefers_exact_username_match_over_partial_match
         )
 
     assert [result["user"]["uid"] for result in results] == ["firebase-username-exact"]
+
+def test_active_server_subscription_authorizes_lost_report_without_gateway_lookup(payment_sessions, monkeypatch):
+    uid = "firebase-user-active-subscription"
+    monkeypatch.setattr(
+        payments,
+        "verify_captured_payment",
+        lambda *_: (_ for _ in ()).throw(AssertionError("active subscription should avoid payment lookup")),
+    )
+    with payment_sessions() as session:
+        session.add(User(
+            firebase_uid=uid,
+            annual_subscription_expires_at=int(time.time() * 1000) + 60_000,
+        ))
+        session.commit()
+
+        payments.require_lost_report_entitlement(session, uid, None)
+
+
+def test_lost_report_without_active_subscription_or_payment_requires_payment(payment_sessions):
+    with payment_sessions() as session, pytest.raises(HTTPException) as error:
+        payments.require_lost_report_entitlement(session, "firebase-user-unpaid", None)
+
+    assert error.value.status_code == 402
+
+
+def test_lost_report_payment_fallback_verifies_captured_payment(payment_sessions, monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        payments,
+        "verify_captured_payment",
+        lambda payment_id, uid: calls.append((payment_id, uid)),
+    )
+
+    with payment_sessions() as session:
+        payments.require_lost_report_entitlement(session, "firebase-user-new-payment", "pay_verified")
+
+    assert calls == [("pay_verified", "firebase-user-new-payment")]
+
+
+def test_payment_gateway_lookup_failure_is_reported_as_temporary_unavailability(monkeypatch):
+    class BrokenGateway:
+        class payment:
+            @staticmethod
+            def fetch(_):
+                raise RuntimeError("gateway unavailable")
+
+    monkeypatch.setattr(payments, "_client", lambda: BrokenGateway())
+
+    with pytest.raises(HTTPException) as error:
+        payments.verify_captured_payment("pay_verified", "firebase-user")
+
+    assert error.value.status_code == 503

@@ -26,7 +26,7 @@ from imei_security import imei_digest, validate_imei
 from moderation import moderate_content
 from models import AdminMatchAlert, FoundItem, LostItem
 from notifications import persist_admin_match_alert, send_admin_match_email, send_match_notifications
-from routers.payments import verify_captured_payment
+from routers.payments import require_lost_report_entitlement
 from schemas import ItemCreate, ItemResponse, ItemUpdate, MatchPreview, MatchRequest, MatchResponse
 from social_publishing import schedule_report_publications
 from translation import translate_report_fields
@@ -286,12 +286,7 @@ async def _save_item(
 
     category = resolve_item_category(payload.category, payload.title, payload.description)
     if model is LostItem:
-        if payload.payment_id in ["test_bypass", "test_payment_123"] or (payload.payment_id and payload.payment_id.startswith("pay_test_")):
-            pass
-        else:
-            if not payload.payment_id:
-                raise HTTPException(status.HTTP_402_PAYMENT_REQUIRED, "A valid payment is required")
-            verify_captured_payment(payload.payment_id, uid)
+        require_lost_report_entitlement(session, uid, payload.payment_id)
 
     mod_task = asyncio.create_task(moderate_content(payload.title, payload.description))
     emb_task = asyncio.create_task(create_embedding(item_text(payload.title, payload.description, category)))

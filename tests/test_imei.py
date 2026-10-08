@@ -128,7 +128,7 @@ def test_safe_trade_index_uses_status_and_imei_hash(imei_client):
 async def test_lost_report_imei_is_hashed_and_never_serialized(monkeypatch, imei_db_session):
     imei = "490154203237518"
     monkeypatch.setenv("APP_SECRET_KEY", "test-imei-secret-0123456789abcdef")
-    monkeypatch.setattr(items_module, "verify_captured_payment", lambda *_: None)
+    monkeypatch.setattr(items_module, "require_lost_report_entitlement", lambda *_: None)
 
     async def no_moderation(*_):
         return None
