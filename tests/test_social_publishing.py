@@ -4,6 +4,7 @@ import time
 from unittest.mock import AsyncMock
 from urllib.parse import parse_qs, urlsplit
 
+import pytest
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
@@ -130,6 +131,50 @@ def test_meta_oauth_callback_stores_selected_page_and_linked_instagram(monkeypat
         assert instagram is not None
         assert instagram.account_id == "fendly-instagram-id"
         assert instagram.account_name == "fendly_community"
+
+
+def test_meta_oauth_page_id_mismatch_reports_available_pages_without_tokens(monkeypatch):
+    factory = _session_factory()
+    monkeypatch.setenv("APP_SECRET_KEY", "test-secret-key-that-is-long-enough")
+    monkeypatch.setenv("META_APP_ID", "meta-app-id")
+    monkeypatch.setenv("META_APP_SECRET", "meta-app-secret")
+    monkeypatch.setenv("META_GRAPH_API_VERSION", "v23.0")
+    monkeypatch.setenv("META_REDIRECT_URI", "https://api.example.test/api/social/callback/meta")
+    monkeypatch.setenv("META_PAGE_ID", "incorrect-page-id")
+    monkeypatch.setattr(social_publishing, "_consume_state", lambda *_: None)
+
+    class FakeResponse:
+        is_error = False
+
+        def __init__(self, value):
+            self.value = value
+
+        def json(self):
+            return self.value
+
+    def fake_get(url, params, timeout):
+        if url.endswith("/oauth/access_token"):
+            return FakeResponse({"access_token": "user-token"})
+        return FakeResponse(
+            {
+                "data": [
+                    {
+                        "id": "actual-page-id",
+                        "name": "Fendly Community",
+                        "access_token": "private-page-token",
+                    }
+                ]
+            }
+        )
+
+    monkeypatch.setattr(social_publishing.httpx, "get", fake_get)
+
+    with factory() as session, pytest.raises(RuntimeError) as error:
+        social_publishing._finish_meta_oauth(session, "auth-code", "state")
+
+    assert "META_PAGE_ID did not match an available Page" in str(error.value)
+    assert "actual-page-id (Fendly Community)" in str(error.value)
+    assert "private-page-token" not in str(error.value)
 
 
 def test_x_oauth_callback_exchanges_code_and_stores_refresh_token(monkeypatch):

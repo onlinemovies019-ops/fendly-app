@@ -473,11 +473,12 @@ def _finish_meta_oauth(session: Session, code: str, state: str) -> None:
         )
     )
     pages = _response_array(pages_result.get("data"))
+    available_pages = [
+        page for page in pages
+        if isinstance(page.get("id"), str) and isinstance(page.get("access_token"), str)
+    ]
     desired_page_id = os.getenv("META_PAGE_ID", "").strip()
-    candidates: list[dict[str, object]] = []
-    for page in pages:
-        if isinstance(page.get("id"), str) and isinstance(page.get("access_token"), str):
-            candidates.append(page)
+    candidates = available_pages
     if desired_page_id:
         candidates = [page for page in candidates if page["id"] == desired_page_id]
     elif len(candidates) > 1:
@@ -485,7 +486,17 @@ def _finish_meta_oauth(session: Session, code: str, state: str) -> None:
         if matching:
             candidates = matching
     if len(candidates) != 1:
-        raise RuntimeError("Select one Fendly Page by setting META_PAGE_ID, then reconnect Meta")
+        available = ", ".join(
+            f"{page['id']} ({str(page.get('name') or 'unnamed')[:80]})"
+            for page in available_pages
+        ) or "none"
+        if not available_pages:
+            reason = "Meta returned no Pages with access tokens"
+        elif desired_page_id and not candidates:
+            reason = "META_PAGE_ID did not match an available Page"
+        else:
+            reason = "Meta Page selection was ambiguous"
+        raise RuntimeError(f"{reason}; available Pages: {available}")
     page = candidates[0]
     page_id = page.get("id")
     page_token = page.get("access_token")
