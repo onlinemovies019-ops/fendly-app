@@ -526,9 +526,10 @@ async def test_admin_alert_titles_fall_back_to_original_when_translation_is_unav
 
 
 @pytest.mark.asyncio
-async def test_admin_alert_preserves_stored_titles_when_linked_reports_are_not_in_sql():
+async def test_admin_alert_is_omitted_when_linked_reports_are_missing(monkeypatch):
     session = Mock(spec=Session)
     session.get.return_value = None
+    monkeypatch.setattr(admin_module, "_supabase_admin_alert_request", Mock(return_value=None))
     alerts = [{
         "found_item_id": "firestore-found-1",
         "lost_item_id": "firestore-lost-1",
@@ -538,9 +539,7 @@ async def test_admin_alert_preserves_stored_titles_when_linked_reports_are_not_i
 
     translated_alerts = await admin_module._translate_alert_titles(alerts, session)
 
-    assert translated_alerts[0]["found_title"] == "Green wallet"
-    assert translated_alerts[0]["lost_title"] == "Wallet"
-    assert translated_alerts[0]["reason"] == "Found 'Green wallet' may match lost report 'Wallet'."
+    assert translated_alerts == []
 
 
 @pytest.mark.asyncio
@@ -555,8 +554,8 @@ async def test_admin_alert_includes_indexed_images_and_descriptions(monkeypatch)
     }]
     response = Mock()
     response.json.return_value = [
-        {"source_id": "found-1", "title": "Green wallet", "description": "Green leather wallet", "image_url": "https://images.test/found.jpg"},
-        {"source_id": "lost-1", "title": "Wallet", "description": "Lost near station", "image_url": "https://images.test/lost.jpg"},
+        {"source_id": "found-1", "type": "found", "title": "Green wallet", "description": "Green leather wallet", "image_url": "https://images.test/found.jpg"},
+        {"source_id": "lost-1", "type": "lost", "title": "Wallet", "description": "Lost near station", "image_url": "https://images.test/lost.jpg"},
     ]
     monkeypatch.setattr(admin_module, "_supabase_admin_alert_request", Mock(return_value=response))
 

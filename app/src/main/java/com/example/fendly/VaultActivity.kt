@@ -6,9 +6,9 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -16,19 +16,18 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.material3.Button
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.ArrowBack
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -41,6 +40,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.core.content.FileProvider
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import com.google.firebase.auth.FirebaseAuth
 import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.text.TextRecognition
@@ -53,12 +54,54 @@ import java.net.URL
 import java.nio.charset.StandardCharsets
 import java.time.LocalDate
 import java.time.temporal.ChronoUnit
+import java.util.Locale
 import java.util.concurrent.Executors
+import com.example.fendly.ui.theme.FendlyCard
+import com.example.fendly.ui.theme.FendlyPrimaryButton
+import com.example.fendly.ui.theme.FendlyTextField
 
 class VaultActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
+        val darkMode = getSharedPreferences("fendly_settings", MODE_PRIVATE)
+            .getBoolean("dark_mode", false)
+        setTheme(if (darkMode) R.style.Theme_Fendly_Dark else R.style.Theme_Fendly)
         super.onCreate(savedInstanceState)
-        setContent { MaterialTheme { VaultScreen(onBack = ::finish) } }
+        val systemBarColor = if (darkMode) android.graphics.Color.rgb(18, 19, 25)
+        else android.graphics.Color.rgb(247, 243, 238)
+        window.statusBarColor = systemBarColor
+        window.navigationBarColor = systemBarColor
+        WindowCompat.getInsetsController(window, window.decorView).apply {
+            isAppearanceLightStatusBars = !darkMode
+            isAppearanceLightNavigationBars = !darkMode
+        }
+        val colors = if (darkMode) {
+            androidx.compose.material3.darkColorScheme(
+                primary = androidx.compose.ui.graphics.Color(0xFFE8B24A),
+                onPrimary = androidx.compose.ui.graphics.Color(0xFF2B1D05),
+                background = androidx.compose.ui.graphics.Color(0xFF121319),
+                onBackground = androidx.compose.ui.graphics.Color(0xFFF7F9FC),
+                surface = androidx.compose.ui.graphics.Color(0xFF181D24),
+                onSurface = androidx.compose.ui.graphics.Color(0xFFF7F9FC),
+                onSurfaceVariant = androidx.compose.ui.graphics.Color(0xFFAAB1BC),
+                outline = androidx.compose.ui.graphics.Color(0xFF444D5A),
+            )
+        } else {
+            androidx.compose.material3.lightColorScheme(
+                primary = androidx.compose.ui.graphics.Color(0xFFE8B24A),
+                onPrimary = androidx.compose.ui.graphics.Color(0xFF2B1D05),
+                background = androidx.compose.ui.graphics.Color(0xFFF7F3EE),
+                onBackground = androidx.compose.ui.graphics.Color.Black,
+                surface = androidx.compose.ui.graphics.Color(0xFFFDFBF8),
+                onSurface = androidx.compose.ui.graphics.Color.Black,
+                onSurfaceVariant = androidx.compose.ui.graphics.Color(0xFF4D505A),
+                outline = androidx.compose.ui.graphics.Color(0xFFCDC5B8),
+            )
+        }
+        setContent {
+            MaterialTheme(colorScheme = colors) {
+                VaultScreen(onBack = ::finish)
+            }
+        }
     }
 }
 
@@ -76,6 +119,10 @@ private data class VaultRecord(
 @Composable
 private fun VaultScreen(onBack: () -> Unit) {
     val context = LocalContext.current
+    val t: (String) -> String = { key -> LanguageManager.profileText(context, key) }
+    val format: (String, Long) -> String = { key, value ->
+        String.format(Locale.getDefault(), t(key), value)
+    }
     val records = remember { mutableStateListOf<VaultRecord>() }
     val executor = remember { Executors.newSingleThreadExecutor() }
     var photoUri by remember { mutableStateOf<Uri?>(null) }
@@ -87,16 +134,21 @@ private fun VaultScreen(onBack: () -> Unit) {
     var warrantyMonths by remember { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
     var message by remember { mutableStateOf("") }
+    var messageIsError by remember { mutableStateOf(false) }
 
     fun withToken(onToken: (String) -> Unit) {
         val user = FirebaseAuth.getInstance().currentUser
         if (user == null) {
-            message = "Sign in to use your Vault."
+            message = t("vault_auth_required")
+            messageIsError = true
             return
         }
         user.getIdToken(false)
             .addOnSuccessListener { result -> onToken(result.token.orEmpty()) }
-            .addOnFailureListener { error -> message = "Could not authenticate: ${error.localizedMessage}" }
+            .addOnFailureListener { error ->
+                message = String.format(Locale.getDefault(), t("vault_auth_failed"), error.localizedMessage.orEmpty())
+                messageIsError = true
+            }
     }
 
     fun loadRecords() {
@@ -111,7 +163,7 @@ private fun VaultScreen(onBack: () -> Unit) {
                     val code = connection.responseCode
                     val body = (if (code in 200..299) connection.inputStream else connection.errorStream)
                         .bufferedReader().use { it.readText() }
-                    if (code !in 200..299) error("Vault request failed ($code)")
+                    if (code !in 200..299) error("HTTP $code")
                     val array = JSONArray(body)
                     val loaded = (0 until array.length()).map { index ->
                         val json = array.getJSONObject(index)
@@ -132,7 +184,8 @@ private fun VaultScreen(onBack: () -> Unit) {
                     }
                 } catch (error: Exception) {
                     android.os.Handler(android.os.Looper.getMainLooper()).post {
-                        message = "Could not load Vault: ${error.localizedMessage}"
+                        message = String.format(Locale.getDefault(), t("vault_load_failed"), error.localizedMessage.orEmpty())
+                        messageIsError = true
                     }
                 }
             }
@@ -158,16 +211,19 @@ private fun VaultScreen(onBack: () -> Unit) {
                         if (imei.isBlank()) imei = imeiMatch
                         if (item.isBlank()) item = ocr.lineSequence().map(String::trim).firstOrNull { it.length in 3..80 }.orEmpty()
                         busy = false
-                        message = if (ocr.isBlank()) "No text was detected. Enter the details manually."
-                        else "Text scanned. Review and correct the details before saving."
+                        message = if (ocr.isBlank()) t("vault_ocr_empty")
+                        else t("vault_ocr_review")
+                        messageIsError = ocr.isBlank()
                     }
                     .addOnFailureListener { error ->
                         busy = false
-                        message = "OCR failed: ${error.localizedMessage}"
+                        message = String.format(Locale.getDefault(), t("vault_ocr_failed"), error.localizedMessage.orEmpty())
+                        messageIsError = true
                     }
             } catch (error: Exception) {
                 busy = false
-                message = "Could not read the photo: ${error.localizedMessage}"
+                message = String.format(Locale.getDefault(), t("vault_photo_failed"), error.localizedMessage.orEmpty())
+                messageIsError = true
             }
         }
     }
@@ -184,12 +240,14 @@ private fun VaultScreen(onBack: () -> Unit) {
         val months = warrantyMonths.toIntOrNull()
         val date = runCatching { LocalDate.parse(purchaseDate) }.getOrNull()
         if (uri == null || date == null || months == null || months !in 0..120 || item.isBlank()) {
-            message = "Add a photo, item name, valid purchase date (YYYY-MM-DD), and warranty period (0–120 months)."
+            message = t("vault_form_invalid")
+            messageIsError = true
             return
         }
         val expiry = date.plusMonths(months.toLong()).toString()
         busy = true
         message = ""
+        messageIsError = false
         withToken { token ->
             executor.execute {
                 try {
@@ -221,11 +279,12 @@ private fun VaultScreen(onBack: () -> Unit) {
                     val code = connection.responseCode
                     val response = (if (code in 200..299) connection.inputStream else connection.errorStream)
                         .bufferedReader().use { it.readText() }
-                    if (code !in 200..299) error("Vault upload failed ($code): $response")
+                    if (code !in 200..299) error("HTTP $code: $response")
                     connection.disconnect()
                     android.os.Handler(android.os.Looper.getMainLooper()).post {
                         busy = false
-                        message = "Bill saved securely."
+                        message = t("vault_saved")
+                        messageIsError = false
                         photoUri = null
                         store = ""
                         purchaseDate = ""
@@ -238,7 +297,8 @@ private fun VaultScreen(onBack: () -> Unit) {
                 } catch (error: Exception) {
                     android.os.Handler(android.os.Looper.getMainLooper()).post {
                         busy = false
-                        message = "Could not save bill: ${error.localizedMessage}"
+                        message = String.format(Locale.getDefault(), t("vault_save_failed"), error.localizedMessage.orEmpty())
+                        messageIsError = true
                     }
                 }
             }
@@ -246,71 +306,180 @@ private fun VaultScreen(onBack: () -> Unit) {
     }
 
     Scaffold(
+        containerColor = MaterialTheme.colorScheme.background,
         topBar = {
             TopAppBar(
-                title = { Text("Digital Bill Locker") },
-                navigationIcon = { TextButton(onClick = onBack) { Text("Back") } },
+                title = {
+                    Text(
+                        t("vault_title"),
+                        style = MaterialTheme.typography.titleMedium,
+                        maxLines = 2,
+                    )
+                },
+                navigationIcon = {
+                    IconButton(onClick = onBack) {
+                        Icon(
+                            imageVector = Icons.Outlined.ArrowBack,
+                            contentDescription = t("vault_back"),
+                        )
+                    }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = MaterialTheme.colorScheme.background,
+                    titleContentColor = MaterialTheme.colorScheme.onBackground,
+                    navigationIconContentColor = MaterialTheme.colorScheme.onBackground,
+                ),
             )
         },
     ) { padding ->
         LazyColumn(
-            modifier = Modifier.fillMaxSize().padding(padding).padding(horizontal = 16.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
+            modifier = Modifier
+                .fillMaxSize()
+                .background(MaterialTheme.colorScheme.background)
+                .padding(padding)
+                .padding(horizontal = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
             item {
-                Card(shape = RoundedCornerShape(18.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
-                    Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                        Text("Add a bill or serial sticker", style = MaterialTheme.typography.titleMedium)
-                        Text("The image is encrypted by Fendly before it is stored. OCR runs on this device; review the detected fields before saving.")
-                        Button(onClick = ::captureBill, enabled = !busy, modifier = Modifier.fillMaxWidth()) {
-                            Text(if (photoUri == null) "Take invoice / serial photo" else "Retake photo")
+                FendlyCard(modifier = Modifier.fillMaxWidth()) {
+                    Column(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalArrangement = Arrangement.spacedBy(12.dp),
+                    ) {
+                        Text(t("vault_add_heading"), style = MaterialTheme.typography.titleLarge)
+                        Text(
+                            t("vault_intro"),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        FendlyPrimaryButton(
+                            text = if (photoUri == null) t("vault_scan_invoice") else t("vault_retake_photo"),
+                            onClick = ::captureBill,
+                            enabled = !busy,
+                        )
+                        if (photoUri != null) {
+                            Text(
+                                t("vault_photo_ready"),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.primary,
+                            )
                         }
-                        if (photoUri != null) Text("Photo ready for upload")
-                        OutlinedTextField(store, { store = it }, label = { Text("Store") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
-                        OutlinedTextField(purchaseDate, { purchaseDate = it }, label = { Text("Purchase date (YYYY-MM-DD)") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
-                        OutlinedTextField(item, { item = it }, label = { Text("Item") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
-                        OutlinedTextField(serial, { serial = it }, label = { Text("Serial number") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
-                        OutlinedTextField(imei, { imei = it }, label = { Text("IMEI (if applicable)") }, modifier = Modifier.fillMaxWidth(), singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number))
-                        OutlinedTextField(warrantyMonths, { warrantyMonths = it.filter(Char::isDigit).take(3) }, label = { Text("Warranty period (months)") }, modifier = Modifier.fillMaxWidth(), singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number))
-                        Button(onClick = ::saveRecord, enabled = !busy && photoUri != null, modifier = Modifier.fillMaxWidth()) {
-                            if (busy) CircularProgressIndicator()
-                            else Text("Save to Vault")
+                        FendlyTextField(
+                            value = store,
+                            onValueChange = { store = it },
+                            label = t("vault_store"),
+                            modifier = Modifier.fillMaxWidth(),
+                            singleLine = true,
+                        )
+                        FendlyTextField(
+                            value = purchaseDate,
+                            onValueChange = { purchaseDate = it },
+                            label = t("vault_purchase_date"),
+                            modifier = Modifier.fillMaxWidth(),
+                            singleLine = true,
+                        )
+                        FendlyTextField(
+                            value = item,
+                            onValueChange = { item = it },
+                            label = t("vault_item"),
+                            modifier = Modifier.fillMaxWidth(),
+                            singleLine = true,
+                        )
+                        FendlyTextField(
+                            value = serial,
+                            onValueChange = { serial = it },
+                            label = t("vault_serial"),
+                            modifier = Modifier.fillMaxWidth(),
+                            singleLine = true,
+                        )
+                        FendlyTextField(
+                            value = imei,
+                            onValueChange = { imei = it },
+                            label = t("vault_imei"),
+                            modifier = Modifier.fillMaxWidth(),
+                            singleLine = true,
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        )
+                        FendlyTextField(
+                            value = warrantyMonths,
+                            onValueChange = { warrantyMonths = it.filter(Char::isDigit).take(3) },
+                            label = t("vault_warranty_months"),
+                            modifier = Modifier.fillMaxWidth(),
+                            singleLine = true,
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        )
+                        FendlyPrimaryButton(
+                            text = if (busy) t("vault_saving") else t("vault_save"),
+                            onClick = ::saveRecord,
+                            enabled = !busy && photoUri != null,
+                        )
+                        if (busy) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.height(24.dp),
+                                color = MaterialTheme.colorScheme.primary,
+                                strokeWidth = 2.dp,
+                            )
                         }
-                        if (message.isNotBlank()) Text(message, color = MaterialTheme.colorScheme.error)
+                        if (message.isNotBlank()) {
+                            Text(
+                                text = message,
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = if (messageIsError) MaterialTheme.colorScheme.error
+                                else MaterialTheme.colorScheme.primary,
+                            )
+                        }
                     }
                 }
             }
-            item { Text("Your warranties", style = MaterialTheme.typography.titleLarge, modifier = Modifier.padding(top = 8.dp)) }
+            item {
+                Text(
+                    t("vault_warranties"),
+                    style = MaterialTheme.typography.headlineSmall,
+                    modifier = Modifier.padding(top = 8.dp),
+                )
+            }
             if (records.isEmpty()) {
-                item { Text("No bills saved yet.") }
+                item {
+                    FendlyCard(modifier = Modifier.fillMaxWidth()) {
+                        Text(
+                            t("vault_empty"),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
             } else {
                 items(records, key = VaultRecord::id) { record ->
-                    WarrantyCard(record)
+                    WarrantyCard(record, t, format)
                 }
             }
-            item { Spacer(Modifier.height(20.dp)) }
+            item { Spacer(Modifier.height(24.dp)) }
         }
     }
 }
 
 @Composable
-private fun WarrantyCard(record: VaultRecord) {
+private fun WarrantyCard(
+    record: VaultRecord,
+    t: (String) -> String,
+    format: (String, Long) -> String,
+) {
     val daysRemaining = runCatching {
         ChronoUnit.DAYS.between(LocalDate.now(), LocalDate.parse(record.warrantyExpires))
     }.getOrNull()
-    Card(shape = RoundedCornerShape(16.dp), modifier = Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Text(record.item.ifBlank { "Saved item" }, style = MaterialTheme.typography.titleMedium)
-            if (record.store.isNotBlank()) Text("Store: ${record.store}")
-            if (record.purchaseDate.isNotBlank()) Text("Purchased: ${record.purchaseDate}")
-            if (record.serial.isNotBlank()) Text("Serial: ${record.serial}")
-            if (record.imei.isNotBlank()) Text("IMEI: ${record.imei}")
+    FendlyCard(modifier = Modifier.fillMaxWidth()) {
+        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text(record.item.ifBlank { t("vault_saved_item") }, style = MaterialTheme.typography.titleMedium)
+            if (record.store.isNotBlank()) Text("${t("vault_store_prefix")}: ${record.store}")
+            if (record.purchaseDate.isNotBlank()) Text("${t("vault_purchased_prefix")}: ${record.purchaseDate}")
+            if (record.serial.isNotBlank()) Text("${t("vault_serial_prefix")}: ${record.serial}")
+            if (record.imei.isNotBlank()) Text("${t("vault_imei")}: ${record.imei}")
             Text(
                 when {
-                    daysRemaining == null -> "Warranty expiration date unavailable"
-                    daysRemaining < 0 -> "Warranty expired ${-daysRemaining} days ago"
-                    daysRemaining == 0L -> "Warranty expires today"
-                    else -> "Warranty: $daysRemaining days remaining"
+                    daysRemaining == null -> t("vault_expiry_unavailable")
+                    daysRemaining < 0 -> format("vault_expired_days", -daysRemaining)
+                    daysRemaining == 0L -> t("vault_expires_today")
+                    else -> format("vault_remaining_days", daysRemaining)
                 },
                 style = MaterialTheme.typography.bodyMedium,
                 color = if (daysRemaining != null && daysRemaining < 0) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,

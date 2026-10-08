@@ -5,8 +5,6 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.Link
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -16,6 +14,10 @@ import androidx.compose.ui.text.PlatformTextStyle
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.TextFieldValue
+import androidx.compose.ui.text.input.VisualTransformation
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.input.TransformedText
+import androidx.compose.ui.text.input.OffsetMapping
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.example.fendly.ProfileViewModel
@@ -48,11 +50,6 @@ fun ProfileScreen(
     var mobileState by remember { mutableStateOf(TextFieldValue(uiState.profile.mobileNumber)) }
     var stateState by remember { mutableStateOf(TextFieldValue(uiState.profile.state)) }
     var cityState by remember { mutableStateOf(TextFieldValue(uiState.profile.city)) }
-    var instagramUrlState by remember { mutableStateOf(uiState.profile.instagramUrl ?: "") }
-    var facebookUrlState by remember { mutableStateOf(uiState.profile.facebookUrl ?: "") }
-    var xUrlState by remember { mutableStateOf(uiState.profile.xUrl ?: "") }
-    var showSocialLinksDialog by remember { mutableStateOf(false) }
-
     LaunchedEffect(currentLocale) {
         viewModel.loadProfileIfAuthenticated(context)
     }
@@ -65,9 +62,6 @@ fun ProfileScreen(
         mobileState = TextFieldValue(uiState.profile.mobileNumber)
         stateState = TextFieldValue(uiState.profile.state)
         cityState = TextFieldValue(uiState.profile.city)
-        instagramUrlState = uiState.profile.instagramUrl ?: ""
-        facebookUrlState = uiState.profile.facebookUrl ?: ""
-        xUrlState = uiState.profile.xUrl ?: ""
     }
 
     val displayName = remember(uiState.profile.name, uiState.profile.surname) {
@@ -88,11 +82,6 @@ fun ProfileScreen(
                             platformStyle = PlatformTextStyle(includeFontPadding = false),
                         ),
                     )
-                },
-                actions = {
-                    IconButton(onClick = { showSocialLinksDialog = true }) {
-                        Icon(Icons.Outlined.Link, contentDescription = "Profile links")
-                    }
                 },
             )
         },
@@ -210,6 +199,12 @@ fun ProfileScreen(
                 },
                 label = { Text(text = uiState.labels?.mobile ?: "") },
                 enabled = !uiState.profile.isMobileVerified,
+                visualTransformation = VisualTransformation { text ->
+                    TransformedText(
+                        AnnotatedString(com.example.fendly.LanguageManager.localizedDigits(context, text.text)),
+                        OffsetMapping.Identity,
+                    )
+                },
                 keyboardOptions = KeyboardOptions(
                     keyboardType = KeyboardType.Phone,
                 ),
@@ -246,70 +241,12 @@ fun ProfileScreen(
                         mobileNumber = mobileState.text,
                         state = stateState.text,
                         city = cityState.text,
-                        instagramUrl = instagramUrlState.ifBlank { null },
-                        facebookUrl = facebookUrlState.ifBlank { null },
-                        xUrl = xUrlState.ifBlank { null },
                         isMobileVerified = if (mobileState.text != uiState.profile.mobileNumber) false else uiState.profile.isMobileVerified,
                     )
                     viewModel.saveProfile(updatedProfile)
                 },
             )
         }
-    }
-
-    if (showSocialLinksDialog) {
-        AlertDialog(
-            onDismissRequest = { showSocialLinksDialog = false },
-            title = { Text("Social profile links") },
-            text = {
-                Column(
-                    verticalArrangement = Arrangement.spacedBy(12.dp),
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    OutlinedTextField(
-                        value = instagramUrlState,
-                        onValueChange = { instagramUrlState = it },
-                        label = { Text("Instagram profile URL") },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                    OutlinedTextField(
-                        value = facebookUrlState,
-                        onValueChange = { facebookUrlState = it },
-                        label = { Text("Facebook profile URL") },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                    OutlinedTextField(
-                        value = xUrlState,
-                        onValueChange = { xUrlState = it },
-                        label = { Text("X / Twitter profile URL") },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                }
-            },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        val updatedProfile = uiState.profile.copy(
-                            instagramUrl = instagramUrlState.ifBlank { null },
-                            facebookUrl = facebookUrlState.ifBlank { null },
-                            xUrl = xUrlState.ifBlank { null },
-                        )
-                        showSocialLinksDialog = false
-                        viewModel.saveProfile(updatedProfile)
-                    },
-                ) {
-                    Text("Save")
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { showSocialLinksDialog = false }) {
-                    Text("Close")
-                }
-            },
-        )
     }
 }
 }

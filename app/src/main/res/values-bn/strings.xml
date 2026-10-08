@@ -33,6 +33,7 @@
     <string name="androidx_compose_ui_autofill">অটোফিল করুন</string>
     <string name="androidx_startup">androidx.startup</string>
     <string name="app_name">Fendly</string>
+    <string name="vault_title">ডিজিটাল বিল লকার ও ওয়ারেন্টি ভল্ট</string>
     <string name="welcome_message">ফেন্ডলিতে আপনাকে স্বাগতম</string>
     <string name="check_balance">ব্যালেন্স পরীক্ষা করুন</string>
     <string name="login">লগইন</string>

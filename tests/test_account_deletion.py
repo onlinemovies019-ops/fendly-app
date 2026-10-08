@@ -74,6 +74,23 @@ def test_account_deletion_preserves_photo_shared_by_a_report(deletion_session, m
     assert photo.exists()
 
 
+def test_account_deletion_preserves_poster_referenced_by_another_report(deletion_session):
+    poster_url = "https://api.example.test/static/uploads/00000000000000000000000000000001.jpg"
+    deletion_session.add(
+        FoundItem(
+            created_by="another-user",
+            title="Cat",
+            description="White cat",
+            lat=0,
+            lng=0,
+            social_poster_url=poster_url,
+        )
+    )
+    deletion_session.commit()
+
+    assert users._photo_is_still_referenced(deletion_session, poster_url, "deleted-user")
+
+
 def test_account_deletion_removes_owned_supabase_profile_photo(monkeypatch):
     filename = f"{uuid4().hex}.webp"
     requested = {}

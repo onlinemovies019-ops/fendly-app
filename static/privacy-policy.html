@@ -50,13 +50,14 @@
         number or payment credentials through the app.</li>
       <li><strong>Optional social publishing:</strong> when you explicitly
         opt in on an individual report, Fendly may send that report's type
-        and title to Fendly's connected Facebook, Instagram, and X accounts.
-        A selected photo may be sent to Facebook and Instagram; X receives
-        text only. Fendly does not include the report
-        description, precise location, contact information, or IMEI in those
-        social posts. Instagram publishing requires a publicly accessible JPEG
-        report photo. Standard photo/text posts are supported; Reels are not
-        currently published.</li>
+        and title to Fendly's connected Facebook and Instagram accounts.
+        Facebook and Instagram receive a generated community-poster image
+        containing the report type, title, selected photo when available, and
+        a Fendly app link. The poster does not
+        include the report description, report date, location, contact
+        information, or IMEI. Instagram publishing requires a publicly
+        accessible generated JPEG poster. Standard photo/text posts are
+        supported; Reels are not currently published.</li>
     </ul>
 
     <h2>How information is used and shared</h2>
@@ -80,16 +81,21 @@
       process report images locally or through the configured matching
       service, which may include Cloudinary. These providers process information
       under their own terms and privacy notices.</p>
-    <p>If you opt in to social publishing for a report, Fendly sends only the
-      report type and title to the applicable platform APIs; Facebook and
-      Instagram may also receive the selected photo, while X receives text
-      only. Posts are published on Fendly's brand accounts. Those posts are
-      public and are subject to Facebook, Instagram, and X privacy terms and
+    <p>If you opt in to social publishing for a report, Fendly sends the report
+      type, title, and Fendly app link to the applicable platform APIs.
+      Facebook and Instagram receive a generated poster image that may include
+      the selected report photo. The poster excludes the
+      report description, date, and location. Posts are published on Fendly's
+      brand accounts. Those posts are
+      public and are subject to Facebook and Instagram privacy terms and
       retention. Fendly stores platform authorization tokens encrypted on its
       server and limits connection management to authorized Fendly
       administrators. Connecting your personal profile links does not itself
       authorize publishing; publishing consent is requested separately for
       each report.</p>
+    <p>Fendly no longer offers X publishing. Any posts published to X before
+      that feature was removed may remain public, are subject to X's policies,
+      and are not automatically removed when a Fendly account is deleted.</p>
     <p>SafeTrade's public IMEI verification endpoint returns only whether an
       exact IMEI has an active lost-device report; it does not disclose who
       filed the report or other report details. Lookups are rate-limited.
@@ -113,7 +119,8 @@
       account; contact Fendly to request review and removal. Copies or caches
       retained by a social platform are subject to that platform's policies.</p>
     <p>When account deletion completes, Fendly deletes the account's profiles,
-      lost-and-found reports, report photos managed by Fendly, and related
+      lost-and-found reports, report photos and generated community posters
+      managed by Fendly, and related
       match alerts from active service stores. Images hosted outside services
       Fendly controls cannot be removed by Fendly; contact us if you need help
       identifying such an image.</p>

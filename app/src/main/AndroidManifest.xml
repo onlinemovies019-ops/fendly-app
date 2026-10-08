@@ -49,7 +49,7 @@
         <activity
             android:name=".VaultActivity"
             android:exported="false"
-            android:label="Digital Bill Locker" />
+            android:label="@string/vault_title" />
 
         <activity
             android:name=".SafeTradeCheckActivity"

@@ -1,10 +1,13 @@
 import asyncio
+import gzip
+import json
 import io
 import logging
 import math
 import os
 import re
 from datetime import datetime, timedelta, timezone
+from functools import lru_cache
 from pathlib import Path
 from typing import Literal, Optional
 from uuid import uuid4
@@ -15,7 +18,7 @@ from firebase_admin import firestore
 import httpx
 from pydantic import BaseModel, Field
 from PIL import Image, UnidentifiedImageError
-from sqlalchemy import func, or_, select
+from sqlalchemy import delete, func, or_, select
 from sqlalchemy.orm import Session
 
 from ai_matching import create_embedding, item_text
@@ -24,11 +27,12 @@ from database import SessionLocal, get_db
 from image_matching import cosine_similarity, create_image_embedding
 from imei_security import imei_digest, validate_imei
 from moderation import moderate_content
-from models import AdminMatchAlert, FoundItem, LostItem
+from models import AdminMatchAlert, FoundItem, LostItem, SocialPublication, UserNotification
 from notifications import persist_admin_match_alert, send_admin_match_email, send_match_notifications
 from routers.payments import require_lost_report_entitlement
 from schemas import ItemCreate, ItemResponse, ItemUpdate, MatchPreview, MatchRequest, MatchResponse
 from social_publishing import schedule_report_publications
+from social_poster import render_report_poster
 from translation import translate_report_fields
 
 router = APIRouter(prefix="/api", tags=["items"])
@@ -329,6 +333,19 @@ async def _save_item(
 
     session.add(record)
     session.flush()
+    if record.social_share_consent:
+        try:
+            poster_bytes = await render_report_poster(
+                record,
+                "lost" if model is LostItem else "found",
+            )
+            record.social_poster_url = await _store_image(
+                poster_bytes,
+                f"{uuid4().hex}.jpg",
+                "image/jpeg",
+            )
+        except Exception:
+            logger.exception("Could not generate social poster for report %s", record.id)
     schedule_report_publications(
         session,
         record,
@@ -612,7 +629,13 @@ def list_public_reports(
             query = query.where(
                 func.lower(model.report_location).like(f"%{escaped_city}%", escape="\\")
             )
-        reports.extend((item_type, item) for item in session.scalars(query).all())
+        matching_items = session.scalars(query).all()
+        if escaped_city:
+            matching_items = [
+                item for item in matching_items
+                if _is_indian_coordinate(item.lat, item.lng)
+            ]
+        reports.extend((item_type, item) for item in matching_items)
 
     reports.sort(
         key=lambda pair: pair[1].created_at.timestamp() if pair[1].created_at else 0,
@@ -633,6 +656,56 @@ def list_public_reports(
         }
         for item_type, item in reports
     ]
+
+
+@lru_cache(maxsize=1)
+def _india_boundary() -> list[list[list[list[float]]]]:
+    # Natural Earth 1:10m India boundary (public domain), stored locally for offline checks.
+    boundary_path = Path(__file__).with_name("india_boundary.geojson.gz")
+    with gzip.open(boundary_path, "rt", encoding="utf-8") as boundary_file:
+        geometry = json.load(boundary_file)
+    if geometry.get("type") != "MultiPolygon":
+        raise ValueError(f"Unexpected India boundary geometry: {geometry.get('type')!r}")
+    return geometry["coordinates"]
+
+
+def _point_in_ring(longitude: float, latitude: float, ring: list[list[float]]) -> bool:
+    inside = False
+    previous_longitude, previous_latitude = ring[-1]
+    for current_longitude, current_latitude in ring:
+        cross_product = (
+            (longitude - previous_longitude) * (current_latitude - previous_latitude)
+            - (latitude - previous_latitude) * (current_longitude - previous_longitude)
+        )
+        if (
+            abs(cross_product) <= 1e-9
+            and min(previous_longitude, current_longitude) - 1e-9 <= longitude
+            <= max(previous_longitude, current_longitude) + 1e-9
+            and min(previous_latitude, current_latitude) - 1e-9 <= latitude
+            <= max(previous_latitude, current_latitude) + 1e-9
+        ):
+            return True
+
+        if (current_latitude > latitude) != (previous_latitude > latitude):
+            crossing_longitude = (
+                (previous_longitude - current_longitude)
+                * (latitude - current_latitude)
+                / (previous_latitude - current_latitude)
+                + current_longitude
+            )
+            if longitude < crossing_longitude:
+                inside = not inside
+        previous_longitude, previous_latitude = current_longitude, current_latitude
+    return inside
+
+
+def _is_indian_coordinate(latitude: float, longitude: float) -> bool:
+    for polygon in _india_boundary():
+        if not polygon or not _point_in_ring(longitude, latitude, polygon[0]):
+            continue
+        if not any(_point_in_ring(longitude, latitude, hole) for hole in polygon[1:]):
+            return True
+    return False
 
 
 @router.put("/items/{item_type}/{item_id}", response_model=ItemResponse)
@@ -693,22 +766,43 @@ async def update_item(
     return record
 
 
-@router.delete("/items/{item_type}/{item_id}", status_code=204)
+@router.delete("/items/{item_type}/{item_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_item(
     item_type: str,
     item_id: str,
-    session: Session | None = Depends(get_db),
+    session: Session = Depends(get_db),
     uid: str = Depends(get_current_user),
 ) -> None:
-    session = _require_db_session(session)
-    model = LostItem if item_type.lower() == "lost" else FoundItem if item_type.lower() == "found" else None
-    if model is None:
-        raise HTTPException(400, "Invalid item type")
-    record = session.scalar(select(model).where(model.id == item_id, model.created_by == uid))
-    if record is None:
-        raise HTTPException(404, "Report not found")
-    session.delete(record)
-    session.commit()
+    normalized_type = item_type.strip().lower()
+    if normalized_type not in {"lost", "found"}:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Report type must be lost or found")
+
+    model = LostItem if normalized_type == "lost" else FoundItem
+    report = session.scalar(select(model).where(model.id == item_id))
+    if report is None or report.created_by != uid:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Report not found")
+
+    try:
+        session.execute(
+            delete(AdminMatchAlert).where(
+                or_(
+                    AdminMatchAlert.lost_item_id == item_id,
+                    AdminMatchAlert.found_item_id == item_id,
+                )
+            )
+        )
+        session.execute(delete(SocialPublication).where(SocialPublication.report_id == item_id))
+        if normalized_type == "found":
+            session.execute(delete(UserNotification).where(UserNotification.found_item_id == item_id))
+        session.delete(report)
+        session.commit()
+    except Exception as exc:
+        session.rollback()
+        logger.exception("Could not delete %s report %s", normalized_type, item_id)
+        raise HTTPException(
+            status.HTTP_500_INTERNAL_SERVER_ERROR,
+            "Report could not be deleted; please try again",
+        ) from exc
 
 
 def _notify_admin_for_match(

@@ -19,7 +19,6 @@ data class UserProfile(
     val imageUrl: String? = null,
     val instagramUrl: String? = null,
     val facebookUrl: String? = null,
-    val xUrl: String? = null,
     @get:Exclude val uid: String? = null,
 ) {
     fun toFirestoreMap(): Map<String, Any> = mapOf(
@@ -36,6 +35,5 @@ data class UserProfile(
         "imageUrl" to (imageUrl ?: ""),
         "instagramUrl" to (instagramUrl ?: ""),
         "facebookUrl" to (facebookUrl ?: ""),
-        "xUrl" to (xUrl ?: ""),
     )
 }

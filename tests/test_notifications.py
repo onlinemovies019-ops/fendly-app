@@ -3,9 +3,19 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
-from models import AdminMatchAlert, Base, DeviceToken, User, UserNotification
+from models import (
+    AdminMatchAlert,
+    Base,
+    DeviceToken,
+    FoundItem,
+    LostItem,
+    SocialPublication,
+    User,
+    UserNotification,
+)
 from notifications import send_match_notifications
 from routers import admin as admin_module
+from routers import items as items_module
 from routers import users as users_module
 
 
@@ -145,6 +155,8 @@ def test_admin_auth_explains_uid_allowlist_mismatch(
 @pytest.mark.asyncio
 async def test_admin_alert_list_does_not_include_user_inbox(notification_session, monkeypatch):
     notification_session.add_all([
+        FoundItem(id="found-1", created_by="user-1", title="Found wallet", description="Wallet", lat=0, lng=0),
+        LostItem(id="lost-1", created_by="user-2", title="Lost wallet", description="Wallet", lat=0, lng=0),
         AdminMatchAlert(
             id="admin-alert-1",
             found_item_id="found-1",
@@ -175,6 +187,10 @@ async def test_admin_alert_list_does_not_include_user_inbox(notification_session
 async def test_admin_alert_list_falls_back_to_database_when_supabase_is_unavailable(
     notification_session, monkeypatch, caplog
 ):
+    notification_session.add_all([
+        FoundItem(id="found-1", created_by="user-1", title="Found wallet", description="Wallet", lat=0, lng=0),
+        LostItem(id="lost-1", created_by="user-2", title="Lost wallet", description="Wallet", lat=0, lng=0),
+    ])
     alert = AdminMatchAlert(
         id="admin-alert-1",
         found_item_id="found-1",
@@ -196,3 +212,62 @@ async def test_admin_alert_list_falls_back_to_database_when_supabase_is_unavaila
 
     assert [item["id"] for item in result] == ["admin-alert-1"]
     assert "falling back to the application database" in caplog.text
+
+
+def test_report_owner_can_delete_report_and_related_records(notification_session):
+    notification_session.add_all([
+        FoundItem(id="found-1", created_by="user-1", title="Found wallet", description="Wallet", lat=0, lng=0),
+        LostItem(id="lost-1", created_by="user-2", title="Lost wallet", description="Wallet", lat=0, lng=0),
+        AdminMatchAlert(
+            id="linked-alert",
+            found_item_id="found-1",
+            lost_item_id="lost-1",
+            found_title="Found wallet",
+            lost_title="Lost wallet",
+            confidence=0.91,
+            reason="Possible match",
+        ),
+        AdminMatchAlert(
+            id="unrelated-alert",
+            found_item_id="other-found",
+            lost_item_id="other-lost",
+            found_title="Other found item",
+            lost_title="Other lost item",
+            confidence=0.82,
+            reason="Possible match",
+        ),
+        UserNotification(
+            firebase_uid="user-2",
+            found_item_id="found-1",
+            title="Possible Fendly match",
+            body="A found item matches yours.",
+            score=0.91,
+        ),
+        SocialPublication(
+            id="publication-1",
+            report_id="found-1",
+            report_type="found",
+            provider="facebook",
+        ),
+    ])
+    notification_session.commit()
+
+    with pytest.raises(admin_module.HTTPException) as error:
+        items_module.delete_item("found", "found-1", session=notification_session, uid="user-2")
+
+    assert error.value.status_code == 404
+    assert notification_session.get(FoundItem, "found-1") is not None
+
+    items_module.delete_item("found", "found-1", session=notification_session, uid="user-1")
+
+    assert notification_session.get(FoundItem, "found-1") is None
+    assert notification_session.get(AdminMatchAlert, "linked-alert") is None
+    assert notification_session.get(AdminMatchAlert, "unrelated-alert") is not None
+    assert notification_session.scalars(select(UserNotification)).all() == []
+    assert notification_session.get(SocialPublication, "publication-1") is None
+
+
+def test_report_delete_rejects_unknown_report_type(notification_session):
+    with pytest.raises(admin_module.HTTPException) as error:
+        items_module.delete_item("other", "report-1", session=notification_session, uid="user-1")
+    assert error.value.status_code == 400

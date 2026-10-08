@@ -77,7 +77,6 @@ class ProfileViewModel(
                                     put("profile_photo_url", profile.imageUrl ?: "")
                                     put("instagram_url", profile.instagramUrl ?: "")
                                     put("facebook_url", profile.facebookUrl ?: "")
-                                    put("x_url", profile.xUrl ?: "")
                                 }.toString()
 
                                 connection.outputStream.use { output ->
@@ -165,7 +164,6 @@ class ProfileViewModel(
                         val photoUrl = json.optString("profile_photo_url", json.optString("imageUrl", ""))
                         val instagramUrl = json.optString("instagram_url", "")
                         val facebookUrl = json.optString("facebook_url", "")
-                        val xUrl = json.optString("x_url", "")
                         val emailVerified = json.optBoolean("email_verified", false)
                         val mobileVerified = json.optBoolean("mobile_verified", false)
                         isVerified = json.optBoolean("is_verified", emailVerified)
@@ -181,7 +179,6 @@ class ProfileViewModel(
                             imageUrl = photoUrl.ifBlank { null },
                             instagramUrl = instagramUrl.ifBlank { null },
                             facebookUrl = facebookUrl.ifBlank { null },
-                            xUrl = xUrl.ifBlank { null },
                             isEmailVerified = emailVerified,
                             isMobileVerified = mobileVerified,
                         )
@@ -205,7 +202,6 @@ class ProfileViewModel(
                         imageUrl = backendProfile.imageUrl?.ifBlank { firestoreProfile.imageUrl } ?: firestoreProfile.imageUrl,
                         instagramUrl = backendProfile.instagramUrl?.ifBlank { firestoreProfile.instagramUrl } ?: firestoreProfile.instagramUrl,
                         facebookUrl = backendProfile.facebookUrl?.ifBlank { firestoreProfile.facebookUrl } ?: firestoreProfile.facebookUrl,
-                        xUrl = backendProfile.xUrl?.ifBlank { firestoreProfile.xUrl } ?: firestoreProfile.xUrl,
                         isEmailVerified = backendProfile.isEmailVerified || firestoreProfile.isEmailVerified,
                         isMobileVerified = backendProfile.isMobileVerified || firestoreProfile.isMobileVerified,
                     )
@@ -296,11 +292,11 @@ class ProfileViewModel(
             firstName = context.getString(R.string.profile_first_name),
             surname = context.getString(R.string.profile_surname),
             email = context.getString(R.string.profile_email),
-            mobile = context.getString(R.string.profile_mobile),
+            mobile = LanguageManager.profileText(context, "profile_mobile"),
             state = context.getString(R.string.profile_state),
             city = context.getString(R.string.profile_city),
             saveChanges = context.getString(R.string.profile_save_changes),
-            refreshStatus = "Refresh Status",
+            refreshStatus = LanguageManager.profileText(context, "refresh_status"),
         )
     }
 }

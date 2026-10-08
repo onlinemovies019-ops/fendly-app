@@ -7,6 +7,8 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.ui.graphics.Color
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsControllerCompat
 
 class SafeTradeCheckActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -14,6 +16,14 @@ class SafeTradeCheckActivity : ComponentActivity() {
             .getBoolean("dark_mode", false)
         setTheme(if (darkMode) R.style.Theme_Fendly_Dark else R.style.Theme_Fendly)
         super.onCreate(savedInstanceState)
+
+        window.statusBarColor = if (darkMode) android.graphics.Color.rgb(18, 19, 25)
+            else android.graphics.Color.rgb(247, 243, 238)
+        window.navigationBarColor = window.statusBarColor
+        WindowCompat.getInsetsController(window, window.decorView).apply {
+            isAppearanceLightStatusBars = !darkMode
+            isAppearanceLightNavigationBars = !darkMode
+        }
 
         val colors = if (darkMode) {
             darkColorScheme(

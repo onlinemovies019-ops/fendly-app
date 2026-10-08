@@ -8,13 +8,15 @@ import java.io.File
 import java.io.FileOutputStream
 
 object SharePosterUtil {
+    @JvmStatic
     fun sharePoster(
         context: Context,
         bitmap: Bitmap,
         caption: String,
         profileTags: Map<String, String?> = emptyMap(),
     ) {
-        val outputFile = File(context.cacheDir, "fendly-community-poster-${System.currentTimeMillis()}.png")
+        val shareDirectory = File(context.cacheDir, "share_flyers").apply { mkdirs() }
+        val outputFile = File(shareDirectory, "fendly-community-poster-${System.currentTimeMillis()}.png")
         FileOutputStream(outputFile).use { output ->
             bitmap.compress(Bitmap.CompressFormat.PNG, 100, output)
         }

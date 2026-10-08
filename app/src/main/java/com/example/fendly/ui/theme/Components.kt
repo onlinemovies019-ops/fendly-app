@@ -23,6 +23,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.PlatformTextStyle
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.input.KeyboardType
 
 import androidx.compose.ui.unit.dp
@@ -74,8 +75,9 @@ fun FendlySecondaryButton(
         Text(
             text = text,
             style = MaterialTheme.typography.labelLarge.copy(
-                platformStyle = PlatformTextStyle(includeFontPadding = false),
+                platformStyle = PlatformTextStyle(includeFontPadding = true),
             ),
+            textAlign = TextAlign.Center,
         )
     }
 }

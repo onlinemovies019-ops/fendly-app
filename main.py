@@ -23,7 +23,6 @@ from routers.users import router as users_router
 from routers.admin import router as admin_router
 from routers.payments import router as payments_router
 from routers.imei import router as imei_router
-from routers.beacon import router as beacon_router
 from routers.vault import router as vault_router
 from schemas import ItemResponse, MatchResponse
 from social_publishing import process_due_publications, router as social_router
@@ -157,7 +156,6 @@ async def lifespan(_: FastAPI):
             add_column_if_missing("users", "profile_photo_url", "varchar(1000)")
             add_column_if_missing("users", "instagram_url", "varchar(2048)")
             add_column_if_missing("users", "facebook_url", "varchar(2048)")
-            add_column_if_missing("users", "x_url", "varchar(2048)")
             add_column_if_missing("users", "email_verified", "boolean", not_null=True, default="false")
             add_column_if_missing("users", "mobile_verified", "boolean", not_null=True, default="false")
             add_column_if_missing("users", "annual_subscription_expires_at", "bigint")
@@ -171,6 +169,7 @@ async def lifespan(_: FastAPI):
             add_column_if_missing("lost_items", "report_date", "varchar(32)")
             add_column_if_missing("lost_items", "report_location", "varchar(500)")
             add_column_if_missing("lost_items", "image_urls", "json")
+            add_column_if_missing("lost_items", "social_poster_url", "varchar(1000)")
             add_column_if_missing("lost_items", "title_en", "text")
             add_column_if_missing("lost_items", "description_en", "text")
             add_column_if_missing("lost_items", "report_location_en", "text")
@@ -182,6 +181,7 @@ async def lifespan(_: FastAPI):
             add_column_if_missing("found_items", "report_date", "varchar(32)")
             add_column_if_missing("found_items", "report_location", "varchar(500)")
             add_column_if_missing("found_items", "image_urls", "json")
+            add_column_if_missing("found_items", "social_poster_url", "varchar(1000)")
             add_column_if_missing("found_items", "title_en", "text")
             add_column_if_missing("found_items", "description_en", "text")
             add_column_if_missing("found_items", "report_location_en", "text")
@@ -299,9 +299,8 @@ app.include_router(users_router)
 app.include_router(admin_router)
 app.include_router(payments_router)
 app.include_router(imei_router)
-app.include_router(social_router)
-app.include_router(beacon_router)
 app.include_router(vault_router)
+app.include_router(social_router)
 
 
 @app.get("/health")

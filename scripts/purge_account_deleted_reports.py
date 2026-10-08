@@ -61,6 +61,7 @@ def purge_account_deleted_reports(
         for image_url in [
             report.image_url,
             *(report.image_urls if isinstance(report.image_urls, list) else []),
+            report.social_poster_url,
         ]
         if image_url
     }
@@ -211,6 +212,7 @@ def main() -> None:
             for image_url in [
                 report.image_url,
                 *(report.image_urls if isinstance(report.image_urls, list) else []),
+                report.social_poster_url,
             ]
             if image_url
         }

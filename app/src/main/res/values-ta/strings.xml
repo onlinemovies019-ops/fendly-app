@@ -33,6 +33,7 @@
     <string name="androidx_compose_ui_autofill">தன்னிரப்பி</string>
     <string name="androidx_startup">androidx.startup</string>
     <string name="app_name">Fendly</string>
+    <string name="vault_title">டிஜிட்டல் பில் லாக்கர் மற்றும் உத்தரவாதப் பெட்டகம்</string>
     <string name="welcome_message">ஃபெண்ட்லிக்கு நல்வரவு</string>
     <string name="check_balance">இருப்பைச் சரிபார்க்கவும்</string>
     <string name="login">உள்நுழைவு</string>

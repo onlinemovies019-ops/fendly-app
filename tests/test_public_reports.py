@@ -93,6 +93,46 @@ def test_public_reports_filters_by_city_case_insensitively(reports_client):
     assert [report["title"] for report in response.json()] == ["Lost blue bag"]
 
 
+def test_public_reports_city_filter_excludes_coordinates_outside_india(reports_client):
+    client, session_factory = reports_client
+    with Session(session_factory.kw["bind"]) as session:
+        session.add_all([
+            FoundItem(
+                created_by="reporter-in-india",
+                title="Found item in Delhi",
+                description="Found in Delhi",
+                category="other",
+                lat=28.6139,
+                lng=77.2090,
+                report_location="Delhi, India",
+            ),
+            FoundItem(
+                created_by="reporter-outside-india",
+                title="Found item outside India",
+                description="Found outside India",
+                category="other",
+                lat=27.7172,
+                lng=85.3240,
+                report_location="Delhi, Nepal",
+            ),
+            FoundItem(
+                created_by="reporter-without-location",
+                title="Found item without Indian coordinates",
+                description="Found without Indian coordinates",
+                category="other",
+                lat=0,
+                lng=0,
+                report_location="Delhi",
+            ),
+        ])
+        session.commit()
+
+    response = client.get("/api/reports", params={"city": "Delhi"})
+
+    assert response.status_code == 200
+    assert [report["title"] for report in response.json()] == ["Found item in Delhi"]
+
+
 def test_public_reports_escapes_like_wildcards_in_city_filter(reports_client):
     client, session_factory = reports_client
     add_test_reports(session_factory)

@@ -154,6 +154,8 @@ import com.cloudinary.android.MediaManager;
 import com.cloudinary.android.callback.ErrorInfo;
 import com.cloudinary.android.callback.UploadCallback;
 import com.bumptech.glide.Glide;
+import com.bumptech.glide.request.target.CustomTarget;
+import com.bumptech.glide.request.transition.Transition;
 import android.net.Uri;
 import android.provider.MediaStore;
 import android.provider.Settings;
@@ -335,7 +337,10 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
     private EditText visibleFirstName;
     private EditText visibleSurname;
     private EditText visibleEmail;
+    private AutoCompleteTextView visibleStateSearch;
+    private AutoCompleteTextView visibleCitySearch;
     private TextView visibleEmailVerify;
+    private TextView visibleMobileVerify;
     private ImageView visibleAvatar;
     private TextToSpeech ttsEngine;
     private boolean ttsReady;
@@ -867,8 +872,8 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
 
     private String translateHowToReportText() {
         String[] texts = {
-                "1. Reporting Lost Items:\n• Tap the green LOST/THEFT button on the home screen.\n• Enter item details, category, description, and photo.\n\n2. Reporting Found Items:\n• Tap the gold FOUND button on the home screen when you find an item.\n• Fill in the details of the found item.\n\n3. Tracking Your Reports:\n• Visit My Reports anytime to track your submitted lost or found items and view updates.",
-                "1. खोई हुई वस्तुएं रिपोर्ट करें:\n• होम स्क्रीन पर हरे LOST बटन पर टैप करें।\n• वस्तु का विवरण, श्रेणी, जानकारी और फोटो दर्ज करें।\n\n2. मिली हुई वस्तुएं रिपोर्ट करें:\n• वस्तु मिलने पर होम स्क्रीन पर सुनहरे FOUND बटन पर टैप करें।\n• मिली हुई वस्तु का विवरण भरें।\n\n3. अपनी रिपोर्ट ट्रैक करें:\n• अपनी जमा की गई रिपोर्ट और अपडेट देखने के लिए कभी भी My Reports पर जाएं।",
+                "1. Start a report:\n• On Home, tap LOST/THEFT for something missing or FOUND for something you found.\n• Choose a category, then complete the four steps: category, location/photo, details, and review.\n\n2. Add the details:\n• Enter the city and location, identifying details, and date. Add a photo if available; precise location is optional.\n\n3. Review and submit:\n• Check the summary before submitting. A LOST report may require payment unless you have an active subscription.\n\n4. Follow updates:\n• Open My Reports to view your report and its status.",
+                "1. रिपोर्ट शुरू करें:\n• खोई वस्तु के लिए होम पर LOST/THEFT या मिली वस्तु के लिए FOUND चुनें।\n• श्रेणी चुनकर चार चरण पूरे करें: श्रेणी, स्थान/फ़ोटो, विवरण और समीक्षा।\n\n2. जानकारी भरें:\n• शहर, स्थान, पहचान के विवरण और तारीख दें। फ़ोटो उपलब्ध हो तो जोड़ें; सटीक लोकेशन वैकल्पिक है।\n\n3. समीक्षा करके जमा करें:\n• सारांश जांचें। सक्रिय सदस्यता न होने पर LOST रिपोर्ट के लिए भुगतान करना पड़ सकता है।\n\n4. स्थिति देखें:\n• अपनी रिपोर्ट और अपडेट देखने के लिए My Reports खोलें।",
                 "1. हरवलेल्या वस्तूंची नोंद:\n• होम स्क्रीनवरील हिरव्या LOST बटणावर टॅप करा.\n• वस्तूचे तपशील, वर्ग, वर्णन आणि फोटो प्रविष्ट करा.\n\n2. सापडलेल्या वस्तूंची नोंद:\n• वस्तू सापडल्यावर होम स्क्रीनवरील सोनेरी FOUND बटणावर टॅप करा.\n• सापडलेल्या वस्तूचा तपशील भरा.\n\n3. अहवाल ट्रॅक करा:\n• तुमचे सादर केलेले अहवाल आणि अपडेट्स पाहण्यासाठी कधीही My Reports ला भेट द्या.",
                 "1. ખોવાયેલ વસ્તુઓની જાણ કરો:\n• હોમ સ્ક્રીન પર લીલા LOST બટન પર ટેપ કરો.\n• વસ્તુની વિગતો, શ્રેણી, વર્ણન અને ફોટો દાખલ કરો.\n\n2. મળેલ વસ્તુઓની જાણ કરો:\n• વસ્તુ મળે ત્યારે હોમ સ્ક્રીન પર સોનેરી FOUND બટન પર ટેપ કરો.\n• મળેલ વસ્તુની વિગતો ભરો.\n\n3. તમારા રિપોર્ટ ટ્રેક કરો:\n• તમારા સબમિટ કરેલા રિપોર્ટ અને અપડેટ્સ જોવા માટે ગમે ત્યારે My Reports ની મુલાકાત લો.",
                 "1. হারানো আইটেম রিপোর্ট করা:\n• হোম স্ক্রিনে সবুজ LOST বোতামে ট্যাপ করুন।\n• আইটেমের বিবরণ, বিভাগ, বর্ণনা এবং ছবি লিখুন।\n\n2. পাওয়া আইটেম রিপোর্ট করা:\n• কোনো আইটেম পেলে হোম স্ক্রিনে সোনালী FOUND বোতামে ট্যাপ করুন।\n• পাওয়া আইটেমের বিবরণ পূরণ করুন।\n\n3. আপনার রিপোর্ট ট্র্যাক করা:\n• আপনার জমা দেওয়া রিপোর্ট এবং আপডেট দেখতে যেকোনো সময় My Reports দেখুন।",
@@ -916,7 +921,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
 
     private String translateMyReportsText() {
         String[] texts = {
-                "1. View Submitted Reports:\n• Review all your active lost and found item submissions in one centralized list.\n\n2. Track Status & Matches:\n• Monitor report statuses and check for any potential item matches.\n\n3. Editing Reports:\n• Your uploaded report may only be edited once within 5 hours of creation; after that, it cannot be edited.",
+                "1. Browse reports:\n• Choose Valuables & Items, Pets & Animals, or Missing Persons / Loved Ones to filter both sections.\n• Discover active reports by city (all Indian cities by default), then scroll to Your reports for your submissions.\n\n2. Open a report:\n• Tap a report card for details. Your reports also show a live status tracker from review through publication and verification to reunion.\n\n3. Manage your reports:\n• Use Edit once within 5 hours of creating a report.",
                 "1. जमा की गई रिपोर्ट देखें:\n• अपनी सभी सक्रिय खोई और मिली हुई रिपोर्ट एक ही सूची में देखें।\n\n2. स्थिति और AI मिलान ट्रैक करें:\n• रिपोर्ट की स्थिति पर नज़र रखें और किसी भी संभावित AI मिलान की जांच करें।\n\n3. रिपोर्ट संपादित करें:\n• आपकी अपलोड की गई रिपोर्ट निर्माण के 5 घंटे के भीतर केवल एक बार संपादित की जा सकती है; उसके बाद इसे संपादित नहीं किया जा सकता।",
                 "1. सादर केलेले अहवाल पाहा:\n• तुमचे सर्व सक्रिय हरवलेले आणि सापडलेले अहवाल एकाच यादीत पाहा.\n\n2. स्थिती आणि जुळणी ट्रॅक करा:\n• अहवाल स्थितीवर लक्ष ठेवा आणि संभाव्य जुळण्या तपासा.\n\n3. अहवाल संपादित करा:\n• तुमचा अपलोड केलेला अहवाल तयार केल्यापासून ५ तासांच्या आत फक्त एकदाच संपादित केला जाऊ शकतो; त्यानंतर तो संपादित केला जाऊ शकत नाही.",
                 "1. સબમિટ કરેલા રિપોર્ટ જુઓ:\n• તમારા બધા સક્રિય ખોવાયેલ અને મળેલ રિપોર્ટ એક જ યાદીમાં જુઓ.\n\n2. સ્ટેટસ અને AI મેચ ટ્રેક કરો:\n• રિપોર્ટ સ્ટેટસ પર નજર રાખો અને સંભવિત AI મેચ તપાસો.\n\n3. રિપોર્ટ એડિટ કરો:\n• તમારો અપલોડ કરેલો રિપોર્ટ બનાવ્યાના 5 કલાકની અંદર માત્ર એક જ વાર એડિટ કરી શકાય છે; ત્યારબાદ તેને એડિટ કરી શકાશે નહીં.",
@@ -927,7 +932,19 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                 "1. സമർപ്പിച്ച റിപ്പോർട്ടുകൾ കാണുക:\n• നിങ്ങളുടെ എല്ലാ റിപ്പോർട്ടുകളും ഒറ്റ ലിസ്റ്റിൽ കാണുക.\n\n2. സ്റ്റാറ്റസും AI മാച്ചുകളും ട്രാക്ക് ചെയ്യുക:\n• റിപ്പോർട്ട് സ്റ്റാറ്റസ് നിരീക്ഷിക്കുകയും സാധ്യമായ AI മാച്ചുകൾ പരിശോധിക്കുകയും ചെയ്യുക.\n\n3. റിപ്പോർട്ടുകൾ എഡിറ്റ് ചെയ്യൽ:\n• നിങ്ങൾ അപ്‌ലോഡ് ചെയ്ത റിപ്പോർട്ട് സൃഷ്ടിച്ച് 5 മണിക്കൂറിനുള്ളിൽ ഒരു തവണ മാത്രമേ എഡിറ്റ് ചെയ്യാൻ സാധിക്കൂ; അതിനുശേഷം എഡിറ്റ് ചെയ്യാൻ കഴിയില്ല."
         };
         int lang = Math.max(0, Math.min(selectedLanguage, texts.length - 1));
-        return texts[lang].replace("AI ", "").replace("AI", "");
+        String[] completedReportsNotes = {
+                "Completed reports stay collapsed. Tap the section heading to expand or collapse the list.",
+                "पूरी हो चुकी रिपोर्टें बंद रहती हैं। सूची देखने या छिपाने के लिए पूरी रिपोर्टें शीर्षक पर टैप करें।",
+                "पूर्ण झालेले अहवाल बंद राहतात. यादी उघडण्यासाठी किंवा बंद करण्यासाठी पूर्ण झालेले अहवाल या शीर्षकावर टॅप करा.",
+                "પૂર્ણ થયેલા રિપોર્ટ બંધ રહે છે. યાદી ખોલવા અથવા બંધ કરવા પૂર્ણ થયેલા રિપોર્ટના શીર્ષક પર ટેપ કરો.",
+                "সম্পন্ন রিপোর্টগুলো বন্ধ থাকে। তালিকা খুলতে বা বন্ধ করতে সম্পন্ন রিপোর্ট শিরোনামে ট্যাপ করুন।",
+                "நிறைவு செய்யப்பட்ட அறிக்கைகள் சுருக்கப்பட்டிருக்கும். பட்டியலைத் திறக்க அல்லது மூட நிறைவு செய்யப்பட்ட அறிக்கைகள் தலைப்பைத் தட்டவும்.",
+                "పూర్తయిన రిపోర్టులు మూసి ఉంటాయి. జాబితాను తెరవడానికి లేదా మూసివేయడానికి పూర్తయిన రిపోర్టుల శీర్షికను నొక్కండి.",
+                "ಪೂರ್ಣಗೊಂಡ ವರದಿಗಳು ಮುಚ್ಚಿರುತ್ತವೆ. ಪಟ್ಟಿಯನ್ನು ತೆರೆಯಲು ಅಥವಾ ಮುಚ್ಚಲು ಪೂರ್ಣಗೊಂಡ ವರದಿಗಳ ಶೀರ್ಷಿಕೆಯನ್ನು ಟ್ಯಾಪ್ ಮಾಡಿ.",
+                "പൂർത്തിയായ റിപ്പോർട്ടുകൾ അടച്ചിരിക്കും. പട്ടിക തുറക്കാനോ അടയ്ക്കാനോ പൂർത്തിയായ റിപ്പോർട്ടുകൾ എന്ന തലക്കെട്ടിൽ ടാപ്പ് ചെയ്യുക."
+        };
+        return texts[lang].replace("AI ", "").replace("AI", "")
+                + "\n\n" + completedReportsNotes[lang];
     }
 
     @Override
@@ -1159,23 +1176,114 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         sizeThemedDialog(dialog);
     }
 
-    private void showDeleteAccountDialog() {
-        Dialog dialog = new Dialog(this);
-        dialog.requestWindowFeature(Window.FEATURE_NO_TITLE);
+    private void confirmDeleteReport(JSONObject report, Dialog detailsDialog) {
+        Dialog confirmDialog = new Dialog(this);
+        confirmDialog.requestWindowFeature(Window.FEATURE_NO_TITLE);
         LinearLayout content = themedDialogContent(
                 R.drawable.ic_field_lock,
-                "Delete account?",
-                "Your profile, login, notifications, and lost/found reports—including report text, locations, and photos—will be deleted from Fendly. Push notifications already delivered to devices cannot be recalled."
+                LanguageManager.profileText(this, "delete_report_title"),
+                LanguageManager.profileText(this, "delete_report_body")
         );
         LinearLayout actions = new LinearLayout(this);
         actions.setOrientation(LinearLayout.HORIZONTAL);
         actions.setGravity(Gravity.CENTER);
 
-        TextView cancel = filledButton("Cancel", LOST_GREEN, LOST_GREEN_ON);
+        TextView cancel = filledButton(
+                LanguageManager.profileText(this, "cancel"),
+                LOST_GREEN,
+                LOST_GREEN_ON
+        );
+        cancel.setOnClickListener(view -> confirmDialog.dismiss());
+        actions.addView(cancel, new LinearLayout.LayoutParams(0, dp(44), 1f));
+
+        TextView delete = filledButton(
+                LanguageManager.profileText(this, "delete_report"),
+                Color.rgb(180, 45, 45),
+                Color.WHITE
+        );
+        LinearLayout.LayoutParams deleteParams = new LinearLayout.LayoutParams(0, dp(44), 1f);
+        deleteParams.setMargins(dp(12), 0, 0, 0);
+        actions.addView(delete, deleteParams);
+        delete.setOnClickListener(view -> {
+            confirmDialog.dismiss();
+            deleteReport(report, detailsDialog);
+        });
+
+        content.addView(actions, new LinearLayout.LayoutParams(-1, dp(44)));
+        confirmDialog.setContentView(content);
+        confirmDialog.setCanceledOnTouchOutside(false);
+        confirmDialog.show();
+        sizeThemedDialog(confirmDialog);
+    }
+
+    private void deleteReport(JSONObject report, Dialog detailsDialog) {
+        String reportId = report.optString("id", "").trim();
+        String reportType = report.optString("type", "").trim().toLowerCase(Locale.ROOT);
+        if (reportId.isEmpty() || !(reportType.equals("lost") || reportType.equals("found"))) {
+            Toast.makeText(this, LanguageManager.profileText(this, "report_delete_failed"), Toast.LENGTH_LONG).show();
+            return;
+        }
+
+        FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
+        if (user == null) {
+            Toast.makeText(this, LanguageManager.profileText(this, "delete_sign_in_required"), Toast.LENGTH_LONG).show();
+            return;
+        }
+        user.getIdToken(false).addOnSuccessListener(tokenResult -> network.execute(() -> {
+            HttpURLConnection connection = null;
+            int responseCode = -1;
+            try {
+                connection = (HttpURLConnection) new URL(
+                        API_BASE + "/api/items/" + reportType + "/" + Uri.encode(reportId)
+                ).openConnection();
+                connection.setRequestMethod("DELETE");
+                connection.setConnectTimeout(8000);
+                connection.setReadTimeout(10000);
+                connection.setRequestProperty("Authorization", "Bearer " + tokenResult.getToken());
+                responseCode = connection.getResponseCode();
+                if (responseCode >= 200 && responseCode < 300) {
+                    runOnUiThread(() -> {
+                        detailsDialog.dismiss();
+                        Toast.makeText(this, LanguageManager.profileText(this, "report_deleted"), Toast.LENGTH_LONG).show();
+                        showReports();
+                    });
+                    return;
+                }
+                String errorBody = readStream(connection.getErrorStream());
+                Log.w("REPORT_DELETE", "Delete failed with HTTP " + responseCode + ": " + errorBody);
+            } catch (Exception error) {
+                Log.e("REPORT_DELETE", "Could not delete report " + reportId, error);
+            } finally {
+                if (connection != null) connection.disconnect();
+            }
+            runOnUiThread(() -> Toast.makeText(
+                    this,
+                    LanguageManager.profileText(this, "report_delete_failed"),
+                    Toast.LENGTH_LONG
+            ).show());
+        })).addOnFailureListener(error -> {
+            Log.e("REPORT_DELETE", "Could not authenticate report deletion", error);
+            Toast.makeText(this, LanguageManager.profileText(this, "report_delete_failed"), Toast.LENGTH_LONG).show();
+        });
+    }
+
+    private void showDeleteAccountDialog() {
+        Dialog dialog = new Dialog(this);
+        dialog.requestWindowFeature(Window.FEATURE_NO_TITLE);
+        LinearLayout content = themedDialogContent(
+                R.drawable.ic_field_lock,
+                LanguageManager.profileText(this, "delete_account_title"),
+                LanguageManager.profileText(this, "delete_account_body")
+        );
+        LinearLayout actions = new LinearLayout(this);
+        actions.setOrientation(LinearLayout.HORIZONTAL);
+        actions.setGravity(Gravity.CENTER);
+
+        TextView cancel = filledButton(LanguageManager.profileText(this, "cancel"), LOST_GREEN, LOST_GREEN_ON);
         cancel.setOnClickListener(view -> dialog.dismiss());
         actions.addView(cancel, new LinearLayout.LayoutParams(0, dp(44), 1f));
 
-        TextView delete = filledButton("Delete account", Color.rgb(180, 45, 45), Color.WHITE);
+        TextView delete = filledButton(LanguageManager.profileText(this, "delete_account"), Color.rgb(180, 45, 45), Color.WHITE);
         LinearLayout.LayoutParams deleteParams = new LinearLayout.LayoutParams(0, dp(44), 1f);
         deleteParams.setMargins(dp(12), 0, 0, 0);
         actions.addView(delete, deleteParams);
@@ -1191,11 +1299,11 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
     private void deleteAccount(Dialog dialog, TextView deleteButton) {
         FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
         if (user == null) {
-            Toast.makeText(this, "Sign in to delete your account", Toast.LENGTH_LONG).show();
+            Toast.makeText(this, LanguageManager.profileText(this, "delete_sign_in_required"), Toast.LENGTH_LONG).show();
             return;
         }
         deleteButton.setEnabled(false);
-        deleteButton.setText("Deleting...");
+        deleteButton.setText(LanguageManager.profileText(this, "deleting_account"));
         user.getIdToken(false).addOnSuccessListener(token -> network.execute(() -> {
             HttpURLConnection connection = null;
             int responseCode = -1;
@@ -1219,18 +1327,18 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                     try {
                         FirebaseAuth.getInstance().signOut();
                     } catch (Exception ignored) {}
-                    Toast.makeText(MainActivity.this, translate("Account deleted successfully"), Toast.LENGTH_LONG).show();
+                    Toast.makeText(MainActivity.this, LanguageManager.profileText(MainActivity.this, "account_deleted"), Toast.LENGTH_LONG).show();
                     buildScreen();
                 } else {
                     deleteButton.setEnabled(true);
-                    deleteButton.setText("Delete account");
-                    Toast.makeText(this, "Account deletion failed. Please retry later.", Toast.LENGTH_LONG).show();
+                    deleteButton.setText(LanguageManager.profileText(MainActivity.this, "delete_account"));
+                    Toast.makeText(this, LanguageManager.profileText(this, "account_delete_failed"), Toast.LENGTH_LONG).show();
                 }
             });
         })).addOnFailureListener(error -> {
             deleteButton.setEnabled(true);
-            deleteButton.setText("Delete account");
-            Toast.makeText(this, "Could not authenticate account deletion", Toast.LENGTH_LONG).show();
+            deleteButton.setText(LanguageManager.profileText(MainActivity.this, "delete_account"));
+            Toast.makeText(this, LanguageManager.profileText(this, "account_delete_auth_failed"), Toast.LENGTH_LONG).show();
         });
     }
 
@@ -1306,8 +1414,26 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         if (Build.VERSION.SDK_INT >= 29) authCard.setForceDarkAllowed(false);
 
         FrameLayout emblemWrap = new FrameLayout(this);
-        emblemWrap.setPadding(dp(10), dp(10), dp(10), dp(10));
+        emblemWrap.setPadding(dp(10), 0, dp(10), 0);
         emblemWrap.setBackground(roundWithStroke(Color.argb(30, 232, 178, 74), 22, Color.argb(80, 232, 178, 74)));
+        LinearLayout emblemContent = new LinearLayout(this);
+        emblemContent.setOrientation(LinearLayout.VERTICAL);
+        emblemContent.setGravity(Gravity.CENTER_HORIZONTAL);
+        emblemWrap.addView(emblemContent, new FrameLayout.LayoutParams(-1, -1));
+
+        TextView authTaglineTop = text(
+                LanguageManager.profileText(this, "home_tagline_top"),
+                16,
+                primaryTextColor(),
+                Typeface.BOLD
+        );
+        authTaglineTop.setTypeface(Typeface.create("sans-serif-rounded", Typeface.BOLD));
+        authTaglineTop.setGravity(Gravity.TOP | Gravity.CENTER_HORIZONTAL);
+        authTaglineTop.setTextAlignment(View.TEXT_ALIGNMENT_CENTER);
+        authTaglineTop.setIncludeFontPadding(false);
+        authTaglineTop.setMaxLines(2);
+        authTaglineTop.setTextSize(responsiveTextSize(16));
+        emblemContent.addView(authTaglineTop, new LinearLayout.LayoutParams(-1, dp(48)));
 
         ImageView emblem = new ImageView(this);
         emblem.setImageResource(R.drawable.logo_final);
@@ -1325,19 +1451,25 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             }
             return true;
         });
-        FrameLayout.LayoutParams emblemParams = new FrameLayout.LayoutParams(dp(180), dp(108), Gravity.CENTER);
-        emblemWrap.addView(emblem, emblemParams);
-        TextView authTagline = text("Lost or Found anything? We Connect the Dots.", 12, primaryTextColor(), Typeface.BOLD);
-        authTagline.setGravity(Gravity.CENTER);
-        authTagline.setTextAlignment(View.TEXT_ALIGNMENT_CENTER);
-        authTagline.setIncludeFontPadding(false);
-        authTagline.setSingleLine(true);
-        authTagline.setTextSize(responsiveTextSize(11));
-        authTagline.setEllipsize(android.text.TextUtils.TruncateAt.END);
-        FrameLayout.LayoutParams taglineParams = new FrameLayout.LayoutParams(-1, dp(24), Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL);
-        taglineParams.bottomMargin = dp(4);
-        emblemWrap.addView(authTagline, taglineParams);
-        LinearLayout.LayoutParams emblemWrapParams = new LinearLayout.LayoutParams(-1, dp(176));
+        LinearLayout.LayoutParams emblemParams = new LinearLayout.LayoutParams(-1, 0, 1f);
+        emblem.setMinimumHeight(dp(88));
+        emblemContent.addView(emblem, emblemParams);
+
+        TextView authTaglineBottom = text(
+                LanguageManager.profileText(this, "home_tagline_bottom"),
+                16,
+                primaryTextColor(),
+                Typeface.BOLD
+        );
+        authTaglineBottom.setTypeface(Typeface.create("sans-serif-rounded", Typeface.BOLD));
+        authTaglineBottom.setGravity(Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL);
+        authTaglineBottom.setTextAlignment(View.TEXT_ALIGNMENT_CENTER);
+        authTaglineBottom.setIncludeFontPadding(false);
+        authTaglineBottom.setMaxLines(2);
+        authTaglineBottom.setTextSize(responsiveTextSize(16));
+        emblemContent.addView(authTaglineBottom, new LinearLayout.LayoutParams(-1, dp(48)));
+
+        LinearLayout.LayoutParams emblemWrapParams = new LinearLayout.LayoutParams(-1, dp(200));
         emblemWrapParams.setMargins(0, 0, 0, dp(14));
         authCard.addView(emblemWrap, emblemWrapParams);
 
@@ -1716,6 +1848,9 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         visibleFirstName = null;
         visibleSurname = null;
         visibleEmail = null;
+        visibleStateSearch = null;
+        visibleCitySearch = null;
+        visibleMobileVerify = null;
         visibleMobileCells = null;
         visibleAvatar = null;
     }
@@ -1830,12 +1965,10 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         String rawSavedFullName = (!draftFullName.trim().isEmpty() ? draftFullName : account.getString("full_name", "")).trim();
         String savedFullName = getCanonicalEnglishName(rawSavedFullName);
         String[] nameParts = savedFullName.split("\\s+", 2);
-        String savedFirstName = account.contains("profile_first_name")
-            ? account.getString("profile_first_name", "")
-            : (nameParts.length > 0 ? nameParts[0] : "");
-        String savedSurname = account.contains("profile_surname")
-            ? account.getString("profile_surname", "")
-            : (nameParts.length > 1 ? nameParts[1] : "");
+        String savedFirstName = account.getString("profile_first_name", "").trim();
+        if (savedFirstName.isEmpty() && nameParts.length > 0) savedFirstName = nameParts[0];
+        String savedSurname = account.getString("profile_surname", "").trim();
+        if (savedSurname.isEmpty() && nameParts.length > 1) savedSurname = nameParts[1];
         firstName.setText(localizeProfileName(savedFirstName));
         surname.setText(localizeProfileName(savedSurname));
         visibleFirstName = firstName;
@@ -1987,6 +2120,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         refreshEmailVerificationState(email, emailVerify);
 
         TextView mobileVerify = filledButton(getString(R.string.profile_verify_otp), GOLD, GOLD_ON);
+        visibleMobileVerify = mobileVerify;
         mobileVerify.setPadding(dp(10), 0, dp(10), 0);
         mobileVerify.setOnClickListener(view -> verifyProfileMobileTarget(mobileCells, mobileVerify));
         String verifiedMobile = account.getString("mobile", "").trim();
@@ -1997,8 +2131,8 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             cell.setCursorVisible(true);
         }
         setMobileCells(mobileCells, verifiedMobile);
-        boolean isMobileVerified = account.getBoolean("mobile_verified", false);
         String currentMobile = normalizeLocalizedDigits(mobileValue(mobileCells));
+        boolean isMobileVerified = isMobileVerifiedFor(currentMobile, account);
         if (isMobileVerified && !verifiedMobile.isEmpty() && verifiedMobile.equals(currentMobile)) {
             mobileVerify.setOnClickListener(null);
             lockVerifiedMobileField(mobileCells, mobileVerify);
@@ -2009,8 +2143,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                 @Override public void onTextChanged(CharSequence value, int start, int before, int count) {
                     String currentMobile = normalizeLocalizedDigits(mobileValue(mobileCells));
                     boolean verifiedNow = currentMobile.matches("^\\d{10}$")
-                        && getSharedPreferences("fendly_account", MODE_PRIVATE).getBoolean("mobile_verified", false)
-                        && currentMobile.equals(getSharedPreferences("fendly_account", MODE_PRIVATE).getString("mobile", "").trim());
+                        && isMobileVerifiedFor(currentMobile, getSharedPreferences("fendly_account", MODE_PRIVATE));
                     if (verifiedNow) {
                         mobileVerify.setOnClickListener(null);
                         lockVerifiedMobileField(mobileCells, mobileVerify);
@@ -2041,6 +2174,8 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         Arrays.sort(states, 1, states.length);
         AutoCompleteTextView stateSearch = new AutoCompleteTextView(this);
         AutoCompleteTextView citySearch = new AutoCompleteTextView(this);
+        visibleStateSearch = stateSearch;
+        visibleCitySearch = citySearch;
         String savedState = !draftState.trim().isEmpty() ? draftState : account.getString("state", "");
         String savedCity = !draftCity.trim().isEmpty() ? draftCity : account.getString("city", "");
         stateSearch.setText(localizeProfileDisplayValue("state", savedState));
@@ -2085,7 +2220,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         root.addView(locationRow, contentParams(-1, dp(76), dp(4)));
 
         addEditableProfileField(root, getString(R.string.profile_email), email, null);
-        addLabeledMobileField(root, getString(R.string.profile_mobile), mobileCells, mobileVerify);
+        addLabeledMobileField(root, LanguageManager.profileText(this, "profile_mobile"), mobileCells, mobileVerify);
         addLabeledPinField(root, getString(R.string.profile_four_digit_pin), pinCells);
 
         TextView save = actionButton(getString(R.string.profile_complete), true);
@@ -2098,7 +2233,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             if (updatedSurname.equalsIgnoreCase(originalSurname) || updatedSurname.equals(localizeProfileName(originalSurname))) updatedSurname = originalSurname;
             String fullName = (updatedFirstName + " " + updatedSurname).trim();
             String usernameValue = usernameField.getText().toString().trim();
-            String mobileValue = mobileValue(mobileCells);
+            String mobileValue = normalizeLocalizedDigits(mobileValue(mobileCells));
             String emailValue = email.getText().toString().trim();
             String pinValue = pinValue(pinCells);
             String selectedState = reverseLocalizedProfileValue("state", stateSearch.getText().toString().trim());
@@ -2129,8 +2264,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                 Toast.makeText(this, "Please select your state and city", Toast.LENGTH_LONG).show();
                 stateSearch.requestFocus();
             } else {
-                boolean currentMobileVerified = account.getBoolean("mobile_verified", false)
-                        && mobileValue.equals(account.getString("mobile", "").trim());
+                boolean currentMobileVerified = isMobileVerifiedFor(mobileValue, account);
                 if (REQUIRE_MOBILE_OTP_FOR_PROFILE_SAVE && !currentMobileVerified) {
                     Toast.makeText(this, "Verify mobile OTP before continuing", Toast.LENGTH_SHORT).show();
                     blinkVerificationRequired(mobileVerify);
@@ -2994,13 +3128,14 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         TextView title = text(translate(titleText), 18, primaryTextColor(), Typeface.NORMAL);
         title.setTypeface(localizedScriptTypeface(title.getText(), Typeface.NORMAL));
         title.setGravity(Gravity.CENTER);
-        title.setPadding(0, iconResource == 0 ? 0 : dp(8), 0, dp(2));
+        title.setPadding(0, iconResource == 0 ? 0 : dp(8), 0, dp(6));
         content.addView(title, new LinearLayout.LayoutParams(-1, -2));
         TextView subtitle = text(translate(subtitleText), 11, secondaryTextColor(), Typeface.NORMAL);
         subtitle.setTypeface(localizedScriptTypeface(subtitle.getText(), Typeface.NORMAL));
         subtitle.setGravity(Gravity.CENTER);
-        subtitle.setMaxLines(3);
-        content.addView(subtitle, new LinearLayout.LayoutParams(-1, dp(42)));
+        subtitle.setLineSpacing(dp(2), 1f);
+        subtitle.setPadding(0, dp(4), 0, dp(10));
+        content.addView(subtitle, new LinearLayout.LayoutParams(-1, -2));
         return content;
     }
 
@@ -3726,7 +3861,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         profileScrollY = 0;
         screenRenderer = this::showHome;
         LinearLayout root = screenBase("Home");
-        addHeading("Find what matters.", "Lost or Found anything? We Connect the Dots.");
+        addHeading("Find what matters.", LanguageManager.profileText(this, "home_tagline"));
 
         LinearLayout choices = new LinearLayout(this);
         choices.setOrientation(LinearLayout.HORIZONTAL);
@@ -3750,10 +3885,13 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         TextView reports = actionButton("My reports", false);
         reports.setOnClickListener(view -> showReports());
         addField(root, reports);
+        TextView vault = actionButton(LanguageManager.profileText(this, "vault_title"), false);
+        vault.setOnClickListener(view -> startActivity(new Intent(this, VaultActivity.class)));
+        addField(root, vault);
         TextView profile = actionButton("My profile", false);
         profile.setOnClickListener(view -> showProfile());
         addField(root, profile);
-        TextView safeTrade = actionButton("SafeTrade IMEI check", false);
+        TextView safeTrade = actionButton(LanguageManager.profileText(this, "safe_trade_check"), false);
         safeTrade.setOnClickListener(view -> startActivity(new Intent(this, SafeTradeCheckActivity.class)));
         addField(root, safeTrade);
         String username = getSharedPreferences("fendly_account", MODE_PRIVATE).getString("username", "your account");
@@ -3766,6 +3904,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             String city,
             LinearLayout resultsContainer,
             TextView statusView,
+            List<JSONObject> ownerReports,
             int requestGeneration
     ) {
         network.execute(() -> {
@@ -3812,7 +3951,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                 discoveryReports.clear();
                 discoveryReports.addAll(loadedReports);
                 discoveryReportsLoaded = true;
-                renderDiscoveryReports(resultsContainer, statusView);
+                renderDiscoveryReports(resultsContainer, statusView, ownerReports);
             });
         });
     }
@@ -3905,7 +4044,11 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         return tab;
     }
 
-    private void renderDiscoveryReports(LinearLayout resultsContainer, TextView statusView) {
+    private void renderDiscoveryReports(
+            LinearLayout resultsContainer,
+            TextView statusView,
+            List<JSONObject> ownerReports
+    ) {
         resultsContainer.removeAllViews();
         if (!discoveryReportsLoaded) return;
         List<JSONObject> visibleReports = new ArrayList<>();
@@ -3925,8 +4068,23 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         }
         statusView.setVisibility(View.GONE);
         for (JSONObject report : visibleReports) {
-            resultsContainer.addView(createDiscoveryReportCard(report));
+            JSONObject ownerReport = findOwnedReport(report, ownerReports);
+            resultsContainer.addView(createDiscoveryReportCard(
+                    report,
+                    ownerReport == null ? report : ownerReport
+            ));
         }
+    }
+
+    private JSONObject findOwnedReport(JSONObject publicReport, List<JSONObject> ownerReports) {
+        if (publicReport == null || ownerReports == null || ownerReports.isEmpty()) return null;
+        String publicId = publicReport.optString("id", publicReport.optString("_id", "")).trim();
+        if (publicId.isEmpty()) return null;
+        for (JSONObject ownerReport : ownerReports) {
+            String ownerId = ownerReport.optString("id", ownerReport.optString("_id", "")).trim();
+            if (publicId.equals(ownerId)) return ownerReport;
+        }
+        return null;
     }
 
     private boolean discoveryReportMatchesCategory(JSONObject report, String category) {
@@ -3960,7 +4118,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         return false;
     }
 
-    private View createDiscoveryReportCard(JSONObject report) {
+    private View createDiscoveryReportCard(JSONObject report, JSONObject detailsReport) {
         LinearLayout card = new LinearLayout(this);
         card.setOrientation(LinearLayout.VERTICAL);
         card.setPadding(dp(16), dp(12), dp(16), dp(12));
@@ -4019,9 +4177,15 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             card.addView(date, new LinearLayout.LayoutParams(-1, -2));
         }
 
+        if ("LOST".equals(type) && isActiveCommunityReport(report)) {
+            addCommunityPosterAction(card, detailsReport, 0, dp(10));
+        }
+
         LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(-1, -2);
         params.setMargins(0, 0, 0, dp(10));
         card.setLayoutParams(params);
+        card.setOnClickListener(view -> showReportDetailsDialog(detailsReport, false));
+        card.setFocusable(true);
         return card;
     }
 
@@ -4268,7 +4432,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         if (editingReportId == null) {
             CheckBox shareConsent = new CheckBox(this);
             shareConsent.setText(localizeReportWizardText(
-                    "Allow Fendly to share this report on its Facebook, Instagram and X accounts"
+                    "Allow Fendly to share this report on its Facebook and Instagram accounts"
             ));
             shareConsent.setTextColor(primaryTextColor());
             shareConsent.setChecked(draftSocialShareConsent);
@@ -4276,7 +4440,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             addField(root, shareConsent);
             TextView shareDisclosure = text(
                     localizeReportWizardText(
-                            "Optional. Report type and title may be public. Facebook/Instagram may receive the photo; X receives text only. Details, location, contact info and IMEI stay private. Instagram needs a public JPEG photo; Reels are not supported."
+                            "Optional. Report type and title may be public. Facebook/Instagram may receive the generated poster and selected photo. Details, location, contact info and IMEI stay private. Instagram needs a public JPEG poster; Reels are not supported."
                     ),
                     12,
                     secondaryTextColor(),
@@ -4881,7 +5045,13 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                         clearReportDraftState();
                         showReports();
                     } else {
-                        publish.setText("Retry submission");
+                        if (code == 402 && "LOST".equalsIgnoreCase(type)) {
+                            publish.setText("Continue to payment");
+                            publish.setOnClickListener(view ->
+                                    showPaymentOptions(item, description, location, date));
+                        } else {
+                            publish.setText("Retry submission");
+                        }
                         String detail = submission.errorMessage == null || submission.errorMessage.trim().isEmpty()
                                 ? "Could not save report (" + code + ")"
                                 : submission.errorMessage;
@@ -6110,6 +6280,9 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         Map<String, Object> update = new LinkedHashMap<>();
         update.put("uid", user.getUid());
         update.put("email", cleanEmail);
+        update.put("emailVerified", true);
+        update.put("isEmailVerified", true);
+        update.put("email_verified", true);
 
         FirebaseFirestore db = FirebaseFirestore.getInstance();
         db.collection("users").document(getProfileDocumentKey())
@@ -6125,6 +6298,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         SharedPreferences account = getSharedPreferences("fendly_account", MODE_PRIVATE);
         account.edit()
                 .putString("mobile", mobileValue)
+                .putString("verified_mobile", normalizeIndianMobileDigits(mobileValue))
                 .putBoolean("mobile_verified", true)
                 .apply();
 
@@ -6133,6 +6307,8 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         Map<String, Object> update = new LinkedHashMap<>();
         update.put("uid", user.getUid());
         update.put("mobile", mobileValue);
+        update.put("mobileVerified", true);
+        update.put("mobile_verified", true);
         FirebaseFirestore.getInstance().collection("users").document(getProfileDocumentKey())
                 .set(update, SetOptions.merge())
                 .addOnFailureListener(error -> Log.e("FIREBASE_ERROR", "Mobile verification cloud save failed: ", error));
@@ -6515,7 +6691,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         LinearLayout cityFilterLabel = fieldLabel(localizeReportsText("Filter reports by city"));
         addField(activeContent, cityFilterLabel);
         AutoCompleteTextView cityFilter = new AutoCompleteTextView(this);
-        cityFilter.setHint(localizeReportsText("All cities"));
+        cityFilter.setHint(localizeReportsText("Search any city or town in India"));
         cityFilter.setThreshold(0);
         cityFilter.setSingleLine(true);
         cityFilter.setAdapter(localizedLocationAdapter(cityOptions));
@@ -6542,6 +6718,23 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             renderMergedReports(backendReports, firestoreReports);
         });
         addField(activeContent, cityFilter);
+        TextView searchCity = actionButton(localizeReportsText("Search city"), false);
+        searchCity.setOnClickListener(view -> {
+            String cityQuery = cityFilter.getText().toString().trim();
+            if (cityQuery.equalsIgnoreCase(cityOptions[0])) {
+                discoveryCity = "";
+            } else {
+                discoveryCity = cityQuery;
+                for (int index = 0; index < localizedCities.length; index++) {
+                    if (cityQuery.equalsIgnoreCase(localizedCities[index])) {
+                        discoveryCity = discoveryCities.get(index);
+                        break;
+                    }
+                }
+            }
+            renderMergedReports(backendReports, firestoreReports);
+        });
+        addField(activeContent, searchCity);
 
         TextView discoveryStatus = text(
                 localizeReportsText("Loading reports..."),
@@ -6560,10 +6753,10 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             discoveryReportsLoaded = false;
             discoveryStatus.setText(localizeReportsText("Loading reports..."));
             discoveryStatus.setVisibility(View.VISIBLE);
-            loadDiscoveryReports(discoveryCity, discoveryResults, discoveryStatus, retryGeneration);
+            loadDiscoveryReports(discoveryCity, discoveryResults, discoveryStatus, backendReports, retryGeneration);
         });
         int requestGeneration = ++discoveryRequestGeneration;
-        loadDiscoveryReports(discoveryCity, discoveryResults, discoveryStatus, requestGeneration);
+        loadDiscoveryReports(discoveryCity, discoveryResults, discoveryStatus, backendReports, requestGeneration);
 
         TextView userReportsLabel = text(
                 localizeReportsText("Your reports"),
@@ -6574,6 +6767,11 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         LinearLayout.LayoutParams userReportsLabelParams = new LinearLayout.LayoutParams(-1, -2);
         userReportsLabelParams.setMargins(0, dp(16), 0, dp(8));
         activeContent.addView(userReportsLabel, userReportsLabelParams);
+        LinearLayout activeUserReports = new LinearLayout(this);
+        activeUserReports.setOrientation(LinearLayout.VERTICAL);
+        activeContent.addView(activeUserReports, new LinearLayout.LayoutParams(-1, -2));
+        LinearLayout completedUserReports = new LinearLayout(this);
+        completedUserReports.setOrientation(LinearLayout.VERTICAL);
 
         Map<String, JSONObject> reportMap = new LinkedHashMap<>();
         try {
@@ -6602,6 +6800,8 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             Collections.sort(allReports, (a, b) -> Long.compare(parseReportCreatedAtMillis(b), parseReportCreatedAtMillis(a)));
 
             int visibleReportCount = 0;
+            int activeReportCount = 0;
+            int completedReportCount = 0;
             for (JSONObject report : allReports) {
                 if (!discoveryReportMatchesCategory(report, myReportsCategory)) continue;
                 visibleReportCount++;
@@ -6615,7 +6815,8 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                 long createdAtMs = parseReportCreatedAtMillis(report);
                 long ageMs = System.currentTimeMillis() - createdAtMs;
                 boolean isWithin5Hours = createdAtMs > 0 && ageMs >= 0 && ageMs <= 5 * 3600 * 1000L;
-                boolean canEdit = report.optInt("edit_count", 0) == 0 && isWithin5Hours;
+                boolean isCompleted = resolveReportWorkflowStage(report) == 4;
+                boolean canEdit = !isCompleted && report.optInt("edit_count", 0) == 0 && isWithin5Hours;
                 LinearLayout reportCard = reportRow(title, displayType + "  ·  " + detail, () -> {
                     editingReportId = reportId;
                     editingReportType = type;
@@ -6638,15 +6839,19 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                     Arrays.fill(reportImages, null);
                     Arrays.fill(reportCameraImages, null);
                     showReport(type);
-                }, canEdit, () -> deleteReport(reportId, type));
+                }, canEdit);
                 LinearLayout reportCardContainer = new LinearLayout(this);
                 reportCardContainer.setOrientation(LinearLayout.VERTICAL);
                 reportCardContainer.setPadding(dp(8), dp(6), dp(8), dp(10));
                 reportCardContainer.setBackground(roundWithStroke(surfaceColor(), 18, borderColor()));
                 reportCard.setBackgroundColor(Color.TRANSPARENT);
-                reportCard.setOnClickListener(view -> showReportDetailsDialog(report, false));
+                reportCard.setOnClickListener(view -> showReportDetailsDialog(report, false, true));
                 reportCardContainer.addView(reportCard, new LinearLayout.LayoutParams(-1, -2));
                 reportCardContainer.addView(createReportStatusTracker(report));
+                reportCardContainer.setOnClickListener(view -> showReportDetailsDialog(report, false, true));
+                if (!isCompleted && "LOST".equalsIgnoreCase(type)) {
+                    addCommunityPosterAction(reportCardContainer, report, dp(8), dp(12));
+                }
                 if (isHighPriorityReport(report)) {
                     TextView shareAlert = actionButton(
                             localizeReportsText("Share Alert Card"),
@@ -6661,13 +6866,51 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                 }
                 LinearLayout.LayoutParams reportCardParams = new LinearLayout.LayoutParams(-1, -2);
                 reportCardParams.setMargins(0, 0, 0, dp(12));
-                activeContent.addView(reportCardContainer, reportCardParams);
+                if (isCompleted) {
+                    completedReportCount++;
+                    completedUserReports.addView(reportCardContainer, reportCardParams);
+                } else {
+                    activeReportCount++;
+                    activeUserReports.addView(reportCardContainer, reportCardParams);
+                }
             }
 
             if (allReports.isEmpty()) {
                 addField(activeContent, text(localizeReportsText("No reports yet."), 16, secondaryTextColor(), Typeface.NORMAL));
             } else if (visibleReportCount == 0) {
                 addField(activeContent, text(localizeReportsText("No reports in this category."), 16, secondaryTextColor(), Typeface.NORMAL));
+            } else {
+                if (activeReportCount == 0) {
+                    addField(activeUserReports, text(
+                            localizeReportsText("No active reports."),
+                            14,
+                            secondaryTextColor(),
+                            Typeface.NORMAL
+                    ));
+                }
+                if (completedReportCount > 0) {
+                    int completedCount = completedReportCount;
+                    TextView completedToggle = actionButton(
+                            localizeReportsText("Completed reports") + " (" + localizeDigits(String.valueOf(completedCount)) + ")  ▼",
+                            false
+                    );
+                    completedToggle.setGravity(Gravity.START | Gravity.CENTER_VERTICAL);
+                    completedToggle.setPadding(dp(14), 0, dp(14), 0);
+                    LinearLayout.LayoutParams toggleParams = new LinearLayout.LayoutParams(-1, dp(48));
+                    toggleParams.setMargins(0, dp(8), 0, dp(8));
+                    activeContent.addView(completedToggle, toggleParams);
+                    activeContent.addView(completedUserReports, new LinearLayout.LayoutParams(-1, -2));
+                    completedUserReports.setVisibility(View.GONE);
+                    completedToggle.setOnClickListener(view -> {
+                        boolean expand = completedUserReports.getVisibility() != View.VISIBLE;
+                        completedUserReports.setVisibility(expand ? View.VISIBLE : View.GONE);
+                        completedToggle.setText(
+                                localizeReportsText("Completed reports") + " ("
+                                        + localizeDigits(String.valueOf(completedCount))
+                                        + ")  " + (expand ? "▲" : "▼")
+                        );
+                    });
+                }
             }
         } catch (Exception error) {
             addField(activeContent, text(localizeReportsText("No reports yet."), 16, secondaryTextColor(), Typeface.NORMAL));
@@ -7114,67 +7357,6 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         }
     }
 
-    private void deleteReport(String reportId, String type) {
-        Dialog dialog = new Dialog(this);
-        dialog.requestWindowFeature(Window.FEATURE_NO_TITLE);
-        LinearLayout content = themedDialogContent(
-                0,
-                "Delete report?",
-                "This report will be permanently removed."
-        );
-
-        LinearLayout actions = new LinearLayout(this);
-        actions.setGravity(Gravity.END | Gravity.CENTER_VERTICAL);
-
-        TextView cancel = text("Cancel", 12, secondaryTextColor(), Typeface.NORMAL);
-        cancel.setGravity(Gravity.CENTER);
-        cancel.setOnClickListener(view -> dialog.dismiss());
-        actions.addView(cancel, new LinearLayout.LayoutParams(dp(88), dp(44)));
-
-        TextView confirm = text("Delete", 12, GOLD_ON, Typeface.NORMAL);
-        confirm.setGravity(Gravity.CENTER);
-        confirm.setBackground(goldButton());
-        LinearLayout.LayoutParams confirmParams = new LinearLayout.LayoutParams(dp(100), dp(44));
-        confirmParams.setMargins(dp(8), 0, 0, 0);
-        confirm.setOnClickListener(view -> {
-            dialog.dismiss();
-            FirebaseAuth.getInstance().getCurrentUser().getIdToken(false).addOnSuccessListener(token -> network.execute(() -> {
-                int code = deleteItem(type, reportId, token.getToken());
-                runOnUiThread(() -> {
-                    if (code >= 200 && code < 300) {
-                        Toast.makeText(this, "Report deleted", Toast.LENGTH_SHORT).show();
-                        showReports();
-                    } else {
-                        Toast.makeText(this, "Could not delete report (" + code + ")", Toast.LENGTH_LONG).show();
-                    }
-                });
-            }));
-        });
-        actions.addView(confirm, confirmParams);
-        content.addView(actions, new LinearLayout.LayoutParams(-1, dp(44)));
-
-        dialog.setContentView(content);
-        dialog.setCanceledOnTouchOutside(true);
-        dialog.show();
-        sizeThemedDialog(dialog);
-    }
-
-    private int deleteItem(String type, String id, String idToken) {
-        HttpURLConnection connection = null;
-        try {
-            connection = (HttpURLConnection) new URL(API_BASE + "/api/items/" + type.toLowerCase(Locale.US) + "/" + id).openConnection();
-            connection.setRequestMethod("DELETE");
-            connection.setConnectTimeout(15000);
-            connection.setReadTimeout(60000);
-            connection.setRequestProperty("Authorization", "Bearer " + idToken);
-            return connection.getResponseCode();
-        } catch (Exception error) {
-            return -1;
-        } finally {
-            if (connection != null) connection.disconnect();
-        }
-    }
-
     private void hydrateProfileFromBackend() {
         hydrateProfileFromBackend(null);
     }
@@ -7272,11 +7454,11 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                         if (cloudUsername != null && !cloudUsername.trim().isEmpty()) {
                             editor.putString("username", formatUsernameDisplay(cloudUsername));
                         }
-                        putIfPresent(editor, "full_name", document.getString("full_name"));
                         String cloudFirstName = document.getString("first_name");
+                        if (cloudFirstName == null || cloudFirstName.trim().isEmpty()) cloudFirstName = document.getString("profile_first_name");
                         String cloudSurname = document.getString("surname");
-                        if (cloudFirstName != null) editor.putString("profile_first_name", cloudFirstName.trim());
-                        if (cloudSurname != null) editor.putString("profile_surname", cloudSurname.trim());
+                        if (cloudSurname == null || cloudSurname.trim().isEmpty()) cloudSurname = document.getString("profile_surname");
+                        putProfileNameFields(editor, document.getString("full_name"), cloudFirstName, cloudSurname);
                         putIfPresent(editor, "email", document.getString("email"));
                         putIfPresent(editor, "mobile", document.getString("mobile"));
                         putIfPresent(editor, "state", document.getString("state"));
@@ -7305,6 +7487,9 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                         if (visibleAvatar != null && cloudImageChanged) {
                             runOnUiThread(() -> bindProfilePhoto(visibleAvatar, account));
                         }
+                        if (currentPage == PAGE_PROFILE) {
+                            runOnUiThread(() -> refreshProfileViewInPlace(false));
+                        }
                     }
                     cloudProfileLoaded = true;
                     cloudProfileHydrationInFlight = false;
@@ -7318,6 +7503,25 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
 
     private void putIfPresent(SharedPreferences.Editor editor, String key, String value) {
         if (value != null && !value.trim().isEmpty()) editor.putString(key, value.trim());
+    }
+
+    private void putProfileNameFields(SharedPreferences.Editor editor, String fullName,
+                                      String firstName, String surname) {
+        String normalizedFullName = fullName == null ? "" : getCanonicalEnglishName(fullName.trim());
+        if (!normalizedFullName.isEmpty()) editor.putString("full_name", normalizedFullName);
+
+        String[] nameParts = normalizedFullName.isEmpty()
+                ? new String[0]
+                : normalizedFullName.split("\\s+", 2);
+        String resolvedFirstName = firstName == null ? "" : firstName.trim();
+        String resolvedSurname = surname == null ? "" : surname.trim();
+        if (resolvedFirstName.isEmpty() && nameParts.length > 0) resolvedFirstName = nameParts[0];
+        if (resolvedSurname.isEmpty() && nameParts.length > 1) resolvedSurname = nameParts[1];
+
+        if (!resolvedFirstName.isEmpty()) editor.putString("profile_first_name", resolvedFirstName);
+        if (!resolvedSurname.isEmpty() || !normalizedFullName.isEmpty()) {
+            editor.putString("profile_surname", resolvedSurname);
+        }
     }
 
     private String syncProfileImageFromDocument(SharedPreferences.Editor editor, SharedPreferences account,
@@ -7406,8 +7610,22 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             setVisibleText(visibleEmail, emailVal);
         }
         String mobileVal = document.getString("mobile");
-        if (visibleMobileCells != null && mobileVal != null && !hasMobileCellsFocus()) {
+        SharedPreferences account = getSharedPreferences("fendly_account", MODE_PRIVATE);
+        boolean localMobileVerified = isMobileVerifiedFor(
+                account.getString("mobile", ""),
+                account
+        );
+        boolean cloudMobileMatchesVerified = normalizeIndianMobileDigits(mobileVal == null ? "" : mobileVal)
+                .equals(normalizeIndianMobileDigits(account.getString("mobile", "")));
+        if (visibleMobileCells != null
+                && mobileVal != null
+                && !mobileVal.trim().isEmpty()
+                && (!localMobileVerified || cloudMobileMatchesVerified)
+                && !hasMobileCellsFocus()) {
             setMobileCells(visibleMobileCells, mobileVal);
+        } else if (visibleMobileCells != null && !localMobileVerified && !hasMobileCellsFocus()
+                && mobileVal != null && mobileVal.trim().isEmpty()) {
+            setMobileCells(visibleMobileCells, "");
         }
         applyingCloudProfile = false;
     }
@@ -7878,7 +8096,8 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                 .get(Source.SERVER)
                 .addOnSuccessListener(document -> {
                     SharedPreferences.Editor editor = account.edit();
-                    boolean emailVerified = false;
+                    String locallySavedEmail = account.getString("email", "").trim();
+                    boolean emailVerified = account.getBoolean("email_verified", false);
                     boolean mobileVerified = false;
                     String email = "";
                     String mobile = "";
@@ -7887,15 +8106,26 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                     String surname = "";
                     String state = "";
                     String city = "";
+                    boolean hasMobileVerificationState = false;
 
                     if (document != null && document.exists()) {
-                        emailVerified = parseBooleanValue(document.get("emailVerified"))
+                        String cloudEmailValue = document.getString("email");
+                        boolean cloudEmailVerified = parseBooleanValue(document.get("emailVerified"))
                                 || parseBooleanValue(document.get("isEmailVerified"))
                                 || parseBooleanValue(document.get("email_verified"));
+                        boolean sameSavedEmail = locallySavedEmail.isEmpty()
+                                || cloudEmailValue == null
+                                || cloudEmailValue.trim().isEmpty()
+                                || locallySavedEmail.equalsIgnoreCase(cloudEmailValue.trim());
+                        emailVerified = cloudEmailVerified
+                                || (emailVerified && sameSavedEmail);
+                        hasMobileVerificationState = document.contains("mobileVerified")
+                                || document.contains("isMobileVerified")
+                                || document.contains("mobile_verified");
                         mobileVerified = parseBooleanValue(document.get("mobileVerified"))
                                 || parseBooleanValue(document.get("isMobileVerified"))
                                 || parseBooleanValue(document.get("mobile_verified"));
-                        email = document.getString("email");
+                        email = cloudEmailValue;
                         mobile = document.getString("mobile");
                         fullName = document.getString("full_name");
                         firstName = document.getString("first_name");
@@ -7904,8 +8134,23 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                         city = document.getString("city");
                     }
 
+                    if (!hasMobileVerificationState) {
+                        mobileVerified = isMobileVerifiedFor(
+                                mobile == null || mobile.trim().isEmpty()
+                                        ? account.getString("mobile", "")
+                                        : mobile,
+                                account
+                        );
+                    }
                     editor.putBoolean("email_verified", emailVerified);
                     editor.putBoolean("mobile_verified", mobileVerified);
+                    if (mobileVerified) {
+                        if (mobile != null && !mobile.trim().isEmpty()) {
+                            editor.putString("verified_mobile", normalizeIndianMobileDigits(mobile));
+                        }
+                    } else if (hasMobileVerificationState) {
+                        editor.remove("verified_mobile");
+                    }
                     if (email != null && !email.trim().isEmpty() && !email.endsWith("@login.fendly.app")) {
                         editor.putString("email", email.trim());
                     }
@@ -7950,16 +8195,37 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                                     String remoteEmail = profile.optString("email", "").trim();
                                     String remoteMobile = profile.optString("mobile", "").trim();
                                     String remoteFullName = profile.optString("full_name", "").trim();
+                                    String remoteState = profile.optString("state", "").trim();
+                                    String remoteCity = profile.optString("city", "").trim();
                                     SharedPreferences.Editor backendEditor = getSharedPreferences("fendly_account", MODE_PRIVATE).edit();
                                     if (remoteEmailVerified) backendEditor.putBoolean("email_verified", true);
-                                    if (remoteMobileVerified) backendEditor.putBoolean("mobile_verified", true);
+                                    if (!remoteMobile.isEmpty()) {
+                                        backendEditor.putBoolean("mobile_verified", remoteMobileVerified);
+                                        if (remoteMobileVerified) {
+                                            backendEditor.putString("verified_mobile", normalizeIndianMobileDigits(remoteMobile));
+                                        } else {
+                                            backendEditor.remove("verified_mobile");
+                                        }
+                                    }
                                     if (!remoteEmail.isEmpty() && !remoteEmail.endsWith("@login.fendly.app")) backendEditor.putString("email", remoteEmail);
                                     if (!remoteMobile.isEmpty()) backendEditor.putString("mobile", remoteMobile);
-                                    if (!remoteFullName.isEmpty()) backendEditor.putString("full_name", remoteFullName);
+                                    putProfileNameFields(backendEditor, remoteFullName, "", "");
+                                    if (!remoteState.isEmpty()) backendEditor.putString("state", remoteState);
+                                    if (!remoteCity.isEmpty()) backendEditor.putString("city", remoteCity);
                                     syncProfileImageFromJson(backendEditor,
                                             getSharedPreferences("fendly_account", MODE_PRIVATE), profile,
                                             "profile_photo_url", "imageUrl", "image_url");
                                     backendEditor.apply();
+                                    runOnUiThread(() -> {
+                                        if (currentPage == PAGE_PROFILE) {
+                                            refreshProfileViewInPlace(false);
+                                        } else if (currentPage == PAGE_PROFILE_SETUP) {
+                                            if (visibleMobileCells != null && !remoteMobile.isEmpty()) {
+                                                setMobileCells(visibleMobileCells, remoteMobile);
+                                            }
+                                            refreshMobileVerificationUi();
+                                        }
+                                    });
                                 }
                             }
                         } catch (Exception ignored) {
@@ -8008,13 +8274,11 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                 if (username != null && !username.trim().isEmpty()) {
                     editor.putString("username", formatUsernameDisplay(username));
                 }
-                putIfPresent(editor, "full_name", document.getString("full_name"));
                 String cloudFirstName = document.getString("first_name");
                 if (cloudFirstName == null || cloudFirstName.trim().isEmpty()) cloudFirstName = document.getString("profile_first_name");
                 String cloudSurname = document.getString("surname");
                 if (cloudSurname == null || cloudSurname.trim().isEmpty()) cloudSurname = document.getString("profile_surname");
-                if (cloudFirstName != null) editor.putString("profile_first_name", cloudFirstName.trim());
-                if (cloudSurname != null) editor.putString("profile_surname", cloudSurname.trim());
+                putProfileNameFields(editor, document.getString("full_name"), cloudFirstName, cloudSurname);
                 putIfPresent(editor, "email", document.getString("email"));
                 putIfPresent(editor, "mobile", document.getString("mobile"));
                 putIfPresent(editor, "state", document.getString("state"));
@@ -8108,7 +8372,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
 
                         SharedPreferences.Editor editor = account.edit();
                         if (!username.isEmpty()) editor.putString("username", username);
-                        if (!fullName.isEmpty()) editor.putString("full_name", fullName);
+                        putProfileNameFields(editor, fullName, "", "");
                         if (!email.isEmpty()) editor.putString("email", email);
                         if (!mobile.isEmpty()) editor.putString("mobile", mobile);
                         if (!state.isEmpty()) editor.putString("state", state);
@@ -8116,7 +8380,14 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                         syncProfileImageFromJson(editor, account, profile,
                                 "profile_photo_url", "imageUrl", "image_url");
                         if (emailVerified) editor.putBoolean("email_verified", true);
-                        if (mobileVerified) editor.putBoolean("mobile_verified", true);
+                        if (!mobile.isEmpty()) {
+                            editor.putBoolean("mobile_verified", mobileVerified);
+                            if (mobileVerified) {
+                                editor.putString("verified_mobile", normalizeIndianMobileDigits(mobile));
+                            } else {
+                                editor.remove("verified_mobile");
+                            }
+                        }
                         editor.apply();
                     }
                 }
@@ -8127,13 +8398,19 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                 profileHydrated = true;
                 profileHydrationInFlight = false;
                 flushPendingProfileHydrationCallbacks();
-                if (onComplete != null) runOnUiThread(onComplete);
+                runOnUiThread(() -> {
+                    if (currentPage == PAGE_PROFILE) refreshProfileViewInPlace(false);
+                    if (onComplete != null) onComplete.run();
+                });
             }
         })).addOnFailureListener(error -> {
             profileHydrated = true;
             profileHydrationInFlight = false;
             flushPendingProfileHydrationCallbacks();
-            if (onComplete != null) runOnUiThread(onComplete);
+            runOnUiThread(() -> {
+                if (currentPage == PAGE_PROFILE) refreshProfileViewInPlace(false);
+                if (onComplete != null) onComplete.run();
+            });
         });
     }
 
@@ -8258,21 +8535,13 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         }
         String cloudState = document.getString("state");
         String cloudCity = document.getString("city");
+        putProfileNameFields(editor, fullName, cloudFirstName, cloudSurname);
         if (isVerified) editor.putBoolean("email_verified", true);
         if (cloudEmail != null && !cloudEmail.trim().isEmpty() && !cloudEmail.endsWith("@login.fendly.app")) {
             editor.putString("email", cloudEmail.trim());
         }
         if (cloudMobile != null && !cloudMobile.trim().isEmpty()) {
             editor.putString("mobile", cloudMobile.trim());
-        }
-        if (fullName != null && !fullName.trim().isEmpty()) {
-            editor.putString("full_name", fullName.trim());
-        }
-        if (cloudFirstName != null && !cloudFirstName.trim().isEmpty()) {
-            editor.putString("profile_first_name", cloudFirstName.trim());
-        }
-        if (cloudSurname != null && !cloudSurname.trim().isEmpty()) {
-            editor.putString("profile_surname", cloudSurname.trim());
         }
         if (cloudState != null && !cloudState.trim().isEmpty()) {
             editor.putString("state", cloudState.trim());
@@ -8327,13 +8596,24 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                             String remoteEmail = profile.optString("email", "").trim();
                             String remoteMobile = profile.optString("mobile", "").trim();
                             String remoteFullName = profile.optString("full_name", "").trim();
+                            String remoteState = profile.optString("state", "").trim();
+                            String remoteCity = profile.optString("city", "").trim();
                             String previousPhotoUrl = account.getString("profile_image_url", "").trim();
                             SharedPreferences.Editor backendEditor = account.edit();
                             if (remoteEmailVerified) backendEditor.putBoolean("email_verified", true);
-                            if (remoteMobileVerified) backendEditor.putBoolean("mobile_verified", true);
+                            if (!remoteMobile.isEmpty()) {
+                                backendEditor.putBoolean("mobile_verified", remoteMobileVerified);
+                                if (remoteMobileVerified) {
+                                    backendEditor.putString("verified_mobile", normalizeIndianMobileDigits(remoteMobile));
+                                } else {
+                                    backendEditor.remove("verified_mobile");
+                                }
+                            }
                             if (!remoteEmail.isEmpty() && !remoteEmail.endsWith("@login.fendly.app")) backendEditor.putString("email", remoteEmail);
                             if (!remoteMobile.isEmpty()) backendEditor.putString("mobile", remoteMobile);
-                            if (!remoteFullName.isEmpty()) backendEditor.putString("full_name", remoteFullName);
+                            putProfileNameFields(backendEditor, remoteFullName, "", "");
+                            if (!remoteState.isEmpty()) backendEditor.putString("state", remoteState);
+                            if (!remoteCity.isEmpty()) backendEditor.putString("city", remoteCity);
                             String updatedPhotoUrl = syncProfileImageFromJson(backendEditor, account, profile,
                                     "profile_photo_url", "imageUrl", "image_url");
                             backendEditor.apply();
@@ -8408,18 +8688,33 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         String firstName = account.getString("profile_first_name", "");
         String surname = account.getString("profile_surname", "");
         String fullName = account.getString("full_name", "");
+        String[] nameParts = getCanonicalEnglishName(fullName).split("\\s+", 2);
+        if (firstName.trim().isEmpty() && nameParts.length > 0) firstName = nameParts[0];
+        if (surname.trim().isEmpty() && nameParts.length > 1) surname = nameParts[1];
         if (!firstName.isEmpty() && visibleFirstName != null) {
             setVisibleText(visibleFirstName, localizeProfileName(firstName));
         }
         if (visibleSurname != null) {
             if (!surname.isEmpty()) {
                 setVisibleText(visibleSurname, localizeProfileName(surname));
-            } else if (!fullName.isEmpty()) {
-                String[] parts = getCanonicalEnglishName(fullName).split("\\s+", 2);
-                if (parts.length > 1) {
-                    setVisibleText(visibleSurname, localizeProfileName(parts[1]));
-                }
             }
+        }
+        String state = account.getString("state", "").trim();
+        String city = account.getString("city", "").trim();
+        if (visibleStateSearch != null && visibleStateSearch.getText().toString().trim().isEmpty() && !state.isEmpty()) {
+            visibleStateSearch.setText(localizeProfileDisplayValue("state", state));
+            visibleStateSearch.setTag(state);
+        }
+        if (visibleCitySearch != null && visibleCitySearch.getText().toString().trim().isEmpty() && !city.isEmpty()) {
+            visibleCitySearch.setText(localizeProfileDisplayValue("city", city));
+            visibleCitySearch.setTag(city);
+        }
+        if (visibleCitySearch != null) {
+            String selectedState = visibleStateSearch == null
+                    ? state
+                    : String.valueOf(visibleStateSearch.getTag() == null ? state : visibleStateSearch.getTag());
+            String[] cities = indiaStateCityMap().getOrDefault(selectedState, new String[0]);
+            visibleCitySearch.setEnabled(cities.length > 0 && !isSelectCityPlaceholder(cities[0]));
         }
         if (visibleEmail != null) {
             String email = account.getString("email", "");
@@ -8433,6 +8728,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                 setMobileCells(visibleMobileCells, mobile);
             }
         }
+        refreshMobileVerificationUi();
     }
 
     private void renderProfileContent() {
@@ -8446,7 +8742,27 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
         LinearLayout root = screenBase(getString(R.string.profile_title));
         String profileHeadingName = account.getString("full_name", account.getString("username", "Your profile"));
-        addCenteredHeading(localizeProfileName(profileHeadingName), getString(R.string.profile_account_details));
+        LinearLayout profileHeader = new LinearLayout(this);
+        profileHeader.setOrientation(LinearLayout.HORIZONTAL);
+        profileHeader.setGravity(Gravity.CENTER_VERTICAL);
+        TextView profileTitle = text(
+                localizeProfileName(profileHeadingName),
+                20,
+                primaryTextColor(),
+                Typeface.NORMAL
+        );
+        profileTitle.setGravity(Gravity.CENTER);
+        profileTitle.setTypeface(localizedScriptTypeface(profileTitle.getText(), Typeface.NORMAL));
+        profileHeader.addView(profileTitle, new LinearLayout.LayoutParams(0, dp(44), 1f));
+        activeContent.addView(profileHeader, new LinearLayout.LayoutParams(-1, dp(48)));
+        TextView profileSubtitle = text(
+                translate(getString(R.string.profile_account_details)),
+                11,
+                secondaryTextColor(),
+                Typeface.NORMAL
+        );
+        profileSubtitle.setGravity(Gravity.CENTER);
+        addField(activeContent, profileSubtitle);
 
         LinearLayout photoSection = new LinearLayout(this);
         photoSection.setOrientation(LinearLayout.VERTICAL);
@@ -8495,12 +8811,10 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         String rawSavedFullName = (!draftFullName.trim().isEmpty() ? draftFullName : account.getString("full_name", "")).trim();
         String savedFullName = getCanonicalEnglishName(rawSavedFullName);
         String[] nameParts = savedFullName.split("\\s+", 2);
-        String savedFirstName = account.contains("profile_first_name")
-            ? account.getString("profile_first_name", "")
-            : (nameParts.length > 0 ? nameParts[0] : "");
-        String savedSurname = account.contains("profile_surname")
-            ? account.getString("profile_surname", "")
-            : (nameParts.length > 1 ? nameParts[1] : "");
+        String savedFirstName = account.getString("profile_first_name", "").trim();
+        if (savedFirstName.isEmpty() && nameParts.length > 0) savedFirstName = nameParts[0];
+        String savedSurname = account.getString("profile_surname", "").trim();
+        if (savedSurname.isEmpty() && nameParts.length > 1) savedSurname = nameParts[1];
         firstName.setText(localizeProfileName(savedFirstName));
         surname.setText(localizeProfileName(savedSurname));
         firstName.setTag(savedFirstName);
@@ -8599,6 +8913,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         refreshEmailVerificationState(email, emailVerify);
 
         TextView mobileVerify = filledButton(getString(R.string.profile_verify_otp), GOLD, GOLD_ON);
+        visibleMobileVerify = mobileVerify;
         mobileVerify.setPadding(dp(10), 0, dp(10), 0);
         mobileVerify.setOnClickListener(view -> verifyProfileMobileTarget(mobileCells, mobileVerify));
         String verifiedMobile = account.getString("mobile", "").trim();
@@ -8608,7 +8923,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             cell.setFocusableInTouchMode(true);
             cell.setCursorVisible(true);
         }
-        boolean isMobileVerified = account.getBoolean("mobile_verified", false);
+        boolean isMobileVerified = isMobileVerifiedFor(savedMobile, account);
         if (isMobileVerified) lockVerifiedMobileField(mobileCells, mobileVerify);
         for (EditText cell : mobileCells) {
             cell.addTextChangedListener(new TextWatcher() {
@@ -8616,8 +8931,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                 @Override public void onTextChanged(CharSequence value, int start, int before, int count) {
                     String currentMobile = normalizeLocalizedDigits(mobileValue(mobileCells));
                     boolean verifiedNow = currentMobile.matches("^\\d{10}$")
-                        && getSharedPreferences("fendly_account", MODE_PRIVATE).getBoolean("mobile_verified", false)
-                        && currentMobile.equals(getSharedPreferences("fendly_account", MODE_PRIVATE).getString("mobile", "").trim());
+                        && isMobileVerifiedFor(currentMobile, getSharedPreferences("fendly_account", MODE_PRIVATE));
                     if (verifiedNow) {
                         setVerifiedButtonState(mobileVerify);
                         return;
@@ -8640,6 +8954,8 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         Arrays.sort(states, 1, states.length);
         AutoCompleteTextView stateSearch = new AutoCompleteTextView(this);
         AutoCompleteTextView citySearch = new AutoCompleteTextView(this);
+        visibleStateSearch = stateSearch;
+        visibleCitySearch = citySearch;
         String savedState = !draftState.trim().isEmpty() ? draftState : account.getString("state", "");
         String savedCity = !draftCity.trim().isEmpty() ? draftCity : account.getString("city", "");
         stateSearch.setText(localizeProfileDisplayValue("state", savedState));
@@ -8685,7 +9001,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         root.addView(locationRow, contentParams(-1, dp(76), dp(4)));
 
         addEditableProfileField(root, getString(R.string.profile_email), email, emailVerify);
-        addLabeledMobileField(root, getString(R.string.profile_mobile), mobileCells, mobileVerify);
+        addLabeledMobileField(root, LanguageManager.profileText(this, "profile_mobile"), mobileCells, mobileVerify);
 
         EditText[] changePinCells = pinCells();
         LinearLayout pinGroup = new LinearLayout(this);
@@ -8819,12 +9135,12 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         });
         root.addView(save, contentParams(-1, dp(44), dp(10)));
 
-        TextView deleteAccount = actionButton("Delete account", false);
+        TextView deleteAccount = actionButton(LanguageManager.profileText(this, "delete_account"), false);
         deleteAccount.setTextColor(Color.rgb(190, 55, 55));
         deleteAccount.setOnClickListener(view -> showDeleteAccountDialog());
         root.addView(deleteAccount, contentParams(-1, dp(44), dp(4)));
 
-        TextView privacyPolicy = actionButton("Privacy policy and data deletion", false);
+        TextView privacyPolicy = actionButton(LanguageManager.profileText(this, "privacy_data_deletion"), false);
         privacyPolicy.setOnClickListener(view -> showPrivacyPolicyDialog());
         root.addView(privacyPolicy, contentParams(-1, dp(44), dp(4)));
 
@@ -8839,8 +9155,8 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         dialog.requestWindowFeature(Window.FEATURE_NO_TITLE);
         LinearLayout content = themedDialogContent(
                 0,
-                "Privacy policy and data deletion",
-                "Current policy and data deletion information."
+                LanguageManager.profileText(this, "privacy_data_deletion"),
+                LanguageManager.profileText(this, "privacy_subtitle")
         );
 
         FrameLayout policyContainer = new FrameLayout(this);
@@ -8855,7 +9171,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         policyContainer.addView(policyView, new FrameLayout.LayoutParams(-1, -1));
 
         TextView loadError = text(
-                "Could not load the policy. Check your internet connection and try again.",
+                LanguageManager.profileText(this, "privacy_load_failed"),
                 13,
                 secondaryTextColor(),
                 Typeface.NORMAL
@@ -8893,7 +9209,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         policyParams.setMargins(0, dp(8), 0, dp(10));
         content.addView(policyContainer, policyParams);
 
-        TextView close = actionButton("Close", true);
+        TextView close = actionButton(LanguageManager.profileText(this, "close"), true);
         close.setOnClickListener(view -> dialog.dismiss());
         content.addView(close, new LinearLayout.LayoutParams(-1, dp(44)));
 
@@ -8901,7 +9217,13 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         dialog.setCanceledOnTouchOutside(true);
         dialog.show();
         sizeThemedDialog(dialog);
-        policyView.loadUrl(API_BASE + "/static/privacy-policy.html");
+        policyView.loadDataWithBaseURL(
+                API_BASE + "/static/",
+                LanguageManager.privacyInformationHtml(this),
+                "text/html",
+                "UTF-8",
+                null
+        );
     }
 
     private boolean handlePrivacyPolicyNavigation(Uri uri) {
@@ -8919,7 +9241,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             startActivity(new Intent(Intent.ACTION_VIEW, uri));
         } catch (ActivityNotFoundException error) {
             Log.e("PRIVACY_POLICY", "No app is available to open the policy link", error);
-            Toast.makeText(this, "Could not open this link", Toast.LENGTH_LONG).show();
+            Toast.makeText(this, LanguageManager.profileText(this, "privacy_open_link_failed"), Toast.LENGTH_LONG).show();
         }
         return true;
     }
@@ -9153,14 +9475,6 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         return showEdit ? reportRow(title, detail, editAction) : reportRow(title, detail);
     }
 
-    private LinearLayout reportRow(String title, String detail, Runnable editAction, boolean showEdit, Runnable deleteAction) {
-        LinearLayout row = reportRow(title, detail, editAction, showEdit);
-        TextView delete = actionButton("Delete", false);
-        delete.setOnClickListener(view -> deleteAction.run());
-        row.addView(delete, new LinearLayout.LayoutParams(dp(82), dp(40)));
-        return row;
-    }
-
     private LinearLayout reportRow(String title, String detail, Runnable editAction) {
         LinearLayout row = new LinearLayout(this);
         row.setOrientation(LinearLayout.HORIZONTAL);
@@ -9360,11 +9674,43 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
     }
 
     private EditText[] mobileCells() {
-        EditText mobileField = field(getString(R.string.profile_mobile_number));
-        mobileField.setKeyListener(DigitsKeyListener.getInstance("0123456789"));
+        EditText mobileField = field(LanguageManager.profileText(this, "profile_mobile_number"));
+        mobileField.setKeyListener(DigitsKeyListener.getInstance("0123456789" + localizedProfileDigits()));
         mobileField.setFilters(new InputFilter[]{new InputFilter.LengthFilter(10)});
+        mobileField.addTextChangedListener(new TextWatcher() {
+            private boolean normalizing;
+
+            @Override public void beforeTextChanged(CharSequence value, int start, int count, int after) { }
+
+            @Override public void onTextChanged(CharSequence value, int start, int before, int count) { }
+
+            @Override public void afterTextChanged(Editable value) {
+                if (normalizing) return;
+                String normalized = normalizeLocalizedDigits(value.toString()).replaceAll("\\D+", "");
+                String localized = localizeDigits(normalized);
+                if (localized.equals(value.toString())) return;
+
+                int selection = mobileField.getSelectionStart();
+                normalizing = true;
+                mobileField.setText(localized);
+                if (selection >= 0) {
+                    mobileField.setSelection(Math.min(selection, localized.length()));
+                }
+                normalizing = false;
+            }
+        });
         mobileField.setImeOptions(EditorInfo.IME_ACTION_DONE);
         return new EditText[]{mobileField};
+    }
+
+    private String localizedProfileDigits() {
+        String[] digitSets = {
+                "0123456789", "०१२३४५६७८९", "०१२३४५६७८९", "૦૧૨૩૪૫૬૭૮૯",
+                "০১২৩৪৫৬৭৮৯", "௦௧௨௩௪௫௬௭௮௯", "౦౧౨౩౪౫౬౭౮౯", "೦೧೨೩೪೫೬೭೮೯",
+                "൦൧൨൩൪൫൬൭൮൯"
+        };
+        int language = Math.max(0, Math.min(selectedLanguage, digitSets.length - 1));
+        return digitSets[language];
     }
 
     private String mobileValue(EditText[] cells) {
@@ -9486,6 +9832,45 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             email.setCursorVisible(false);
         }
         setVerifiedButtonState(verifyButton);
+    }
+
+    private boolean isMobileVerifiedFor(String mobileValue, SharedPreferences account) {
+        String mobile = normalizeIndianMobileDigits(mobileValue);
+        String savedMobile = normalizeIndianMobileDigits(account.getString("mobile", ""));
+        String verifiedMobile = normalizeIndianMobileDigits(
+                account.getString("verified_mobile", savedMobile)
+        );
+        return account.getBoolean("mobile_verified", false)
+                && mobile.matches("^\\d{10}$")
+                && mobile.equals(savedMobile)
+                && mobile.equals(verifiedMobile);
+    }
+
+    private void refreshMobileVerificationUi() {
+        if (visibleMobileCells == null || visibleMobileVerify == null) return;
+        SharedPreferences account = getSharedPreferences("fendly_account", MODE_PRIVATE);
+        String mobile = normalizeLocalizedDigits(mobileValue(visibleMobileCells));
+        if (isMobileVerifiedFor(mobile, account)) {
+            lockVerifiedMobileField(visibleMobileCells, visibleMobileVerify);
+            return;
+        }
+        if (!visibleMobileVerify.isEnabled()) {
+            visibleMobileVerify.setOnClickListener(view ->
+                    verifyProfileMobileTarget(visibleMobileCells, visibleMobileVerify));
+            visibleMobileVerify.setText(translate("Verify OTP"));
+            visibleMobileVerify.setEnabled(true);
+            visibleMobileVerify.setClickable(true);
+            visibleMobileVerify.setFocusable(true);
+            visibleMobileVerify.setBackground(round(GOLD, 24));
+            visibleMobileVerify.setTextColor(GOLD_ON);
+        }
+        for (EditText cell : visibleMobileCells) {
+            if (cell == null) continue;
+            cell.setEnabled(true);
+            cell.setFocusable(true);
+            cell.setFocusableInTouchMode(true);
+            cell.setCursorVisible(true);
+        }
     }
 
     private void lockVerifiedMobileField(Object mobileTarget, TextView verifyButton) {
@@ -10247,15 +10632,16 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
 
         TextView refreshButton = actionButton("Refresh status", true);
         refreshButton.setOnClickListener(view ->
-                loadAdminSocialPublishing(channels, history, message));
+                loadAdminSocialPublishing(channels, history, message, true));
         root.addView(refreshButton, contentParams(-1, dp(44), dp(8)));
-        loadAdminSocialPublishing(channels, history, message);
+        loadAdminSocialPublishing(channels, history, message, true);
     }
 
     private void loadAdminSocialPublishing(
             LinearLayout channels,
             LinearLayout history,
-            TextView message
+            TextView message,
+            boolean refreshPlatformStatus
     ) {
         FirebaseUser adminUser = FirebaseAuth.getInstance().getCurrentUser();
         if (adminUser == null) {
@@ -10266,8 +10652,9 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         adminUser.getIdToken(false).addOnSuccessListener(token -> network.execute(() -> {
             AuthorizedResponse statusResponse = getAuthorizedResponse(
                     "/api/social/status", token.getToken());
-            AuthorizedResponse historyResponse = getAuthorizedResponse(
-                    "/api/social/publications?limit=20", token.getToken());
+            AuthorizedResponse historyResponse = refreshPlatformStatus
+                    ? postAuthorizedResponse("/api/social/publications/refresh?limit=20", token.getToken())
+                    : getAuthorizedResponse("/api/social/publications?limit=20", token.getToken());
             runOnUiThread(() -> {
                 if (!adminSocialPageOpen || currentPage != PAGE_ADMIN) return;
                 if (statusResponse.statusCode != 200) {
@@ -10280,27 +10667,15 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                     JSONObject status = new JSONObject(statusResponse.body);
                     boolean facebookConnected = socialProviderConnected(status, "facebook");
                     boolean instagramConnected = socialProviderConnected(status, "instagram");
-                    boolean xConnected = socialProviderConnected(status, "x");
-                    addSocialProviderRow(
+                    addSocialMetaProviderRow(
                             channels,
-                            "Meta (Facebook Page and Instagram)",
-                            facebookConnected || instagramConnected,
-                            facebookConnected
-                                    ? socialProviderName(status, "facebook")
-                                    : instagramConnected ? socialProviderName(status, "instagram") : "",
-                            "meta",
-                            "facebook"
-                    );
-                    addSocialProviderRow(
-                            channels,
-                            "X",
-                            xConnected,
-                            socialProviderName(status, "x"),
-                            "x",
-                            "x"
+                            facebookConnected,
+                            socialProviderName(status, "facebook"),
+                            instagramConnected,
+                            socialProviderName(status, "instagram")
                     );
                     message.setText(
-                            "Photos can be sent to Facebook/Instagram. X posts text only. "
+                            "Generated posters can be sent to Facebook/Instagram. "
                                     + "Failed or interrupted jobs are not automatically retried."
                     );
                 } catch (Exception error) {
@@ -10315,18 +10690,34 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                 }
                 try {
                     JSONArray publications = new JSONArray(historyResponse.body);
-                    if (publications.length() == 0) {
-                        addSocialHistoryEntry(history, "No report publication jobs yet.");
-                    }
+                    int visiblePublicationCount = 0;
                     for (int index = 0; index < publications.length(); index++) {
                         JSONObject item = publications.getJSONObject(index);
+                        String provider = item.optString("provider", "")
+                                .toLowerCase(Locale.ROOT);
+                        if (!"facebook".equals(provider) && !"instagram".equals(provider)) {
+                            continue;
+                        }
+                        visiblePublicationCount++;
+                        String platformStatus = item.optString("platform_status", "not_checked");
+                        String jobStatus = item.optString("status", "unknown");
+                        if ("available".equals(platformStatus)) {
+                            jobStatus += " (available on platform)";
+                        } else if ("unavailable".equals(platformStatus)) {
+                            jobStatus = "not found (deleted or inaccessible)";
+                        } else if ("check_failed".equals(platformStatus)) {
+                            jobStatus = "platform status unknown";
+                        }
                         String row = item.optString("report_type", "report").toUpperCase(Locale.ROOT)
-                                + " · " + item.optString("provider", "platform")
-                                + " · " + item.optString("status", "unknown")
+                                + " · " + provider
+                                + " · " + jobStatus
                                 + "\nReport ID: " + item.optString("report_id", "unavailable");
                         String error = item.optString("last_error", "");
                         if (!error.isEmpty()) row += "\n" + error;
                         addSocialHistoryEntry(history, row);
+                    }
+                    if (visiblePublicationCount == 0) {
+                        addSocialHistoryEntry(history, "No Facebook or Instagram publication jobs yet.");
                     }
                 } catch (Exception error) {
                     Log.e("SOCIAL_PUBLISHING", "Could not parse publication history", error);
@@ -10349,42 +10740,121 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         return account == null ? "" : account.optString("account_name", "");
     }
 
-    private void addSocialProviderRow(
+    private void addSocialMetaProviderRow(
             LinearLayout parent,
-            String label,
-            boolean connected,
-            String accountName,
-            String connectProvider,
-            String disconnectProvider
+            boolean facebookConnected,
+            String facebookName,
+            boolean instagramConnected,
+            String instagramName
     ) {
         LinearLayout card = new LinearLayout(this);
         card.setOrientation(LinearLayout.VERTICAL);
-        card.setPadding(dp(12), dp(10), dp(12), dp(10));
-        card.setBackground(roundWithStroke(surfaceColor(), 14, borderColor()));
-        TextView account = text(
-                label + ": " + (connected ? "Connected" : "Not connected")
-                        + (accountName.isEmpty() ? "" : " as " + accountName),
-                13, primaryTextColor(), Typeface.NORMAL);
-        card.addView(account, new LinearLayout.LayoutParams(-1, -2));
+        card.setPadding(dp(16), dp(14), dp(16), dp(14));
+        card.setBackground(roundWithStroke(surfaceColor(), 16, borderColor()));
+
+        TextView title = text("Meta accounts", 15, primaryTextColor(), Typeface.BOLD);
+        title.setGravity(Gravity.START | Gravity.CENTER_VERTICAL);
+        title.setIncludeFontPadding(false);
+        card.addView(title, new LinearLayout.LayoutParams(-1, -2));
+
+        LinearLayout accounts = new LinearLayout(this);
+        accounts.setOrientation(LinearLayout.VERTICAL);
+        LinearLayout.LayoutParams accountsParams = new LinearLayout.LayoutParams(-1, -2);
+        accountsParams.topMargin = dp(12);
+        card.addView(accounts, accountsParams);
+
+        addSocialMetaAccountRow(
+                accounts,
+                "Facebook Page",
+                facebookConnected,
+                facebookConnected && !facebookName.isEmpty()
+                        ? "Connected as " + facebookName : null,
+                false
+        );
+        addSocialMetaAccountRow(
+                accounts,
+                "Instagram",
+                instagramConnected,
+                instagramConnected && !instagramName.isEmpty()
+                        ? "Connected as @" + instagramName : null,
+                true
+        );
+
         LinearLayout actions = new LinearLayout(this);
         actions.setGravity(Gravity.END);
-        TextView connect = actionButton(connected ? "Reconnect" : "Connect", true);
-        connect.setOnClickListener(view -> startSocialAuthorization(connectProvider));
-        actions.addView(connect, new LinearLayout.LayoutParams(-2, dp(40)));
-        if (connected) {
-            TextView disconnect = actionButton("Disconnect", false);
-            LinearLayout.LayoutParams disconnectParams = new LinearLayout.LayoutParams(-2, dp(40));
-            disconnectParams.setMargins(dp(8), 0, 0, 0);
-            disconnect.setOnClickListener(view ->
-                    confirmSocialDisconnect(disconnectProvider));
+        boolean compact = getResources().getConfiguration().screenWidthDp < 410
+                || getResources().getConfiguration().fontScale > 1.1f;
+        actions.setOrientation(compact ? LinearLayout.VERTICAL : LinearLayout.HORIZONTAL);
+        boolean anyMetaAccountConnected = facebookConnected || instagramConnected;
+        if (anyMetaAccountConnected) {
+            if (!facebookConnected || !instagramConnected) {
+                String missingAccount = facebookConnected ? "Instagram" : "Facebook";
+                TextView connectMissing = actionButton("Connect " + missingAccount, true);
+                connectMissing.setOnClickListener(view -> startSocialAuthorization("meta"));
+                LinearLayout.LayoutParams connectParams = new LinearLayout.LayoutParams(
+                        compact ? -1 : -2, dp(44)
+                );
+                if (compact) {
+                    connectParams.bottomMargin = dp(8);
+                }
+                actions.addView(connectMissing, connectParams);
+            }
+            TextView disconnect = actionButton("Disconnect Meta", false);
+            disconnect.setOnClickListener(view -> confirmSocialDisconnect("facebook"));
+            LinearLayout.LayoutParams disconnectParams = new LinearLayout.LayoutParams(
+                    compact ? -1 : -2, dp(44)
+            );
+            if (!compact && (!facebookConnected || !instagramConnected)) {
+                disconnectParams.setMargins(dp(8), 0, 0, 0);
+            }
             actions.addView(disconnect, disconnectParams);
+        } else {
+            TextView connect = actionButton("Connect Meta", true);
+            connect.setOnClickListener(view -> startSocialAuthorization("meta"));
+            actions.addView(connect, new LinearLayout.LayoutParams(
+                    compact ? -1 : -2, dp(44)
+            ));
         }
+
         LinearLayout.LayoutParams actionsParams = new LinearLayout.LayoutParams(-1, -2);
-        actionsParams.topMargin = dp(8);
+        actionsParams.topMargin = dp(16);
         card.addView(actions, actionsParams);
         LinearLayout.LayoutParams cardParams = new LinearLayout.LayoutParams(-1, -2);
         cardParams.bottomMargin = dp(8);
         parent.addView(card, cardParams);
+    }
+
+    private void addSocialMetaAccountRow(
+            LinearLayout parent,
+            String provider,
+            boolean connected,
+            String connectedAccount,
+            boolean addTopMargin
+    ) {
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.VERTICAL);
+        row.setGravity(Gravity.START);
+
+        TextView providerLabel = text(provider, 13, primaryTextColor(), Typeface.BOLD);
+        providerLabel.setGravity(Gravity.START | Gravity.CENTER_VERTICAL);
+        providerLabel.setIncludeFontPadding(false);
+        row.addView(providerLabel, new LinearLayout.LayoutParams(-1, -2));
+
+        String status = connected
+                ? (connectedAccount == null ? "Connected" : connectedAccount)
+                : "Not connected";
+        TextView accountStatus = text(status, 13, secondaryTextColor(), Typeface.NORMAL);
+        accountStatus.setGravity(Gravity.START | Gravity.CENTER_VERTICAL);
+        accountStatus.setIncludeFontPadding(false);
+        LinearLayout.LayoutParams statusParams = new LinearLayout.LayoutParams(-1, -2);
+        statusParams.topMargin = dp(3);
+        row.addView(accountStatus, statusParams);
+
+        LinearLayout.LayoutParams rowParams = new LinearLayout.LayoutParams(-1, -2);
+        if (addTopMargin) {
+            rowParams.topMargin = dp(12);
+        }
+        parent.addView(row, rowParams);
     }
 
     private void startSocialAuthorization(String provider) {
@@ -10660,6 +11130,10 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
     }
 
     private void showReportDetailsDialog(JSONObject report, boolean adminView) {
+        showReportDetailsDialog(report, adminView, false);
+    }
+
+    private void showReportDetailsDialog(JSONObject report, boolean adminView, boolean allowDelete) {
         String type = report.optString("type", "ITEM");
         String title = report.optString("original_title", report.optString("title", "Untitled item")).trim();
         String reportTypeLabel = "FOUND".equalsIgnoreCase(type) ? "Found" : "Lost";
@@ -10754,7 +11228,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         } else {
             preciseLocation = "No location shared";
         }
-        if (adminView && (latitude != 0.0 || longitude != 0.0)) {
+        if (latitude != 0.0 || longitude != 0.0) {
             addClickableMapReportDetail(details, "Precise location", preciseLocation, latitude, longitude);
         } else {
             addReportDetail(details, "Precise location", preciseLocation);
@@ -10773,6 +11247,19 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         int maxContentHeight = Math.max(dp(180), getResources().getDisplayMetrics().heightPixels - dp(300));
         content.addView(scroll, new LinearLayout.LayoutParams(-1, Math.min(dp(390), maxContentHeight)));
 
+        if (!adminView
+                && "LOST".equalsIgnoreCase(type)
+                && isActiveCommunityReport(report)) {
+            addCommunityPosterAction(content, report, 0, dp(8));
+        }
+
+        if (allowDelete && !adminView) {
+            TextView delete = actionButton(LanguageManager.profileText(this, "delete_report"), false);
+            delete.setTextColor(Color.rgb(190, 45, 55));
+            addFieldToDialog(content, delete);
+            delete.setOnClickListener(view -> confirmDeleteReport(report, dialog));
+        }
+
         TextView close = actionButton("Close", true);
         close.setOnClickListener(view -> dialog.dismiss());
         addFieldToDialog(content, close);
@@ -10781,6 +11268,187 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         dialog.setCanceledOnTouchOutside(true);
         dialog.show();
         sizeThemedDialog(dialog);
+    }
+
+    private boolean isActiveCommunityReport(JSONObject report) {
+        String status = report.optString("status", "").trim().toLowerCase(Locale.ROOT);
+        return resolveReportWorkflowStage(report) != 4
+                && !status.equals("completed")
+                && !status.equals("reunited")
+                && !status.equals("resolved")
+                && !status.equals("closed")
+                && !status.equals("removed")
+                && !status.equals("deleted");
+    }
+
+    private void addCommunityPosterAction(LinearLayout parent, JSONObject report, int horizontalMargin, int topMargin) {
+        TextView poster = actionButton("Generate Community Poster", false);
+        LinearLayout.LayoutParams posterParams = new LinearLayout.LayoutParams(-1, dp(46));
+        posterParams.setMargins(horizontalMargin, topMargin, horizontalMargin, 0);
+        parent.addView(poster, posterParams);
+        poster.setOnClickListener(view -> generateAndShareCommunityPoster(report));
+    }
+
+    private void generateAndShareCommunityPoster(JSONObject report) {
+        String title = report.optString("original_title", report.optString("title", "Lost item")).trim();
+        String location = report.optString(
+                "original_report_location",
+                report.optString("report_location", report.optString("location", ""))
+        ).trim();
+        String date = report.optString("report_date", "").trim();
+        String category = report.optString("original_category", report.optString("category", "")).trim();
+        String type = report.optString("type", "");
+        String itemToken = report.optString("share_token", report.optString("token", report.optString("id", ""))).trim();
+        if (itemToken.isEmpty()) {
+            Toast.makeText(this, "This report cannot be shared because its item link is unavailable.", Toast.LENGTH_LONG).show();
+            return;
+        }
+        String itemUrl = "https://fendly.app/item/" + Uri.encode(itemToken);
+
+        FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
+        if (user == null) {
+            Toast.makeText(this, "Sign in to share a community poster.", Toast.LENGTH_LONG).show();
+            return;
+        }
+        Toast.makeText(this, "Preparing community poster…", Toast.LENGTH_SHORT).show();
+        user.getIdToken(false)
+                .addOnSuccessListener(tokenResult -> network.execute(() -> {
+                    try {
+                        String profileResponse = getAuthorized("/api/users/profile", tokenResult.getToken());
+                        if (profileResponse == null) {
+                            throw new java.io.IOException("Could not load your saved profile links.");
+                        }
+                        JSONObject profile = new JSONObject(profileResponse);
+                        Map<String, String> links = new LinkedHashMap<>();
+                        addNonBlankSocialLink(links, "Instagram", profile.optString("instagram_url", ""));
+                        addNonBlankSocialLink(links, "Facebook", profile.optString("facebook_url", ""));
+                        runOnUiThread(() -> loadPosterPhotoAndShare(
+                                reportImageUrls(report), title, location, date, type, category, itemUrl, links
+                        ));
+                    } catch (Exception error) {
+                        Log.e("COMMUNITY_POSTER", "Could not load profile links for poster sharing", error);
+                        runOnUiThread(() -> Toast.makeText(
+                                this,
+                                "Could not prepare sharing details. Please try again.",
+                                Toast.LENGTH_LONG
+                        ).show());
+                    }
+                }))
+                .addOnFailureListener(error -> {
+                    Log.e("COMMUNITY_POSTER", "Could not authenticate poster sharing", error);
+                    Toast.makeText(this, "Could not authenticate. Please try again.", Toast.LENGTH_LONG).show();
+                });
+    }
+
+    private void addNonBlankSocialLink(Map<String, String> links, String label, String url) {
+        String normalized = url == null ? "" : url.trim();
+        if (!normalized.isEmpty()) links.put(label, normalized);
+    }
+
+    private void loadPosterPhotoAndShare(
+            List<String> imageUrls,
+            String title,
+            String location,
+            String date,
+            String itemType,
+            String category,
+            String itemUrl,
+            Map<String, String> profileLinks
+    ) {
+        if (imageUrls.isEmpty()) {
+            renderAndShareCommunityPoster(null, title, location, date, itemType, category, itemUrl, profileLinks);
+            return;
+        }
+
+        Glide.with(this)
+                .asBitmap()
+                .load(imageUrls.get(0))
+                .into(new CustomTarget<Bitmap>() {
+                    @Override
+                    public void onResourceReady(Bitmap resource, Transition<? super Bitmap> transition) {
+                        renderAndShareCommunityPoster(resource, title, location, date, itemType, category, itemUrl, profileLinks);
+                    }
+
+                    @Override
+                    public void onLoadCleared(android.graphics.drawable.Drawable placeholder) {
+                    }
+
+                    @Override
+                    public void onLoadFailed(android.graphics.drawable.Drawable errorDrawable) {
+                        Log.w("COMMUNITY_POSTER", "Could not load the item photo; generating a poster without it");
+                        renderAndShareCommunityPoster(null, title, location, date, itemType, category, itemUrl, profileLinks);
+                    }
+                });
+    }
+
+    private void renderAndShareCommunityPoster(
+            Bitmap photo,
+            String title,
+            String location,
+            String date,
+            String itemType,
+            String category,
+            String itemUrl,
+            Map<String, String> profileLinks
+    ) {
+        CommunityPosterPhotoFocus.detect(
+                photo,
+                shouldFocusOnPersonFace(title, category),
+                new CommunityPosterPhotoFocus.Callback() {
+                    @Override
+                    public void onFocusDetected(android.graphics.Rect bounds) {
+                        runOnUiThread(() -> renderCommunityPoster(
+                                photo, bounds, title, location, date, itemType, category, itemUrl, profileLinks
+                        ));
+                    }
+
+                    @Override
+                    public void onDetectionFailed(Exception error) {
+                        Log.w("COMMUNITY_POSTER", "Could not detect the photo subject; using a centered poster crop", error);
+                        runOnUiThread(() -> renderCommunityPoster(
+                                photo, null, title, location, date, itemType, category, itemUrl, profileLinks
+                        ));
+                    }
+                }
+        );
+    }
+
+    private boolean shouldFocusOnPersonFace(String title, String category) {
+        String normalizedCategory = category == null ? "" : category.toLowerCase(Locale.ROOT);
+        String normalizedTitle = title == null ? "" : title.toLowerCase(Locale.ROOT);
+        if (normalizedCategory.contains("people") || normalizedCategory.contains("person")) return true;
+        return normalizedTitle.matches(".*\\b(person|people|man|woman|child|children|kid|boy|girl)\\b.*");
+    }
+
+    private void renderCommunityPoster(
+            Bitmap photo,
+            android.graphics.Rect photoFocus,
+            String title,
+            String location,
+            String date,
+            String itemType,
+            String category,
+            String itemUrl,
+            Map<String, String> profileLinks
+    ) {
+        Bitmap poster = null;
+        try {
+            poster = CommunityPoster.render(title, location, date, itemType, category, itemUrl, photo, photoFocus);
+            String subject = CommunityPosterSubject.homeSubject(title, category);
+            String homeMessage = "Help bring this "
+                    + ("Item".equals(subject) ? "item" : subject) + " home";
+            SharePosterUtil.sharePoster(
+                    this,
+                    poster,
+                    homeMessage + ": " + title + "\n" + itemUrl,
+                    profileLinks
+            );
+        } catch (Exception error) {
+            Log.e("COMMUNITY_POSTER", "Could not generate or share the community poster", error);
+            Toast.makeText(this, "Could not generate the poster. Please try again.", Toast.LENGTH_LONG).show();
+        } finally {
+            if (poster != null && !poster.isRecycled()) poster.recycle();
+        }
     }
 
     private List<String> reportImageUrls(JSONObject report) {
@@ -11804,10 +12472,18 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
     }
 
     private AuthorizedResponse getAuthorizedResponse(String path, String idToken) {
+        return authorizedResponse("GET", path, idToken);
+    }
+
+    private AuthorizedResponse postAuthorizedResponse(String path, String idToken) {
+        return authorizedResponse("POST", path, idToken);
+    }
+
+    private AuthorizedResponse authorizedResponse(String method, String path, String idToken) {
         HttpURLConnection connection = null;
         try {
             connection = (HttpURLConnection) new URL(API_BASE + path).openConnection();
-            connection.setRequestMethod("GET");
+            connection.setRequestMethod(method);
             connection.setConnectTimeout(15000);
             connection.setReadTimeout(30000);
             connection.setRequestProperty("Authorization", "Bearer " + idToken);
@@ -11838,9 +12514,12 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             return "Firebase sign-in was rejected. Sign out and sign in again.";
         }
         if (response.statusCode == 403) {
-            return detail.isEmpty()
-                    ? "This account is not authorized for admin notifications. Verify the configured admin email by OTP in your Fendly profile, or check ADMIN_FIREBASE_UIDS."
+            FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
+            String uid = user == null ? "" : user.getUid();
+            String reason = detail.isEmpty()
+                    ? "This account is not authorized. Verify the configured admin email by OTP in your Fendly profile, or check ADMIN_FIREBASE_UIDS."
                     : detail;
+            return uid.isEmpty() ? reason : reason + "\n\nCurrent app Firebase UID: " + uid;
         }
         if (response.statusCode == 503) {
             return "The admin notifications service is unavailable."
@@ -12276,7 +12955,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         controls.addView(rightSpacer, new LinearLayout.LayoutParams(0, 1, 1));
 
         if (currentPage == PAGE_PROFILE) {
-            // Top-right link icon for profile page only, expands Instagram, Facebook, and X icons (icons only, no text)
+            // Top-right link icon for profile page only, expands Instagram and Facebook icons.
             final boolean[] isSocialExpanded = {false};
 
             LinearLayout rightContainer = new LinearLayout(this);
@@ -12327,27 +13006,6 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             LinearLayout.LayoutParams fbParams = new LinearLayout.LayoutParams(dp(42), dp(42));
             fbParams.setMarginEnd(dp(6));
             socialIconsContainer.addView(fbButton, fbParams);
-
-            // X (Twitter) button (vector icon only)
-            TextView xButton = text("", 18, secondaryTextColor(), Typeface.NORMAL);
-            xButton.setGravity(Gravity.CENTER);
-            xButton.setBackground(roundWithStroke(surfaceColor(), 14, borderColor()));
-            xButton.setPadding(dp(8), dp(8), dp(8), dp(8));
-            xButton.setCompoundDrawablesWithIntrinsicBounds(R.drawable.ic_x, 0, 0, 0);
-            xButton.setElevation(dp(2));
-            if (Build.VERSION.SDK_INT >= 21) {
-                xButton.setCompoundDrawableTintList(ColorStateList.valueOf(accentColor()));
-            }
-            xButton.setContentDescription("X");
-            xButton.setOnClickListener(view -> {
-                try {
-                    Intent intent = new Intent(Intent.ACTION_VIEW, Uri.parse("https://x.com/infofendly"));
-                    startActivity(intent);
-                } catch (Exception ignored) {}
-            });
-            LinearLayout.LayoutParams xParams = new LinearLayout.LayoutParams(dp(42), dp(42));
-            xParams.setMarginEnd(dp(6));
-            socialIconsContainer.addView(xButton, xParams);
 
             rightContainer.addView(socialIconsContainer, new LinearLayout.LayoutParams(-2, -2));
 
@@ -12497,13 +13155,50 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                 }
                 try {
                     JSONArray users = new JSONArray(response);
-                    if (users.length() == 0) {
-                        addField(results, text("No matching verified users found.", 14, secondaryTextColor(), Typeface.NORMAL));
+                    boolean phoneSearch = query.matches("[+0-9()\\s-]+");
+                    String phoneDigits = query.replaceAll("\\D", "");
+                    if (phoneSearch && phoneDigits.isEmpty()) {
+                        addField(results, text("Enter a valid phone number or username.", 14, secondaryTextColor(), Typeface.NORMAL));
+                        return;
+                    }
+                    String usernameQuery = query.startsWith("@") ? query.substring(1) : query;
+                    Map<String, JSONObject> matchingUsers = new LinkedHashMap<>();
+                    for (int index = 0; index < users.length(); index++) {
+                        JSONObject userResult = users.optJSONObject(index);
+                        JSONObject user = userResult == null ? null : userResult.optJSONObject("user");
+                        if (user == null) continue;
+
+                        String uid = user.isNull("uid") ? "" : user.optString("uid", "");
+                        String mobile = user.isNull("mobile") ? "" : user.optString("mobile", "");
+                        String username = user.isNull("username") ? "" : user.optString("username", "");
+                        String mobileDigits = normalizeIndianMobileDigits(mobile);
+                        boolean matches;
+                        String resultKey;
+                        if (phoneSearch) {
+                            matches = phoneDigits.length() >= 10
+                                    ? mobileDigits.equals(phoneDigits.substring(phoneDigits.length() - 10))
+                                    : mobileDigits.contains(phoneDigits);
+                            resultKey = mobileDigits.isEmpty() ? uid : mobileDigits;
+                        } else {
+                            matches = username.toLowerCase(Locale.ROOT)
+                                    .contains(usernameQuery.toLowerCase(Locale.ROOT));
+                            resultKey = uid;
+                        }
+                        if (!matches || resultKey.isEmpty()) continue;
+
+                        JSONObject previous = matchingUsers.get(resultKey);
+                        if (previous == null || adminSubscriptionProfileRank(userResult)
+                                > adminSubscriptionProfileRank(previous)) {
+                            matchingUsers.put(resultKey, userResult);
+                        }
+                    }
+
+                    if (matchingUsers.isEmpty()) {
+                        addField(results, text("No matching users found.", 14, secondaryTextColor(), Typeface.NORMAL));
                         return;
                     }
 
-                    for (int index = 0; index < users.length(); index++) {
-                        JSONObject result = users.getJSONObject(index);
+                    for (JSONObject result : matchingUsers.values()) {
                         JSONObject user = result.optJSONObject("user");
                         if (user == null) continue;
                         boolean verified = user.optBoolean("mobile_verified", false)
@@ -12512,9 +13207,11 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
 
                         String userId = user.optString("uid", "");
                         boolean paidSubscriber = user.optBoolean("subscription_active", false);
-                        String displayName = user.optString("full_name", user.optString("username", "User"));
-                        String mobile = user.optString("mobile", "");
-                        String username = user.optString("username", "");
+                        String fullName = user.isNull("full_name") ? "" : user.optString("full_name", "");
+                        String mobile = user.isNull("mobile") ? "" : user.optString("mobile", "");
+                        String username = user.isNull("username") ? "" : user.optString("username", "");
+                        String displayName = !fullName.isEmpty() ? fullName
+                                : !username.isEmpty() ? username : "User";
                         String label = displayName + (username.isEmpty() ? "" : " · @" + username)
                                 + (mobile.isEmpty() ? "" : " · " + mobile)
                                 + (verified ? " · Verified" : " · Not verified");
@@ -12532,13 +13229,25 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                     }
 
                     if (results.getChildCount() == 0) {
-                        addField(results, text("No matching verified users found.", 14, secondaryTextColor(), Typeface.NORMAL));
+                        addField(results, text("No matching users found.", 14, secondaryTextColor(), Typeface.NORMAL));
                     }
                 } catch (Exception ignored) {
                     addField(results, text("Search failed. Try again.", 14, secondaryTextColor(), Typeface.NORMAL));
                 }
             });
         }));
+    }
+
+    private int adminSubscriptionProfileRank(JSONObject result) {
+        JSONObject user = result.optJSONObject("user");
+        if (user == null) return Integer.MIN_VALUE;
+        int rank = 0;
+        if (user.optBoolean("mobile_verified", false) || user.optBoolean("email_verified", false)) rank += 16;
+        if (!user.isNull("username") && !user.optString("username", "").isEmpty()) rank += 8;
+        if (!user.isNull("full_name") && !user.optString("full_name", "").isEmpty()) rank += 4;
+        if (!user.isNull("email") && !user.optString("email", "").isEmpty()) rank += 2;
+        if (user.optBoolean("subscription_active", false)) rank += 1;
+        return rank;
     }
 
     private void showAdminSubscriptionActionDialog(String userId, String label, boolean paidSubscriber, String idToken) {
@@ -12571,33 +13280,14 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         details.setPadding(0, dp(12), 0, dp(20));
         root.addView(details, new LinearLayout.LayoutParams(-1, -2));
 
-        LinearLayout actions = new LinearLayout(this);
-        actions.setOrientation(LinearLayout.HORIZONTAL);
-        actions.setGravity(Gravity.CENTER_VERTICAL);
-
-        TextView addButton = text("Add", 14, Color.BLACK, Typeface.BOLD);
-        addButton.setGravity(Gravity.CENTER);
-        addButton.setBackground(roundWithStroke(accentColor(), 12, accentColor()));
-        addButton.setPadding(dp(18), dp(10), dp(18), dp(10));
-        addButton.setOnClickListener(view -> {
+        String action = paidSubscriber ? "cancel" : "add";
+        String actionLabel = paidSubscriber ? "Cancel subscription" : "Add subscription";
+        TextView subscriptionButton = actionButton(actionLabel, true);
+        subscriptionButton.setOnClickListener(view -> {
             dialog.dismiss();
-            updateAdminSubscriptionOverride(userId, "add", idToken);
+            updateAdminSubscriptionOverride(userId, action, idToken);
         });
-
-        TextView cancelButton = text("Cancel", 14, primaryTextColor(), Typeface.BOLD);
-        cancelButton.setGravity(Gravity.CENTER);
-        cancelButton.setBackground(roundWithStroke(surfaceColor(), 12, borderColor()));
-        cancelButton.setPadding(dp(18), dp(10), dp(18), dp(10));
-        cancelButton.setOnClickListener(view -> {
-            dialog.dismiss();
-            updateAdminSubscriptionOverride(userId, "cancel", idToken);
-        });
-
-        LinearLayout.LayoutParams addParams = new LinearLayout.LayoutParams(0, dp(44), 1f);
-        addParams.setMargins(0, 0, dp(8), 0);
-        actions.addView(addButton, addParams);
-        actions.addView(cancelButton, new LinearLayout.LayoutParams(0, dp(44), 1f));
-        root.addView(actions, new LinearLayout.LayoutParams(-1, -2));
+        root.addView(subscriptionButton, new LinearLayout.LayoutParams(-1, dp(48)));
 
         dialog.setContentView(root);
         dialog.show();
@@ -12616,6 +13306,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             runOnUiThread(() -> {
                 if (success) {
                     Toast.makeText(this, "Subscription " + ("add".equals(action) ? "added" : "cancelled") + ".", Toast.LENGTH_LONG).show();
+                    showAdminSubscriptionOverridePage();
                 } else {
                     Toast.makeText(this, "Unable to update subscription.", Toast.LENGTH_LONG).show();
                 }
@@ -13158,8 +13849,12 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                 {"Authentication unavailable.", "प्रमाणीकरण उपलब्ध नहीं है।", "प्रमाणीकरण उपलब्ध नाही.", "પ્રમાણીકરણ અનુપલબ્ધ છે.", "প্রমাণীকরণ উপলব্ধ নয়।", "அடையாள அங்கீகாரம் கிடைக்கவில்லை.", "ప్రామాణీకరణ అందుబాటులో లేదు.", "ಪ್ರಮಾಣೀಕರಣ ಲಭ್ಯವಿಲ್ಲ.", "ആധികാരികത ലഭ്യമല്ല."},
                 {"Discover active reports", "सक्रिय रिपोर्ट खोजें", "सक्रिय अहवाल शोधा", "સક્રિય અહેવાલો શોધો", "সক্রিয় রিপোর্ট খুঁজুন", "செயலில் உள்ள புகார்களைக் கண்டறியுங்கள்", "యాక్టివ్ నివేదికలను కనుగొనండి", "ಸಕ್ರಿಯ ವರದಿಗಳನ್ನು ಅನ್ವೇಷಿಸಿ", "സജീവ റിപ്പോർട്ടുകൾ കണ്ടെത്തുക"},
                 {"Filter reports by city", "शहर के अनुसार रिपोर्ट फ़िल्टर करें", "शहरानुसार अहवाल फिल्टर करा", "શહેર પ્રમાણે અહેવાલો ફિલ્ટર કરો", "শহর অনুযায়ী রিপোর্ট ফিল্টার করুন", "நகரத்தின் அடிப்படையில் புகார்களை வடிகட்டுங்கள்", "నగరం ఆధారంగా నివేదికలను ఫిల్టర్ చేయండి", "ನಗರದ ಪ್ರಕಾರ ವರದಿಗಳನ್ನು ಫಿಲ్టర్ ಮಾಡಿ", "നഗരം അനുസരിച്ച് റിപ്പോർട്ടുകൾ ഫിൽട്ടർ ചെയ്യുക"},
+                {"Search any city or town in India", "भारत में कोई भी शहर या कस्बा खोजें", "भारतातील कोणतेही शहर किंवा गाव शोधा", "ભારતનું કોઈપણ શહેર અથવા નગર શોધો", "ভারতের যেকোনো শহর বা ছোট শহর খুঁজুন", "இந்தியாவில் உள்ள எந்த நகரம் அல்லது சிற்றூரையும் தேடுங்கள்", "భారతదేశంలోని ఏ నగరం లేదా పట్టణాన్నైనా వెతకండి", "ಭಾರತದ ಯಾವುದೇ ನಗರ ಅಥವಾ ಪಟ್ಟಣವನ್ನು ಹುಡುಕಿ", "ഇന്ത്യയിലെ ഏത് നഗരമോ പട്ടണമോ തിരയുക"},
+                {"Search city", "शहर खोजें", "शहर शोधा", "શહેર શોધો", "শহর খুঁজুন", "நகரத்தைத் தேடுங்கள்", "నగరాన్ని వెతకండి", "ನಗರವನ್ನು ಹುಡುಕಿ", "നഗരം തിരയുക"},
                 {"All cities", "सभी शहर", "सर्व शहरे", "બધા શહેરો", "সব শহর", "அனைத்து நகரங்களும்", "అన్ని నగరాలు", "ಎಲ್ಲಾ ನಗರಗಳು", "എല്ലാ നഗരങ്ങളും"},
                 {"No active reports found.", "कोई सक्रिय रिपोर्ट नहीं मिली।", "कोणताही सक्रिय अहवाल आढळला नाही.", "કોઈ સક્રિય અહેવાલ મળ્યો નથી.", "কোনো সক্রিয় রিপোর্ট পাওয়া যায়নি।", "செயலில் உள்ள புகார்கள் எதுவும் இல்லை.", "యాక్టివ్ నివేదికలు ఏవీ కనుగొనబడలేదు.", "ಸಕ್ರಿಯ ವರದಿಗಳು ಕಂಡುಬಂದಿಲ್ಲ.", "സജീവ റിപ്പോർട്ടുകളൊന്നും കണ്ടെത്തിയില്ല."},
+                {"No active reports.", "कोई सक्रिय रिपोर्ट नहीं है।", "सक्रिय अहवाल नाहीत.", "કોઈ સક્રિય રિપોર્ટ નથી.", "কোনো সক্রিয় রিপোর্ট নেই।", "செயலில் உள்ள அறிக்கைகள் இல்லை.", "యాక్టివ్ రిపోర్టులు లేవు.", "ಸಕ್ರಿಯ ವರದಿಗಳಿಲ್ಲ.", "സജീവ റിപ്പോർട്ടുകൾ ഇല്ല."},
+                {"Completed reports", "पूर्ण रिपोर्टें", "पूर्ण झालेले अहवाल", "પૂર્ણ થયેલા રિપોર્ટ", "সম্পন্ন রিপোর্ট", "நிறைவு செய்யப்பட்ட அறிக்கைகள்", "పూర్తయిన రిపోర్టులు", "ಪೂರ್ಣಗೊಂಡ ವರದಿಗಳು", "പൂർത്തിയായ റിപ്പോർട്ടുകൾ"},
                 {"Could not load reports. Try again.", "रिपोर्ट लोड नहीं हो सकीं। फिर से कोशिश करें।", "अहवाल लोड करता आले नाहीत. पुन्हा प्रयत्न करा.", "અહેવાલો લોડ થઈ શક્યા નથી. ફરી પ્રયાસ કરો.", "রিপোর্ট লোড করা যায়নি। আবার চেষ্টা করুন।", "புகார்களை ஏற்ற முடியவில்லை. மீண்டும் முயற்சிக்கவும்.", "నివేదికలను లోడ్ చేయలేకపోయాము. మళ్లీ ప్రయత్నించండి.", "ವರದಿಗಳನ್ನು ಲೋಡ್ ಮಾಡಲಾಗಲಿಲ್ಲ. ಮತ್ತೆ ಪ್ರಯತ್ನಿಸಿ.", "റിപ്പോർട്ടുകൾ ലോഡ് ചെയ്യാനായില്ല. വീണ്ടും ശ്രമിക്കുക."},
                 {"Browse by category", "श्रेणी के अनुसार देखें", "श्रेणीनुसार पहा", "શ્રેણી પ્રમાણે જુઓ", "বিভাগ অনুযায়ী দেখুন", "வகையின்படி பார்க்கவும்", "వర్గం ద్వారా చూడండి", "ವರ್ಗದ ಪ್ರಕಾರ ವೀಕ್ಷಿಸಿ", "വിഭാഗം തിരിച്ച് കാണുക"},
                 {"Valuables & Items", "कीमती सामान और वस्तुएँ", "मौल्यवान वस्तू", "કીમતી વસ્તુઓ", "মূল্যবান জিনিসপত্র", "மதிப்புமிக்க பொருட்கள்", "విలువైన వస్తువులు", "ಬೆಲೆಬಾಳುವ ವಸ್ತುಗಳು", "വിലപിടിപ്പുള്ള വസ്തുക്കൾ"},
@@ -13201,6 +13896,8 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                 {"Location", "स्थान", "ठिकाण", "સ્થાન", "অবস্থান", "இடம்", "స్థానం", "ಸ್ಥಳ", "സ്ഥലം"},
                 {"Details", "विवरण", "तपशील", "વિગતો", "বিবরণ", "விவரங்கள்", "వివరాలు", "ವಿವರಗಳು", "വിശദാംശങ്ങൾ"},
                 {"Review", "समीक्षा", "पुनरावलोकन", "સમીક્ષા", "পর্যালোচনা", "மதிப்பாய்வு", "సమీక్ష", "ಪರಿಶೀಲನೆ", "അവലോകനം"},
+                {"Allow Fendly to share this report on its Facebook and Instagram accounts", "Fendly को इस रिपोर्ट को अपने Facebook और Instagram खातों पर साझा करने दें", "Fendly ला हा अहवाल त्याच्या Facebook आणि Instagram खात्यांवर शेअर करू द्या", "Fendly ને આ અહેવાલ તેના Facebook અને Instagram એકાઉન્ટ્સ પર શેર કરવા દો", "Fendly-কে এই প্রতিবেদনটি তার Facebook ও Instagram অ্যাকাউন্টে শেয়ার করতে দিন", "இந்த அறிக்கையை Fendly தனது Facebook மற்றும் Instagram கணக்குகளில் பகிர அனுமதிக்கவும்", "ఈ నివేదికను Fendly తన Facebook మరియు Instagram ఖాతాల్లో పంచుకోవడానికి అనుమతించండి", "ಈ ವರದಿಯನ್ನು Fendly ತನ್ನ Facebook ಮತ್ತು Instagram ಖಾತೆಗಳಲ್ಲಿ ಹಂಚಿಕೊಳ್ಳಲು ಅನುಮತಿಸಿ", "ഈ റിപ്പോർട്ട് Fendly-യുടെ Facebook, Instagram അക്കൗണ്ടുകളിൽ പങ്കിടാൻ അനുവദിക്കുക"},
+                {"Optional. Report type and title may be public. Facebook/Instagram may receive the generated poster and selected photo. Details, location, contact info and IMEI stay private. Instagram needs a public JPEG poster; Reels are not supported.", "वैकल्पिक। रिपोर्ट का प्रकार और शीर्षक सार्वजनिक हो सकते हैं। Facebook/Instagram को जनरेट किया गया पोस्टर और चुनी गई फोटो मिल सकती है। विवरण, स्थान, संपर्क जानकारी और IMEI निजी रहेंगे। Instagram के लिए सार्वजनिक JPEG पोस्टर जरूरी है; Reels समर्थित नहीं हैं।", "ऐच्छिक. अहवालाचा प्रकार आणि शीर्षक सार्वजनिक होऊ शकतात. Facebook/Instagram ला तयार केलेले पोस्टर आणि निवडलेला फोटो मिळू शकतो. तपशील, ठिकाण, संपर्क माहिती आणि IMEI खाजगी राहतील. Instagram साठी सार्वजनिक JPEG पोस्टर आवश्यक आहे; Reels समर्थित नाहीत.", "વૈકલ્પિક. રિપોર્ટનો પ્રકાર અને શીર્ષક જાહેર થઈ શકે છે. Facebook/Instagram ને બનાવેલું પોસ્ટર અને પસંદ કરેલો ફોટો મળી શકે છે. વિગતો, સ્થાન, સંપર્ક માહિતી અને IMEI ખાનગી રહેશે. Instagram માટે જાહેર JPEG પોસ્ટર જરૂરી છે; Reels સપોર્ટેડ નથી.", "ঐচ্ছিক। প্রতিবেদনের ধরন ও শিরোনাম প্রকাশ্যে যেতে পারে। Facebook/Instagram তৈরি করা পোস্টার ও নির্বাচিত ছবি পেতে পারে। বিবরণ, অবস্থান, যোগাযোগের তথ্য ও IMEI ব্যক্তিগত থাকবে। Instagram-এর জন্য সর্বজনীন JPEG পোস্টার দরকার; Reels সমর্থিত নয়।", "விருப்பத்தேர்வு. அறிக்கை வகையும் தலைப்பும் பொதுவாகலாம். Facebook/Instagram உருவாக்கிய போஸ்டரையும் தேர்ந்தெடுத்த படத்தையும் பெறலாம். விவரங்கள், இடம், தொடர்புத் தகவல், IMEI தனிப்பட்டவை. Instagram-க்கு பொதுவில் கிடைக்கும் JPEG போஸ்டர் தேவை; Reels ஆதரிக்கப்படவில்லை.", "ఐచ్ఛికం. నివేదిక రకం మరియు శీర్షిక పబ్లిక్ కావచ్చు. Facebook/Instagram రూపొందించిన పోస్టర్ మరియు ఎంచుకున్న ఫోటోను పొందవచ్చు. వివరాలు, స్థానం, సంప్రదింపు సమాచారం, IMEI ప్రైవేట్‌గా ఉంటాయి. Instagram‌కు పబ్లిక్ JPEG పోస్టర్ అవసరం; Reels‌కు మద్దతు లేదు.", "ಐಚ್ಛಿಕ. ವರದಿ ಪ್ರಕಾರ ಮತ್ತು ಶೀರ್ಷಿಕೆ ಸಾರ್ವಜನಿಕವಾಗಬಹುದು. Facebook/Instagram ರಚಿಸಿದ ಪೋಸ್ಟರ್ ಮತ್ತು ಆಯ್ಕೆಮಾಡಿದ ಫೋಟೋ ಪಡೆಯಬಹುದು. ವಿವರಗಳು, ಸ್ಥಳ, ಸಂಪರ್ಕ ಮಾಹಿತಿ ಮತ್ತು IMEI ಖಾಸಗಿ. Instagram ಗೆ ಸಾರ್ವಜನಿಕ JPEG ಪೋಸ್ಟರ್ ಬೇಕು; Reels ಬೆಂಬಲಿತವಲ್ಲ.", "ഐച്ഛികം. റിപ്പോർട്ടിന്റെ തരവും തലക്കെട്ടും പൊതുവാകാം. Facebook/Instagram സൃഷ്ടിച്ച പോസ്റ്ററും തിരഞ്ഞെടുത്ത ചിത്രവും ലഭിക്കും. വിശദാംശങ്ങൾ, സ്ഥലം, ബന്ധപ്പെടാനുള്ള വിവരങ്ങൾ, IMEI എന്നിവ സ്വകാര്യമാണ്. Instagram-ന് പൊതുവായി ലഭ്യമായ JPEG പോസ്റ്റർ വേണം; Reels പിന്തുണയ്ക്കുന്നില്ല."},
                 {"Choose what you are reporting", "आप किसकी रिपोर्ट कर रहे हैं चुनें", "कशाची नोंद करायची ते निवडा", "તમે શું નોંધવા માંગો છો તે પસંદ કરો", "আপনি কী রিপোর্ট করছেন তা বেছে নিন", "எதைப் புகாரளிக்கிறீர்கள் என்பதைத் தேர்ந்தெடுக்கவும்", "మీరు దేనిని నివేదిస్తున్నారో ఎంచుకోండి", "ನೀವು ಏನನ್ನು ವರದಿ ಮಾಡುತ್ತಿದ್ದೀರಿ ಆಯ್ಕೆಮಾಡಿ", "എന്താണ് റിപ്പോർട്ട് ചെയ്യുന്നതെന്ന് തിരഞ്ഞെടുക്കുക"},
                 {"Item / Valuables", "वस्तु / कीमती सामान", "वस्तू / मौल्यवान वस्तू", "વસ્તુ / કીમતી ચીજ", "জিনিস / মূল্যবান সামগ্রী", "பொருள் / மதிப்புமிக்கவை", "వస్తువు / విలువైనవి", "ವಸ್ತು / ಬೆಲೆಬಾಳುವವು", "വസ്തു / വിലപിടിപ്പുള്ളവ"},
                 {"Pet / Animal", "पालतू / पशु", "पाळीव प्राणी / प्राणी", "પાળતુ પ્રાણી / પ્રાણી", "পোষা প্রাণী / পশু", "செல்லப்பிராணி / விலங்கு", "పెంపుడు జంతువు / జంతువు", "ಸಾಕುಪ್ರಾಣಿ / ಪ್ರಾಣಿ", "വളർത്തുമൃഗം / മൃഗം"},

@@ -24,7 +24,6 @@ class User(Base):
     profile_photo_url: Mapped[str | None] = mapped_column(String(1000))
     instagram_url: Mapped[str | None] = mapped_column(String(2048))
     facebook_url: Mapped[str | None] = mapped_column(String(2048))
-    x_url: Mapped[str | None] = mapped_column(String(2048))
     email_verified: Mapped[bool] = mapped_column(Boolean, default=False)
     mobile_verified: Mapped[bool] = mapped_column(Boolean, default=False)
     annual_subscription_expires_at: Mapped[int | None] = mapped_column(BigInteger)
@@ -105,26 +104,6 @@ class UserNotification(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
-class BeaconEvent(Base):
-    __tablename__ = "beacon_events"
-    __table_args__ = (
-        UniqueConstraint("firebase_uid", "event_id", name="uq_beacon_event_user_event"),
-        Index("beacon_events_received_at_idx", "received_at"),
-    )
-
-    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
-    firebase_uid: Mapped[str] = mapped_column(String(128), index=True)
-    event_id: Mapped[str] = mapped_column(String(128))
-    latitude: Mapped[float] = mapped_column(Float)
-    longitude: Mapped[float] = mapped_column(Float)
-    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
-    source: Mapped[str] = mapped_column(String(32))
-    relay_metadata: Mapped[dict | None] = mapped_column(JSON)
-    received_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now(), index=True
-    )
-
-
 class VaultItem(Base):
     __tablename__ = "vault_items"
     __table_args__ = (Index("vault_items_owner_created_idx", "firebase_uid", "created_at"),)
@@ -186,6 +165,7 @@ class LostItem(Base):
     image_url: Mapped[str | None] = mapped_column(String(1000))
     image_urls: Mapped[list[str] | None] = mapped_column(JSON)
     social_share_consent: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    social_poster_url: Mapped[str | None] = mapped_column(String(1000))
     edit_count: Mapped[int] = mapped_column(default=0)
     image_embedding: Mapped[list[float] | None] = mapped_column(Vector(512))
     embedding: Mapped[list[float] | None] = mapped_column(Vector(1536))
@@ -212,6 +192,7 @@ class FoundItem(Base):
     image_url: Mapped[str | None] = mapped_column(String(1000))
     image_urls: Mapped[list[str] | None] = mapped_column(JSON)
     social_share_consent: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    social_poster_url: Mapped[str | None] = mapped_column(String(1000))
     edit_count: Mapped[int] = mapped_column(default=0)
     image_embedding: Mapped[list[float] | None] = mapped_column(Vector(512))
     embedding: Mapped[list[float] | None] = mapped_column(Vector(1536))
@@ -225,8 +206,6 @@ class SocialAccount(Base):
     account_id: Mapped[str] = mapped_column(String(128))
     account_name: Mapped[str] = mapped_column(String(160))
     access_token_encrypted: Mapped[str] = mapped_column(Text)
-    refresh_token_encrypted: Mapped[str | None] = mapped_column(Text)
-    expires_at: Mapped[int | None] = mapped_column(BigInteger)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
@@ -239,7 +218,6 @@ class SocialOAuthState(Base):
     provider: Mapped[str] = mapped_column(String(16), index=True)
     created_by: Mapped[str] = mapped_column(String(128))
     expires_at: Mapped[int] = mapped_column(BigInteger, index=True)
-    code_verifier: Mapped[str | None] = mapped_column(String(128))
 
 
 class SocialPublication(Base):

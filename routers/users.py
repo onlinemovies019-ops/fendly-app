@@ -46,22 +46,32 @@ def _photo_is_still_referenced(session: Session, photo_url: str, uid: str) -> bo
         return True
 
     for report in session.execute(
-        select(LostItem.created_by, LostItem.image_url, LostItem.image_urls)
+        select(
+            LostItem.created_by,
+            LostItem.image_url,
+            LostItem.image_urls,
+            LostItem.social_poster_url,
+        )
     ).all():
         if report[0] == uid:
             continue
         if photo_url == report[1] or (
             isinstance(report[2], list) and photo_url in report[2]
-        ):
+        ) or photo_url == report[3]:
             return True
     for report in session.execute(
-        select(FoundItem.created_by, FoundItem.image_url, FoundItem.image_urls)
+        select(
+            FoundItem.created_by,
+            FoundItem.image_url,
+            FoundItem.image_urls,
+            FoundItem.social_poster_url,
+        )
     ).all():
         if report[0] == uid:
             continue
         if photo_url == report[1] or (
             isinstance(report[2], list) and photo_url in report[2]
-        ):
+        ) or photo_url == report[3]:
             return True
     return False
 
@@ -258,6 +268,7 @@ def delete_account(
             for url in [
                 item.image_url,
                 *(item.image_urls if isinstance(item.image_urls, list) else []),
+                item.social_poster_url,
             ]
             if url
         }
@@ -568,7 +579,6 @@ def get_profile(
             "profile_photo_url": getattr(user, "profile_photo_url", None) or "",
             "instagram_url": getattr(user, "instagram_url", None) or "",
             "facebook_url": getattr(user, "facebook_url", None) or "",
-            "x_url": getattr(user, "x_url", None) or "",
             "email_verified": bool(getattr(user, "email_verified", False)),
             "mobile_verified": bool(getattr(user, "mobile_verified", False)),
             "is_verified": bool(getattr(user, "email_verified", False)),
@@ -585,7 +595,6 @@ def get_profile(
             "profile_photo_url": "",
             "instagram_url": "",
             "facebook_url": "",
-            "x_url": "",
             "email_verified": False,
             "mobile_verified": False,
             "is_verified": False,

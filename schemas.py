@@ -82,9 +82,8 @@ class ProfileUpdate(BaseModel):
     profile_photo_url: str | None = Field(default=None, max_length=1000)
     instagram_url: str | None = Field(default=None, max_length=2048)
     facebook_url: str | None = Field(default=None, max_length=2048)
-    x_url: str | None = Field(default=None, max_length=2048)
 
-    @field_validator("instagram_url", "facebook_url", "x_url")
+    @field_validator("instagram_url", "facebook_url")
     @classmethod
     def validate_social_url(cls, value: str | None, info):
         if value is None or not value.strip():
@@ -100,7 +99,6 @@ class ProfileUpdate(BaseModel):
         domains = {
             "instagram_url": ("instagram.com",),
             "facebook_url": ("facebook.com",),
-            "x_url": ("x.com", "twitter.com"),
         }
         allowed_domains = domains[info.field_name]
         if (

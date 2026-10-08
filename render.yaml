@@ -79,12 +79,6 @@ services:
         sync: false
       - key: META_REDIRECT_URI
         sync: false
-      - key: X_CLIENT_ID
-        sync: false
-      - key: X_CLIENT_SECRET
-        sync: false
-      - key: X_REDIRECT_URI
-        sync: false
       - key: RAZORPAY_KEY_ID
         sync: false
       - key: RAZORPAY_KEY_SECRET

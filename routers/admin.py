@@ -239,6 +239,7 @@ async def _translate_alert_titles(alerts: list[dict[str, object]], session: Sess
         if alert.get(key)
     })
     indexed_items: dict[str, dict[str, object]] = {}
+    report_index_checked = False
     if source_ids:
         try:
             response = _supabase_admin_alert_request(
@@ -249,14 +250,39 @@ async def _translate_alert_titles(alerts: list[dict[str, object]], session: Sess
                     "source_id": f"in.({','.join(json.dumps(source_id) for source_id in source_ids)})",
                 },
             )
-            if response is not None and isinstance(response.json(), list):
+            if response is None:
+                report_index_checked = True
+            elif isinstance(response.json(), list):
+                report_index_checked = True
                 indexed_items = {
                     str(item["source_id"]): item
                     for item in response.json()
                     if isinstance(item, dict) and item.get("source_id")
                 }
         except HTTPException:
-            indexed_items = {}
+            logger.warning("Could not verify report existence for admin alerts; retaining alerts")
+
+    if report_index_checked:
+        valid_alerts = []
+        for alert in alerts:
+            found_id = str(alert.get("found_item_id") or "")
+            lost_id = str(alert.get("lost_item_id") or "")
+            found_indexed = indexed_items.get(found_id, {})
+            lost_indexed = indexed_items.get(lost_id, {})
+            found_exists = (
+                f"found:{found_id}" in linked_items
+                or str(found_indexed.get("type", "")).lower() == "found"
+            )
+            lost_exists = (
+                f"lost:{lost_id}" in linked_items
+                or str(lost_indexed.get("type", "")).lower() == "lost"
+            )
+            if found_exists and lost_exists:
+                valid_alerts.append(alert)
+        stale_count = len(alerts) - len(valid_alerts)
+        if stale_count:
+            logger.info("Omitting %d admin alert(s) whose reports no longer exist", stale_count)
+        alerts = valid_alerts
 
     for alert in alerts:
         found_id = str(alert.get("found_item_id", ""))
