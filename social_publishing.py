@@ -666,7 +666,8 @@ def social_oauth_callback(
     except HTTPException:
         raise
     except (httpx.HTTPError, RuntimeError, ValueError, TypeError) as exception:
-        logger.error("Social OAuth callback failed: provider=%s error=%s", provider, type(exception).__name__)
+        diagnostic = str(exception) if isinstance(exception, RuntimeError) else type(exception).__name__
+        logger.error("Social OAuth callback failed: provider=%s error=%s", provider, diagnostic)
         raise HTTPException(
             status.HTTP_502_BAD_GATEWAY,
             "The social platform could not complete authorization. Check configuration and reconnect.",
