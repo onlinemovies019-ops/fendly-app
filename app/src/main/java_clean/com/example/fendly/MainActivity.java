@@ -10902,12 +10902,35 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
     }
 
     private void confirmSocialDisconnect(String provider) {
-        new AlertDialog.Builder(this)
-                .setTitle("Disconnect social account?")
-                .setMessage("Fendly will stop using the stored authorization. Revoke Fendly in the provider settings to remove platform access too.")
-                .setNegativeButton("Cancel", null)
-                .setPositiveButton("Disconnect", (dialog, which) -> disconnectSocialAccount(provider))
-                .show();
+        Dialog dialog = new Dialog(this);
+        dialog.requestWindowFeature(Window.FEATURE_NO_TITLE);
+        LinearLayout content = themedDialogContent(
+                R.drawable.ic_field_lock,
+                "Disconnect social account?",
+                "Fendly will stop using the stored authorization. Revoke Fendly in the provider settings to remove platform access too."
+        );
+        LinearLayout actions = new LinearLayout(this);
+        actions.setOrientation(LinearLayout.HORIZONTAL);
+        actions.setGravity(Gravity.CENTER);
+
+        TextView cancel = filledButton("Cancel", LOST_GREEN, LOST_GREEN_ON);
+        cancel.setOnClickListener(view -> dialog.dismiss());
+        actions.addView(cancel, new LinearLayout.LayoutParams(0, dp(44), 1f));
+
+        TextView disconnect = filledButton("Disconnect", Color.rgb(180, 45, 45), Color.WHITE);
+        LinearLayout.LayoutParams disconnectParams = new LinearLayout.LayoutParams(0, dp(44), 1f);
+        disconnectParams.setMargins(dp(12), 0, 0, 0);
+        actions.addView(disconnect, disconnectParams);
+        disconnect.setOnClickListener(view -> {
+            dialog.dismiss();
+            disconnectSocialAccount(provider);
+        });
+
+        content.addView(actions, new LinearLayout.LayoutParams(-1, dp(44)));
+        dialog.setContentView(content);
+        dialog.setCanceledOnTouchOutside(false);
+        dialog.show();
+        sizeThemedDialog(dialog);
     }
 
     private void disconnectSocialAccount(String provider) {
