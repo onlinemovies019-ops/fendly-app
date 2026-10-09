@@ -97,10 +97,6 @@ development writes to `static/uploads`; Render's free filesystem is ephemeral.
   accounts receive a limited potential-match preview, while explicitly listed
   admins can access full report details)
 - `DELETE /api/users/account` (deletes account data and its reports)
-- `GET /api/users/blocked-users`, `POST
-  /api/users/blocked-users/{lost|found}/{report_id}`, and `DELETE
-  /api/users/blocked-users/{user_id}` (manage blocked report authors; signed-in
-  discovery and matching omit reports by accounts involved in a block)
 - `GET /api/social/status`, `GET /api/social/publications`, and
   `POST /api/social/publications/refresh` (admin-only; refresh checks recent
   published post IDs against Meta and reports whether each post is available,

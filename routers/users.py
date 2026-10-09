@@ -26,7 +26,6 @@ from models import (
     LostItem,
     SocialPublication,
     User,
-    UserBlock,
     UserNotification,
     UsernameReservation,
 )
@@ -36,68 +35,6 @@ from schemas import ProfileUpdate, UsernameRequest
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/users", tags=["users"])
-
-
-@router.get("/blocked-users")
-def list_blocked_users(
-    session: Session = Depends(get_db),
-    uid: str = Depends(get_current_user),
-) -> list[str]:
-    return session.scalars(
-        select(UserBlock.blocked_uid)
-        .where(UserBlock.blocker_uid == uid)
-        .order_by(UserBlock.created_at.desc())
-    ).all()
-
-
-@router.post("/blocked-users/{item_type}/{item_id}", status_code=status.HTTP_201_CREATED)
-def block_report_author(
-    item_type: str,
-    item_id: str,
-    session: Session = Depends(get_db),
-    uid: str = Depends(get_current_user),
-) -> dict[str, str]:
-    normalized_type = item_type.strip().lower()
-    model = LostItem if normalized_type == "lost" else FoundItem if normalized_type == "found" else None
-    if model is None:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Report type must be lost or found")
-    item = session.get(model, item_id)
-    if item is None or item.hidden_from_public:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Report not found")
-    if item.created_by == uid:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "You cannot block yourself")
-
-    existing = session.get(UserBlock, (uid, item.created_by))
-    if existing is None:
-        session.add(UserBlock(blocker_uid=uid, blocked_uid=item.created_by))
-        try:
-            session.commit()
-        except IntegrityError:
-            session.rollback()
-            if session.get(UserBlock, (uid, item.created_by)) is None:
-                raise HTTPException(
-                    status.HTTP_503_SERVICE_UNAVAILABLE,
-                    "Could not block this account; please try again",
-                )
-    return {"status": "blocked"}
-
-
-@router.delete("/blocked-users/{blocked_uid}")
-def unblock_user(
-    blocked_uid: str,
-    session: Session = Depends(get_db),
-    uid: str = Depends(get_current_user),
-) -> dict[str, str]:
-    if blocked_uid == uid:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "You cannot unblock yourself")
-    session.execute(
-        delete(UserBlock).where(
-            UserBlock.blocker_uid == uid,
-            UserBlock.blocked_uid == blocked_uid,
-        )
-    )
-    session.commit()
-    return {"status": "unblocked"}
 
 
 def _photo_is_still_referenced(session: Session, photo_url: str, uid: str) -> bool:
@@ -373,11 +310,6 @@ def delete_account(
         session.execute(delete(LostItem).where(LostItem.created_by == uid))
         session.execute(delete(FoundItem).where(FoundItem.created_by == uid))
         session.execute(delete(UserNotification).where(UserNotification.firebase_uid == uid))
-        session.execute(
-            delete(UserBlock).where(
-                or_(UserBlock.blocker_uid == uid, UserBlock.blocked_uid == uid)
-            )
-        )
         session.execute(delete(ContentReport).where(ContentReport.reporter_uid == uid))
         session.execute(delete(DeviceToken).where(DeviceToken.firebase_uid == uid))
         session.execute(delete(EmailOTPChallenge).where(EmailOTPChallenge.firebase_uid == uid))

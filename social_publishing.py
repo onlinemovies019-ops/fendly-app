@@ -526,7 +526,10 @@ def list_social_publications(
 ) -> list[dict[str, str | int | None]]:
     publications = session.scalars(
         select(SocialPublication)
-        .where(SocialPublication.provider.in_(PROVIDER_NAMES))
+        .where(
+            SocialPublication.provider.in_(PROVIDER_NAMES),
+            SocialPublication.status != "removed",
+        )
         .order_by(SocialPublication.created_at.desc())
         .limit(limit)
     ).all()
@@ -541,7 +544,10 @@ def refresh_social_publications(
 ) -> list[dict[str, str | int | None]]:
     publications = session.scalars(
         select(SocialPublication)
-        .where(SocialPublication.provider.in_(PROVIDER_NAMES))
+        .where(
+            SocialPublication.provider.in_(PROVIDER_NAMES),
+            SocialPublication.status != "removed",
+        )
         .order_by(SocialPublication.created_at.desc())
         .limit(limit)
     ).all()
@@ -553,6 +559,7 @@ def refresh_social_publications(
     }
 
     refreshed = []
+    has_removed_publications = False
     for publication in publications:
         platform_status = "not_checked"
         account = accounts.get(publication.provider)
@@ -561,7 +568,14 @@ def refresh_social_publications(
                 platform_status = _check_external_post(account, publication.external_post_id)
             else:
                 platform_status = "check_failed"
+        if platform_status == "unavailable":
+            publication.status = "removed"
+            publication.last_error = "Post is no longer available to the connected Meta account."
+            has_removed_publications = True
+            continue
         refreshed.append(_publication_summary(publication, platform_status))
+    if has_removed_publications:
+        session.commit()
     return refreshed
 
 

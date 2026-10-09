@@ -76,7 +76,6 @@ async def lifespan(_: FastAPI):
                     "social_oauth_states",
                     "social_publications",
                     "content_reports",
-                    "user_blocks",
                 ):
                     connection.execute(
                         text(f"ALTER TABLE public.{table_name} ENABLE ROW LEVEL SECURITY")

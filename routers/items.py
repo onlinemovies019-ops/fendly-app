@@ -24,12 +24,12 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from ai_matching import create_embedding, item_text
-from auth import get_current_user, get_optional_current_user
+from auth import get_current_user
 from database import SessionLocal, get_db
 from image_matching import cosine_similarity, create_image_embedding
 from imei_security import imei_digest, validate_imei
 from moderation import moderate_content
-from models import AdminMatchAlert, ContentReport, FoundItem, LostItem, SocialPublication, UserBlock, UserNotification
+from models import AdminMatchAlert, ContentReport, FoundItem, LostItem, SocialPublication, UserNotification
 from notifications import persist_admin_match_alert, send_admin_match_email, send_match_notifications
 from routers.payments import require_lost_report_entitlement
 from schemas import ItemCreate, ItemResponse, ItemUpdate, MatchPreview, MatchRequest, MatchResponse
@@ -260,16 +260,6 @@ def _validate_report_image_urls(image_urls: list[str]) -> None:
         )
         if not (is_fendly_upload or is_supabase_upload or is_cloudinary_upload):
             raise HTTPException(status.HTTP_400_BAD_REQUEST, "Report images must use a Fendly upload URL")
-
-
-def _blocked_user_ids(session: Session, uid: str) -> set[str]:
-    blocked = set(session.scalars(
-        select(UserBlock.blocked_uid).where(UserBlock.blocker_uid == uid)
-    ).all())
-    blocked.update(session.scalars(
-        select(UserBlock.blocker_uid).where(UserBlock.blocked_uid == uid)
-    ).all())
-    return blocked
 
 
 def _stored_report_field(value: str | None, label: str) -> str | None:
@@ -717,18 +707,14 @@ async def list_my_items(
 def list_public_reports(
     city: str | None = Query(default=None, max_length=120),
     session: Session | None = Depends(get_db),
-    uid: str | None = Depends(get_optional_current_user),
 ) -> list[dict[str, object]]:
     session = _require_db_session(session)
     normalized_city = city.strip().casefold() if city else ""
     escaped_city = normalized_city.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-    blocked_uids = _blocked_user_ids(session, uid) if uid else set()
 
     reports: list[tuple[str, LostItem | FoundItem]] = []
     for item_type, model in (("LOST", LostItem), ("FOUND", FoundItem)):
         query = select(model).where(model.hidden_from_public.is_(False))
-        if blocked_uids:
-            query = query.where(model.created_by.not_in(blocked_uids))
         if model is LostItem:
             query = query.where(LostItem.status == "LOST")
         if escaped_city:
@@ -1040,12 +1026,6 @@ async def match_items(
             if not owned_image:
                 raise HTTPException(404, "Report not found")
         results = await _find_cloudinary_image_matches(request.imageUrl, target_type, session)
-        if not is_admin:
-            blocked_uids = _blocked_user_ids(session, uid)
-            results = [
-                result for result in results
-                if result["item"].created_by not in blocked_uids
-            ]
         return [
             {
                 **result,
@@ -1081,11 +1061,6 @@ async def match_items(
             func.abs(candidate_model.lng - query_item.lng) <= request.radius_degrees,
         )
     ).all()
-    blocked_uids = _blocked_user_ids(session, uid)
-    candidates = [
-        item for item in candidates
-        if item.created_by not in blocked_uids
-    ]
     query_embedding = query_item.embedding or await create_embedding(
         item_text(query_item.title, query_item.description, query_item.category)
     )

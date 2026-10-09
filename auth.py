@@ -125,15 +125,6 @@ async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(s
     return uid
 
 
-async def get_optional_current_user(
-    credentials: HTTPAuthorizationCredentials | None = Depends(security),
-) -> str | None:
-    """Return the authenticated UID when a bearer token is supplied."""
-    if credentials is None:
-        return None
-    return await get_current_user(credentials)
-
-
 def normalize_profile_photo(value: Any) -> str:
     if value is None:
         return ""

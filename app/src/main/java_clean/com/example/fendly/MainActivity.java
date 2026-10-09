@@ -9208,10 +9208,6 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         deleteAccount.setOnClickListener(view -> showDeleteAccountDialog());
         root.addView(deleteAccount, contentParams(-1, dp(44), dp(4)));
 
-        TextView blockedUsers = actionButton(LanguageManager.profileText(this, "blocked_users"), false);
-        blockedUsers.setOnClickListener(view -> showBlockedUsersDialog());
-        root.addView(blockedUsers, contentParams(-1, dp(44), dp(4)));
-
         TextView privacyPolicy = actionButton(LanguageManager.profileText(this, "privacy_data_deletion"), false);
         privacyPolicy.setOnClickListener(view -> showPrivacyPolicyDialog());
         root.addView(privacyPolicy, contentParams(-1, dp(44), dp(4)));
@@ -10586,12 +10582,6 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         adminTitle.setTextAlignment(View.TEXT_ALIGNMENT_CENTER);
         root.addView(adminTitle, contentParams(-1, dp(28), dp(4)));
 
-        TextView adminSubtitle = text("System suggests a match. Compare reports, then confirm or reject.", 11, secondaryTextColor(), Typeface.NORMAL);
-        adminSubtitle.setGravity(Gravity.CENTER_HORIZONTAL);
-        adminSubtitle.setTextAlignment(View.TEXT_ALIGNMENT_CENTER);
-        adminSubtitle.setMaxLines(2);
-        root.addView(adminSubtitle, contentParams(-1, dp(38), dp(14)));
-
         TextView socialPublishingButton = actionButton("Manage social accounts and posts", false);
         socialPublishingButton.setOnClickListener(view -> showAdminSocialPublishingPage());
         root.addView(socialPublishingButton, contentParams(-1, dp(44), dp(10)));
@@ -11526,14 +11516,6 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             TextView reportContent = actionButton("Report this content", false);
             addFieldToDialog(content, reportContent);
             reportContent.setOnClickListener(view -> promptReportContent(report));
-            if (signedInUser != null) {
-                TextView blockAuthor = actionButton(
-                        LanguageManager.profileText(this, "block_account"),
-                        false
-                );
-                addFieldToDialog(content, blockAuthor);
-                blockAuthor.setOnClickListener(view -> promptBlockReportAuthor(report, dialog));
-            }
         }
 
         TextView close = actionButton("Close", true);
@@ -11592,121 +11574,6 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                                 Toast.LENGTH_LONG
                         ).show()))
                 .setNegativeButton("Cancel", null)
-                .show();
-    }
-
-    private void promptBlockReportAuthor(JSONObject report, Dialog reportDialog) {
-        String type = report.optString("type", "").toLowerCase(Locale.US);
-        String reportId = report.optString("id", "").trim();
-        if (!("lost".equals(type) || "found".equals(type)) || reportId.isEmpty()) {
-            Toast.makeText(this, "Could not identify this report's creator.", Toast.LENGTH_LONG).show();
-            return;
-        }
-        new AlertDialog.Builder(this)
-                .setTitle(LanguageManager.profileText(this, "block_account_title"))
-                .setMessage(LanguageManager.profileText(this, "block_account_body"))
-                .setNegativeButton("Cancel", null)
-                .setPositiveButton(LanguageManager.profileText(this, "confirm_block"), (confirmation, which) -> {
-                    FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
-                    if (user == null) {
-                        Toast.makeText(this, "Sign in to block an account.", Toast.LENGTH_LONG).show();
-                        return;
-                    }
-                    user.getIdToken(false).addOnSuccessListener(token -> network.execute(() -> {
-                        String path = "/api/users/blocked-users/" + type + "/" + Uri.encode(reportId);
-                        boolean blocked = postAuthorized(path, token.getToken());
-                        runOnUiThread(() -> {
-                            if (blocked) {
-                                reportDialog.dismiss();
-                                Toast.makeText(
-                                        this,
-                                        LanguageManager.profileText(this, "account_blocked"),
-                                        Toast.LENGTH_LONG
-                                ).show();
-                                showHome();
-                            } else {
-                                Toast.makeText(this, "Could not block this account. Please try again.", Toast.LENGTH_LONG).show();
-                            }
-                        });
-                    })).addOnFailureListener(error ->
-                            Toast.makeText(this, "Could not authenticate this request.", Toast.LENGTH_LONG).show());
-                })
-                .show();
-    }
-
-    private void showBlockedUsersDialog() {
-        FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
-        if (user == null) {
-            Toast.makeText(this, "Sign in to manage blocked accounts.", Toast.LENGTH_LONG).show();
-            return;
-        }
-        user.getIdToken(false).addOnSuccessListener(token -> network.execute(() -> {
-            String response = getAuthorized("/api/users/blocked-users", token.getToken());
-            runOnUiThread(() -> {
-                if (response == null) {
-                    Toast.makeText(this, "Could not load blocked accounts. Please try again.", Toast.LENGTH_LONG).show();
-                    return;
-                }
-                try {
-                    JSONArray blockedUsers = new JSONArray(response);
-                    if (blockedUsers.length() == 0) {
-                        new AlertDialog.Builder(this)
-                                .setTitle(LanguageManager.profileText(this, "blocked_users"))
-                                .setMessage(LanguageManager.profileText(this, "no_blocked_users"))
-                                .setPositiveButton("Close", null)
-                                .show();
-                        return;
-                    }
-                    String[] userIds = new String[blockedUsers.length()];
-                    String[] labels = new String[blockedUsers.length()];
-                    for (int index = 0; index < blockedUsers.length(); index++) {
-                        userIds[index] = blockedUsers.getString(index);
-                        String suffix = userIds[index].substring(Math.max(0, userIds[index].length() - 6));
-                        labels[index] = "Blocked account • " + suffix;
-                    }
-                    new AlertDialog.Builder(this)
-                            .setTitle(LanguageManager.profileText(this, "blocked_users"))
-                            .setItems(labels, (dialog, index) -> confirmUnblockUser(userIds[index]))
-                            .setNegativeButton("Close", null)
-                            .show();
-                } catch (Exception error) {
-                    Log.e("USER_BLOCKS", "Could not parse blocked account list", error);
-                    Toast.makeText(this, "Could not read blocked accounts.", Toast.LENGTH_LONG).show();
-                }
-            });
-        })).addOnFailureListener(error ->
-                Toast.makeText(this, "Could not authenticate this request.", Toast.LENGTH_LONG).show());
-    }
-
-    private void confirmUnblockUser(String blockedUid) {
-        new AlertDialog.Builder(this)
-                .setTitle(LanguageManager.profileText(this, "unblock_account_title"))
-                .setMessage(LanguageManager.profileText(this, "unblock_account_body"))
-                .setNegativeButton("Cancel", null)
-                .setPositiveButton(LanguageManager.profileText(this, "confirm_unblock"), (dialog, which) -> {
-                    FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
-                    if (user == null) {
-                        Toast.makeText(this, "Sign in to manage blocked accounts.", Toast.LENGTH_LONG).show();
-                        return;
-                    }
-                    user.getIdToken(false).addOnSuccessListener(token -> network.execute(() -> {
-                        String path = "/api/users/blocked-users/" + Uri.encode(blockedUid);
-                        boolean unblocked = deleteAuthorized(path, token.getToken());
-                        runOnUiThread(() -> {
-                            if (unblocked) {
-                                Toast.makeText(
-                                        this,
-                                        LanguageManager.profileText(this, "account_unblocked"),
-                                        Toast.LENGTH_LONG
-                                ).show();
-                                showHome();
-                            } else {
-                                Toast.makeText(this, "Could not unblock this account. Please try again.", Toast.LENGTH_LONG).show();
-                            }
-                        });
-                    })).addOnFailureListener(error ->
-                            Toast.makeText(this, "Could not authenticate this request.", Toast.LENGTH_LONG).show());
-                })
                 .show();
     }
 

@@ -12,9 +12,8 @@ import main
 from routers import admin as admin_module
 from routers import items as items_module
 from routers import users as users_module
-from models import AdminMatchAlert, Base, FoundItem, LostItem, UserBlock
+from models import AdminMatchAlert, Base, FoundItem, LostItem
 from routers.items import list_my_items
-from schemas import MatchRequest
 
 
 @pytest.fixture
@@ -196,138 +195,11 @@ def test_local_report_image_urls_are_only_allowed_for_loopback_in_development(mo
     assert error.value.status_code == 400
 
 
-def test_users_can_block_report_authors_and_unblock_them(reports_client, monkeypatch):
-    client, session_factory = reports_client
-    with Session(session_factory.kw["bind"]) as session:
-        item = FoundItem(
-            created_by="blocked-author",
-            title="Found blue umbrella",
-            description="Blue umbrella near the station",
-            category="accessories",
-            lat=19.0760,
-            lng=72.8777,
-        )
-        reader_item = FoundItem(
-            created_by="reader",
-            title="Found red backpack",
-            description="Red backpack near the park",
-            category="accessories",
-            lat=19.0760,
-            lng=72.8777,
-        )
-        session.add_all([item, reader_item])
-        session.commit()
-        item_id = item.id
+def test_block_account_endpoints_are_not_exposed(reports_client):
+    client, _ = reports_client
 
-    monkeypatch.setitem(
-        main.app.dependency_overrides,
-        items_module.get_optional_current_user,
-        lambda: "reader",
-    )
-    monkeypatch.setitem(
-        main.app.dependency_overrides,
-        users_module.get_current_user,
-        lambda: "reader",
-    )
-
-    block = client.post(f"/api/users/blocked-users/found/{item_id}")
-    assert block.status_code == 201
-    assert block.json() == {"status": "blocked"}
-    assert client.get("/api/users/blocked-users").json() == ["blocked-author"]
-    assert [report["title"] for report in client.get("/api/reports").json()] == [
-        "Found red backpack"
-    ]
-
-    monkeypatch.setitem(
-        main.app.dependency_overrides,
-        items_module.get_optional_current_user,
-        lambda: "blocked-author",
-    )
-    assert [report["title"] for report in client.get("/api/reports").json()] == [
-        "Found blue umbrella"
-    ]
-    monkeypatch.setitem(
-        main.app.dependency_overrides,
-        items_module.get_optional_current_user,
-        lambda: "reader",
-    )
-
-    unblock = client.delete("/api/users/blocked-users/blocked-author")
-    assert unblock.status_code == 200
-    assert unblock.json() == {"status": "unblocked"}
-    assert client.get("/api/users/blocked-users").json() == []
-    assert len(client.get("/api/reports").json()) == 2
-
-
-def test_users_cannot_block_themselves(reports_client, monkeypatch):
-    client, session_factory = reports_client
-    with Session(session_factory.kw["bind"]) as session:
-        item = FoundItem(
-            created_by="reader",
-            title="Found blue umbrella",
-            description="Blue umbrella near the station",
-            category="accessories",
-            lat=19.0760,
-            lng=72.8777,
-        )
-        session.add(item)
-        session.commit()
-        item_id = item.id
-
-    monkeypatch.setitem(
-        main.app.dependency_overrides,
-        users_module.get_current_user,
-        lambda: "reader",
-    )
-
-    response = client.post(f"/api/users/blocked-users/found/{item_id}")
-
-    assert response.status_code == 400
-    assert response.json()["detail"] == "You cannot block yourself"
-
-
-@pytest.mark.asyncio
-async def test_image_matches_exclude_reports_involved_in_a_block(reports_client, monkeypatch):
-    _, session_factory = reports_client
-    with Session(session_factory.kw["bind"]) as session:
-        query_item = FoundItem(
-            created_by="reader",
-            title="Found wallet",
-            description="Found near station",
-            category="accessories",
-            lat=19.0760,
-            lng=72.8777,
-            image_url="https://res.cloudinary.com/fendly/image/upload/query.jpg",
-        )
-        candidate = LostItem(
-            created_by="blocked-author",
-            title="Lost wallet",
-            description="Lost near station",
-            category="accessories",
-            lat=19.0760,
-            lng=72.8777,
-        )
-        session.add_all([
-            query_item,
-            candidate,
-            UserBlock(blocker_uid="reader", blocked_uid="blocked-author"),
-        ])
-        session.commit()
-
-        async def fake_image_matches(_image_url, _target_type, _session):
-            return [{"item": candidate, "score": 0.99, "matchType": "IMAGE"}]
-
-        monkeypatch.setattr(items_module, "_find_cloudinary_image_matches", fake_image_matches)
-        result = await items_module.match_items(
-            MatchRequest(
-                imageUrl=query_item.image_url,
-                targetType="lost",
-            ),
-            session=session,
-            uid="reader",
-        )
-
-    assert result == []
+    assert client.get("/api/users/blocked-users").status_code == 404
+    assert client.post("/api/users/blocked-users/found/report-id").status_code == 404
 
 
 def test_public_reports_city_filter_excludes_coordinates_outside_india(reports_client):

@@ -11,7 +11,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from models import AdminMatchAlert, DeviceToken, FoundItem, LostItem, UserBlock, UserNotification
+from models import AdminMatchAlert, DeviceToken, FoundItem, LostItem, UserNotification
 
 
 logger = logging.getLogger(__name__)
@@ -37,24 +37,6 @@ def send_match_notifications(
 ) -> int:
     if not recipient_uids:
         return 0
-
-    found_item = session.get(FoundItem, found_item_id)
-    if found_item is not None:
-        blocked_recipients = set(session.scalars(
-            select(UserBlock.blocked_uid).where(
-                UserBlock.blocker_uid == found_item.created_by,
-                UserBlock.blocked_uid.in_(recipient_uids),
-            )
-        ).all())
-        blocked_recipients.update(session.scalars(
-            select(UserBlock.blocker_uid).where(
-                UserBlock.blocked_uid == found_item.created_by,
-                UserBlock.blocker_uid.in_(recipient_uids),
-            )
-        ).all())
-        recipient_uids = recipient_uids - blocked_recipients
-        if not recipient_uids:
-            return 0
 
     title = "Possible Fendly match"
     body = f"A found item matches yours ({score:.0%} match)."

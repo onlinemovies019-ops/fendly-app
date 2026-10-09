@@ -569,23 +569,39 @@ def test_publication_refresh_checks_recent_published_posts(monkeypatch):
     monkeypatch.setattr(
         social_publishing,
         "_check_external_post",
-        lambda account, post_id: checked.append((account.provider, post_id)) or "unavailable",
+        lambda account, post_id: (
+            checked.append((account.provider, post_id))
+            or ("unavailable" if post_id == "deleted-instagram-post" else "check_failed")
+        ),
     )
     with factory() as session:
-        account = SocialAccount(
-            provider="instagram",
-            account_id="instagram-id",
-            account_name="Fendly",
-            access_token_encrypted="encrypted-token",
-        )
-        publication = SocialPublication(
-            id="publication-refresh",
-            report_id="report-1",
-            report_type="lost",
-            provider="instagram",
-            status="published",
-            external_post_id="deleted-instagram-post",
-        )
+        accounts = [
+            SocialAccount(
+                provider=provider,
+                account_id=f"{provider}-id",
+                account_name="Fendly",
+                access_token_encrypted="encrypted-token",
+            )
+            for provider in ("instagram", "facebook")
+        ]
+        publications = [
+            SocialPublication(
+                id="publication-refresh",
+                report_id="report-1",
+                report_type="lost",
+                provider="instagram",
+                status="published",
+                external_post_id="deleted-instagram-post",
+            ),
+            SocialPublication(
+                id="publication-check-failed",
+                report_id="report-3",
+                report_type="lost",
+                provider="facebook",
+                status="published",
+                external_post_id="temporarily-inaccessible-post",
+            ),
+        ]
         legacy_x_publication = SocialPublication(
             id="legacy-x-publication",
             report_id="report-2",
@@ -594,7 +610,7 @@ def test_publication_refresh_checks_recent_published_posts(monkeypatch):
             status="failed",
             external_post_id="legacy-x-post",
         )
-        session.add_all([account, publication, legacy_x_publication])
+        session.add_all([*accounts, *publications, legacy_x_publication])
         session.commit()
 
         result = social_publishing.refresh_social_publications(
@@ -602,14 +618,24 @@ def test_publication_refresh_checks_recent_published_posts(monkeypatch):
             session=session,
             _="admin-uid",
         )
+        assert session.get(SocialPublication, "publication-refresh").status == "removed"
+        visible = social_publishing.list_social_publications(
+            limit=20,
+            session=session,
+            _="admin-uid",
+        )
+        assert [item["report_id"] for item in visible] == ["report-3"]
 
-    assert checked == [("instagram", "deleted-instagram-post")]
-    assert [item["provider"] for item in result] == ["instagram"]
-    assert result[0]["platform_status"] == "unavailable"
+    assert set(checked) == {
+        ("instagram", "deleted-instagram-post"),
+        ("facebook", "temporarily-inaccessible-post"),
+    }
+    assert [item["report_id"] for item in result] == ["report-3"]
+    assert result[0]["platform_status"] == "check_failed"
     assert result[0]["status"] == "published"
 
 
-def test_publication_list_excludes_legacy_x_jobs():
+def test_publication_list_excludes_legacy_x_and_removed_jobs():
     factory = _session_factory()
     with factory() as session:
         session.add_all([
@@ -626,6 +652,13 @@ def test_publication_list_excludes_legacy_x_jobs():
                 report_type="lost",
                 provider="x",
                 status="failed",
+            ),
+            SocialPublication(
+                id="removed-facebook-publication",
+                report_id="report-removed",
+                report_type="lost",
+                provider="facebook",
+                status="removed",
             ),
         ])
         session.commit()

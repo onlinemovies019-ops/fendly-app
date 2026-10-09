@@ -284,15 +284,3 @@ class ContentReport(Base):
     details: Mapped[str | None] = mapped_column(String(1000))
     status: Mapped[str] = mapped_column(String(16), default="pending", nullable=False, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
-
-
-class UserBlock(Base):
-    __tablename__ = "user_blocks"
-    __table_args__ = (
-        CheckConstraint("blocker_uid <> blocked_uid", name="user_blocks_no_self_block_check"),
-        Index("user_blocks_blocker_created_idx", "blocker_uid", "created_at"),
-    )
-
-    blocker_uid: Mapped[str] = mapped_column(String(128), primary_key=True)
-    blocked_uid: Mapped[str] = mapped_column(String(128), primary_key=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

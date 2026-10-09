@@ -11,7 +11,6 @@ from models import (
     LostItem,
     SocialPublication,
     User,
-    UserBlock,
     UserNotification,
 )
 from notifications import send_match_notifications
@@ -42,32 +41,6 @@ def test_user_match_ping_is_persisted_without_device_token(notification_session)
     assert notifications[0].firebase_uid == "user-1"
     assert notifications[0].found_item_id == "found-1"
     assert notifications[0].is_read is False
-
-
-def test_match_notifications_are_suppressed_for_either_direction_of_block(
-    notification_session,
-):
-    notification_session.add(FoundItem(
-        id="found-1",
-        created_by="found-owner",
-        title="Found wallet",
-        description="Found near station",
-        category="accessories",
-        lat=19.0760,
-        lng=72.8777,
-    ))
-    notification_session.add_all([
-        UserBlock(blocker_uid="found-owner", blocked_uid="user-1"),
-        UserBlock(blocker_uid="user-2", blocked_uid="found-owner"),
-    ])
-    notification_session.commit()
-
-    sent = send_match_notifications(
-        notification_session, {"user-1", "user-2"}, "found-1", 0.91
-    )
-
-    assert sent == 0
-    assert notification_session.scalars(select(UserNotification)).all() == []
 
 
 def test_user_inbox_and_read_state_are_scoped_to_authenticated_uid(notification_session):
