@@ -1,7 +1,2 @@
 <resources>
-    <style name="AppTheme" parent="Theme.AppCompat.DayNight">
-        <item name="colorPrimary">#FF4081</item>
-        <item name="colorPrimaryDark">#FF1744</item>
-        <item name="colorAccent">#FF8A80</item>
-    </style>
 </resources>

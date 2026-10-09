@@ -1937,13 +1937,13 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         FrameLayout avatarWrap = new FrameLayout(this);
         avatarWrap.setBackground(roundWithStroke(surfaceColor(), 60, borderColor()));
         avatarWrap.setOnClickListener(view -> showProfilePhotoOptions());
-        if (Build.VERSION.SDK_INT >= 21) avatarWrap.setClipToOutline(true);
+        avatarWrap.setClipToOutline(true);
 
         ImageView avatar = new ImageView(this);
         avatar.setBackground(roundWithStroke(surfaceColor(), 60, fieldBorderColor()));
         avatar.setLayoutParams(new FrameLayout.LayoutParams(dp(118), dp(118), Gravity.CENTER));
         avatar.setImageResource(R.drawable.ic_field_person);
-        if (Build.VERSION.SDK_INT >= 21) avatar.setClipToOutline(true);
+        avatar.setClipToOutline(true);
 
         bindProfilePhoto(avatar, account);
 
@@ -2693,7 +2693,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         String password = credentialPassword(username, pin);
         FirebaseUser currentUser = FirebaseAuth.getInstance().getCurrentUser();
         if (currentUser == null) {
-            save.setText("Could not secure account");
+            save.setText(translate("Could not secure account"));
             save.setEnabled(true);
             Toast.makeText(this, "Please create the account again", Toast.LENGTH_LONG).show();
             return;
@@ -2744,20 +2744,20 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                                 finishFirebaseCredentialSetup(username, pin, save, account);
                             }
                         } else {
-                            save.setText("Could not secure account");
+                            save.setText(translate("Could not secure account"));
                             save.setEnabled(true);
                             Toast.makeText(this, detail, Toast.LENGTH_LONG).show();
                         }
                     });
                 } catch (Exception error) {
                     runOnUiThread(() -> {
-                        save.setText("Could not secure account");
+                        save.setText(translate("Could not secure account"));
                         save.setEnabled(true);
                         Toast.makeText(this, "Could not reach account security service. Please retry.", Toast.LENGTH_LONG).show();
                     });
                 }
             })).addOnFailureListener(error -> {
-                save.setText("Could not secure account");
+                save.setText(translate("Could not secure account"));
                 save.setEnabled(true);
                 Toast.makeText(this, "Your account session expired. Please sign in again and retry.", Toast.LENGTH_LONG).show();
             });
@@ -2770,7 +2770,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         accountTask
                 .addOnSuccessListener(result -> finishFirebaseCredentialSetup(username, pin, save, account))
                 .addOnFailureListener(error -> {
-                    save.setText("Could not secure account");
+                    save.setText(translate("Could not secure account"));
                     save.setEnabled(true);
                     Toast.makeText(this, error.getMessage(), Toast.LENGTH_LONG).show();
                 });
@@ -5300,7 +5300,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             ).show();
             return;
         }
-        saveButton.setText("Saving...");
+        saveButton.setText(translate("Saving..."));
         saveButton.setEnabled(false);
         FirebaseAuth.getInstance().getCurrentUser().getIdToken(false).addOnSuccessListener(token -> network.execute(() -> {
             String imageUrl = editingReportImageUrl;
@@ -5328,7 +5328,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                     Toast.makeText(this, "Report updated", Toast.LENGTH_SHORT).show();
                     showReports();
                 } else {
-                    saveButton.setText("Retry update");
+                    saveButton.setText(translate("Retry update"));
                         String message = code == 404
                             ? "Report update API is not deployed yet"
                             : "Could not update report (" + code + ")";
@@ -5336,7 +5336,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                 }
             });
         })).addOnFailureListener(error -> {
-            saveButton.setText("Retry update");
+            saveButton.setText(translate("Retry update"));
             saveButton.setEnabled(true);
             Toast.makeText(this, "Authentication failed", Toast.LENGTH_LONG).show();
         });
@@ -5874,7 +5874,12 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
 
         verifyButton.setEnabled(false);
         int seconds = (int) Math.ceil(remainingMs / 1000.0D);
-        verifyButton.setText("Resend in " + seconds + "s");
+        verifyButton.setText(String.format(
+                Locale.ROOT,
+                "%1$s %2$ss",
+                translate("Resend in"),
+                localizeDigits(String.valueOf(seconds))
+        ));
         emailVerificationCooldownRunnable = new Runnable() {
             @Override
             public void run() {
@@ -6961,11 +6966,13 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                     completedToggle.setOnClickListener(view -> {
                         boolean expand = completedUserReports.getVisibility() != View.VISIBLE;
                         completedUserReports.setVisibility(expand ? View.VISIBLE : View.GONE);
-                        completedToggle.setText(
-                                localizeReportsText("Completed reports") + " ("
-                                        + localizeDigits(String.valueOf(completedCount))
-                                        + ")  " + (expand ? "▲" : "▼")
-                        );
+                        completedToggle.setText(String.format(
+                                Locale.ROOT,
+                                "%1$s (%2$s)  %3$s",
+                                localizeReportsText("Completed reports"),
+                                localizeDigits(String.valueOf(completedCount)),
+                                expand ? "▲" : "▼"
+                        ));
                     });
                 }
             }
@@ -8830,17 +8837,13 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         avatarWrap.setBackground(roundWithStroke(surfaceColor(), 60, borderColor()));
         avatarWrap.setPadding(0, 0, 0, 0);
         avatarWrap.setOnClickListener(view -> showProfilePhotoOptions());
-        if (Build.VERSION.SDK_INT >= 21) {
-            avatarWrap.setClipToOutline(true);
-        }
+        avatarWrap.setClipToOutline(true);
 
         ImageView avatar = new ImageView(this);
         avatar.setBackground(roundWithStroke(surfaceColor(), 60, fieldBorderColor()));
         avatar.setLayoutParams(new FrameLayout.LayoutParams(dp(118), dp(118), Gravity.CENTER));
         avatar.setImageResource(R.drawable.ic_field_person);
-        if (Build.VERSION.SDK_INT >= 21) {
-            avatar.setClipToOutline(true);
-        }
+        avatar.setClipToOutline(true);
 
         visibleAvatar = avatar;
         bindProfilePhoto(avatar, account);
@@ -10192,21 +10195,21 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
     private void applyLocationToggleVisualState(TextView button, TextView toggle, boolean enabled) {
         if (button == null) return;
         if (enabled) {
-            button.setText("Location ready");
+            button.setText(translate("Location ready"));
             button.setTextColor(Color.WHITE);
             button.setBackground(roundWithStroke(LOST_GREEN, 10, LOST_GREEN));
         } else {
-            button.setText("Precise location  OFF");
+            button.setText(translate("Precise location  OFF"));
             button.setTextColor(secondaryTextColor());
             button.setBackground(roundWithStroke(surfaceColor(), 10, fieldBorderColor()));
         }
         if (toggle != null) {
             if (enabled) {
-                toggle.setText("Precise location  ON");
+                toggle.setText(translate("Precise location  ON"));
                 toggle.setTextColor(Color.WHITE);
                 toggle.setBackground(roundWithStroke(LOST_GREEN, 10, LOST_GREEN));
             } else {
-                toggle.setText("Precise location  OFF");
+                toggle.setText(translate("Precise location  OFF"));
                 toggle.setTextColor(secondaryTextColor());
                 toggle.setBackground(roundWithStroke(surfaceColor(), 10, fieldBorderColor()));
             }
@@ -10249,9 +10252,9 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         long requestGeneration = ++locationRequestGeneration;
         locationStatus = button;
         locationToggleStatus = toggle;
-        if (Build.VERSION.SDK_INT >= 23 && checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
+        if (checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
             ActivityCompat.requestPermissions(this, new String[]{Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION}, 702);
-            if (button != null) button.setText("Location permission requested");
+            if (button != null) button.setText(translate("Location permission requested"));
             return;
         }
         enableLocationServicesIfNeeded(button, toggle, locationRequestReportType, requestGeneration);
@@ -10261,7 +10264,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         try {
             LocationManager manager = (LocationManager) getSystemService(LOCATION_SERVICE);
             if (manager == null) {
-                if (button != null) button.setText("Location unavailable");
+                if (button != null) button.setText(translate("Location unavailable"));
                 return;
             }
 
@@ -10269,7 +10272,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             boolean networkEnabled = manager.isProviderEnabled(LocationManager.NETWORK_PROVIDER);
             if (!gpsEnabled && !networkEnabled) {
                 if (button != null) {
-                    button.setText("Turn on location");
+                    button.setText(translate("Turn on location"));
                     button.setTextColor(secondaryTextColor());
                     button.setBackground(roundWithStroke(surfaceColor(), 10, fieldBorderColor()));
                 }
@@ -10279,7 +10282,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             }
             updateLocation(button, toggle, reportType, requestGeneration);
         } catch (Exception error) {
-            if (button != null) button.setText("Location unavailable");
+            if (button != null) button.setText(translate("Location unavailable"));
         }
     }
 
@@ -10287,7 +10290,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         try {
             LocationManager manager = (LocationManager) getSystemService(LOCATION_SERVICE);
             if (manager == null) {
-                if (button != null) button.setText("Precise location  OFF");
+                if (button != null) button.setText(translate("Precise location  OFF"));
                 return;
             }
 
@@ -10321,7 +10324,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                     applyLocationToggleVisualState(button, toggle, true);
                 }
             } else if (toggle != null) {
-                toggle.setText("Locating...");
+                toggle.setText(translate("Locating..."));
                 toggle.setTextColor(secondaryTextColor());
             }
 
@@ -10368,7 +10371,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                 manager.requestLocationUpdates(LocationManager.NETWORK_PROVIDER, 1000L, 1f, activeLocationListener, looper);
             }
         } catch (SecurityException error) {
-            if (button != null) button.setText("Location permission required");
+            if (button != null) button.setText(translate("Location permission required"));
         } catch (Exception ignored) {}
     }
 
@@ -10380,7 +10383,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                 enableLocationServicesIfNeeded(locationStatus, locationToggleStatus,
                         locationRequestReportType, locationRequestGeneration);
             } else {
-                locationStatus.setText("Location permission denied");
+                locationStatus.setText(translate("Location permission denied"));
             }
         }
         if (requestCode == REQUEST_CAMERA_PERMISSION && grantResults.length > 0
@@ -10638,11 +10641,11 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             @Override public void onTextChanged(CharSequence value, int start, int before, int count) { }
             @Override public void afterTextChanged(Editable value) {
                 if (value.toString().trim().isEmpty()) {
-                    searchButton.setText("Search");
+                    searchButton.setText(translate("Search"));
                     searchButton.setEnabled(true);
-                    reportsHeading.setText(
-                            adminReportFilter.isEmpty() ? "Live reports" : adminReportFilter + " reports"
-                    );
+                    reportsHeading.setText(adminReportFilter.isEmpty()
+                            ? translate("Live reports")
+                            : String.format(Locale.ROOT, "%s reports", adminReportFilter));
                     restoreLiveReports.run();
                 }
             }
@@ -10653,7 +10656,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                 restoreLiveReports.run();
                 return;
             }
-            reportsHeading.setText("Search results");
+            reportsHeading.setText(translate("Search results"));
             searchAdminUsers(query, reports, searchButton, search, matchesHeading, matches);
         });
         FirebaseUser adminUser = FirebaseAuth.getInstance().getCurrentUser();
@@ -10690,7 +10693,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
 
         FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
         if (user == null) {
-            loading.setText("Sign in as an administrator to review content reports.");
+            loading.setText(translate("Sign in as an administrator to review content reports."));
             return;
         }
         user.getIdToken(false).addOnSuccessListener(token -> network.execute(() -> {
@@ -10764,7 +10767,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                 }
             });
         })).addOnFailureListener(error -> runOnUiThread(() ->
-                loading.setText("Could not authenticate administrator access.")));
+                loading.setText(translate("Could not authenticate administrator access."))));
     }
 
     private void addContentReportDecisionButton(
@@ -10849,10 +10852,10 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
     ) {
         FirebaseUser adminUser = FirebaseAuth.getInstance().getCurrentUser();
         if (adminUser == null) {
-            message.setText("Sign in to manage Fendly's social accounts.");
+            message.setText(translate("Sign in to manage Fendly's social accounts."));
             return;
         }
-        message.setText("Loading social account status…");
+        message.setText(translate("Loading social account status…"));
         adminUser.getIdToken(false).addOnSuccessListener(token -> network.execute(() -> {
             AuthorizedResponse statusResponse = getAuthorizedResponse(
                     "/api/social/status", token.getToken());
@@ -10878,13 +10881,13 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                             instagramConnected,
                             socialProviderName(status, "instagram")
                     );
-                    message.setText(
+                    message.setText(translate(
                             "Generated posters can be sent to Facebook/Instagram. "
                                     + "Failed or interrupted jobs are not automatically retried."
-                    );
+                    ));
                 } catch (Exception error) {
                     Log.e("SOCIAL_PUBLISHING", "Could not parse social account status", error);
-                    message.setText("The server returned invalid social account status.");
+                    message.setText(translate("The server returned invalid social account status."));
                     return;
                 }
 
@@ -10930,7 +10933,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             });
         })).addOnFailureListener(error -> runOnUiThread(() -> {
             Log.e("SOCIAL_PUBLISHING", "Could not retrieve Firebase admin token", error);
-            message.setText("Could not verify your Fendly sign-in. Please try again.");
+            message.setText(translate("Could not verify your Fendly sign-in. Please try again."));
         }));
     }
 
@@ -11284,8 +11287,18 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                     }
                 }
             }
-            lostCount.setText("LOST  " + lost);
-            foundCount.setText("FOUND  " + found);
+            lostCount.setText(String.format(
+                    Locale.ROOT,
+                    "%1$s  %2$s",
+                    translate("LOST"),
+                    localizeDigits(String.valueOf(lost))
+            ));
+            foundCount.setText(String.format(
+                    Locale.ROOT,
+                    "%1$s  %2$s",
+                    translate("FOUND"),
+                    localizeDigits(String.valueOf(found))
+            ));
             updateAdminReportFilterStyles(lostCount, foundCount);
             if ("LOST".equals(adminReportFilter)) {
                 if (filteredLost > 0) {
@@ -11420,7 +11433,12 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                 Runnable updateSelectedImage = () -> {
                     if (imageUrls.isEmpty()) return;
                     showSelectedImage.run();
-                    imageCount.setText((imageIndex[0] + 1) + " / " + imageUrls.size());
+                    imageCount.setText(String.format(
+                            Locale.ROOT,
+                            "%1$s / %2$s",
+                            localizeDigits(String.valueOf(imageIndex[0] + 1)),
+                            localizeDigits(String.valueOf(imageUrls.size()))
+                    ));
                 };
                 previous.setOnClickListener(view -> {
                     imageIndex[0] = (imageIndex[0] - 1 + imageUrls.size()) % imageUrls.size();
@@ -12075,13 +12093,13 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             Toast.makeText(this, "Enter at least 2 characters", Toast.LENGTH_SHORT).show();
             return;
         }
-        button.setText("Searching...");
+        button.setText(translate("Searching..."));
         button.setEnabled(false);
         FirebaseAuth.getInstance().getCurrentUser().getIdToken(false).addOnSuccessListener(token -> network.execute(() -> {
             String userResponse = fetchAdminSearch(query, token.getToken());
             String reportResponse = fetchAdminReportSearch(query, token.getToken());
             runOnUiThread(() -> {
-                button.setText("Search");
+                button.setText(translate("Search"));
                 button.setEnabled(true);
                 if (!query.equals(queryField.getText().toString().trim())) return;
                 results.removeAllViews();
@@ -12681,7 +12699,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
 
     private void saveAdminAlertReview(String alertId, String decision, String idToken,
                                       TextView status, LinearLayout actions) {
-        status.setText("Saving decision...");
+        status.setText(translate("Saving decision..."));
         actions.setEnabled(false);
         for (int index = 0; index < actions.getChildCount(); index++) {
             actions.getChildAt(index).setEnabled(false);
@@ -12691,10 +12709,12 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             boolean saved = postAuthorized("/api/admin/alerts/" + alertId + "/review", idToken, body);
             runOnUiThread(() -> {
                 if (saved) {
-                    status.setText("confirmed".equals(decision) ? "Confirmed match" : "Not a match");
+                    status.setText(translate(
+                            "confirmed".equals(decision) ? "Confirmed match" : "Not a match"
+                    ));
                     actions.setVisibility(View.GONE);
                 } else {
-                    status.setText("Could not save decision. Try again.");
+                    status.setText(translate("Could not save decision. Try again."));
                     actions.setEnabled(true);
                     for (int index = 0; index < actions.getChildCount(); index++) {
                         actions.getChildAt(index).setEnabled(true);
@@ -13773,12 +13793,10 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         content.setBackground(roundWithStroke(surfaceColor(), 20, borderColor()));
         TextView value = text(localizedTextSize(Math.round(current * 100)), 14, primaryTextColor(), Typeface.NORMAL);
         SeekBar slider = new SeekBar(this);
-        if (Build.VERSION.SDK_INT >= 21) {
-            int sliderTrackColor = darkMode ? Color.WHITE : accentColor();
-            slider.setProgressTintList(ColorStateList.valueOf(sliderTrackColor));
-            slider.setProgressBackgroundTintList(ColorStateList.valueOf(sliderTrackColor));
-            slider.setThumbTintList(ColorStateList.valueOf(accentColor()));
-        }
+        int sliderTrackColor = darkMode ? Color.WHITE : accentColor();
+        slider.setProgressTintList(ColorStateList.valueOf(sliderTrackColor));
+        slider.setProgressBackgroundTintList(ColorStateList.valueOf(sliderTrackColor));
+        slider.setThumbTintList(ColorStateList.valueOf(accentColor()));
         slider.setMax(20);
         slider.setProgress(Math.round((current - 1.0f) * 100));
         content.addView(value);

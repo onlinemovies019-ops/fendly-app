@@ -62,7 +62,7 @@
     <string name="profile_new_pin">కొత్త పిన్</string>
     <string name="profile_change_pin">పిన్‌ను మార్చండి</string>
     <string name="profile_save_changes">మార్పులను సేవ్ చేయండి</string>
-    <string name="profile_saving">సేవ్ చేస్తోంది...</string>
+    <string name="profile_saving">సేవ్ చేస్తోంది…</string>
     <string name="profile_back_home">హోమ్‌కి తిరిగి వెళ్లు</string>
     <string name="profile_tap_upload_photo">ఫోటోను అప్‌లోడ్ చేయడానికి ట్యాప్ చేయండి</string>
     <string name="profile_username_login">యూజర్‌నేమ్ (లాగిన్)</string>

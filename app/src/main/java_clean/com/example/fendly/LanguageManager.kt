@@ -5,6 +5,7 @@ import android.content.res.Configuration
 import android.os.Build
 import android.os.LocaleList
 import androidx.appcompat.app.AppCompatDelegate
+import androidx.core.content.edit
 import androidx.core.os.LocaleListCompat
 import java.util.Locale
 
@@ -21,16 +22,14 @@ object LanguageManager {
     }
 
     @JvmStatic
-    @Suppress("ApplySharedPref")
     fun setAppLanguage(context: Context, languageCode: String?) {
         val safeCode = normalizeLanguageCode(languageCode)
         val index = supportedLanguageCodes.indexOf(safeCode).takeIf { it >= 0 } ?: 0
 
-        context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
-            .edit()
-            .putString(KEY_LANG_CODE, safeCode)
-            .putInt(KEY_LANG_INDEX, index)
-            .apply()
+        context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE).edit {
+            putString(KEY_LANG_CODE, safeCode)
+            putInt(KEY_LANG_INDEX, index)
+        }
 
         AppCompatDelegate.setApplicationLocales(LocaleListCompat.forLanguageTags(safeCode))
     }

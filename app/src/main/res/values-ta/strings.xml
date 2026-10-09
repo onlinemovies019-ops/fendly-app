@@ -62,7 +62,7 @@
     <string name="profile_new_pin">புதிய பின்</string>
     <string name="profile_change_pin">பின்னை மாற்று</string>
     <string name="profile_save_changes">மாற்றங்களைச் சேமி</string>
-    <string name="profile_saving">சேமிக்கிறது...</string>
+    <string name="profile_saving">சேமிக்கிறது…</string>
     <string name="profile_back_home">முகப்பிற்குத் திரும்பு</string>
     <string name="profile_tap_upload_photo">புகைப்படத்தைப் பதிவேற்ற தட்டவும்</string>
     <string name="profile_username_login">பயனர்பெயர் (உள்நுழைவு)</string>

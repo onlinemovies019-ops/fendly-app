@@ -1,5 +1,0 @@
-<?xml version="1.0" encoding="utf-8"?>
-<menu
-  xmlns:android="http://schemas.android.com/apk/res/android" xmlns:app="http://schemas.android.com/apk/res-auto">
-    <item android:id="@id/aspect_ratio_action" android:title="@string/aspect_ratio" app:actionLayout="@layout/aspect_ratio_menu_item" app:showAsAction="always" />
-</menu>
