@@ -33,6 +33,10 @@ LEGACY_POSTER_FAILURE = (
     "Fendly community poster could not be generated; "
     "the original report photo was not published."
 )
+UNEXPECTED_PUBLISHING_FAILURE = (
+    "Unexpected publishing error. Check the platform before retrying "
+    "to avoid a duplicate public post."
+)
 
 
 def _secret_box() -> Fernet:
@@ -163,9 +167,34 @@ async def _generate_and_store_poster(report: LostItem | FoundItem, report_type: 
     return await store_image(poster_bytes, f"{uuid4().hex}.jpg", "image/jpeg")
 
 
-def _provider_response(response: httpx.Response) -> dict[str, object]:
+def _provider_response(
+    response: httpx.Response,
+    operation: str = "Meta API request",
+) -> dict[str, object]:
     if response.is_error:
-        raise RuntimeError(f"Social platform returned HTTP {response.status_code}")
+        try:
+            payload: object = response.json()
+        except ValueError:
+            payload = None
+        error = payload.get("error") if isinstance(payload, dict) else None
+        details: list[str] = []
+        if isinstance(error, dict):
+            message = error.get("message")
+            code = error.get("code")
+            subcode = error.get("error_subcode")
+            trace_id = error.get("fbtrace_id")
+            if isinstance(code, (int, str)):
+                details.append(f"code {code}")
+            if isinstance(subcode, (int, str)):
+                details.append(f"subcode {subcode}")
+            if isinstance(message, str) and message.strip():
+                details.append(message.strip().replace("\n", " ")[:250])
+            if isinstance(trace_id, str) and trace_id.strip():
+                details.append(f"trace {trace_id.strip()[:80]}")
+        detail = f": {'; '.join(details)}" if details else ""
+        raise RuntimeError(
+            f"Meta {operation} failed (HTTP {response.status_code}){detail}"
+        )
     try:
         result: object = response.json()
     except ValueError as error:
@@ -186,7 +215,8 @@ def _publish_facebook(
             _graph_url(f"{account.account_id}/photos"),
             data={"url": report.social_poster_url, "caption": caption, "access_token": token},
             timeout=30,
-        )
+        ),
+        "Facebook photo upload",
     )
     post_id = result.get("post_id") or result.get("id")
     if not isinstance(post_id, str) or not post_id:
@@ -207,7 +237,8 @@ def _publish_instagram(
             _graph_url(f"{account.account_id}/media"),
             data={"image_url": report.social_poster_url, "caption": caption, "access_token": token},
             timeout=30,
-        )
+        ),
+        "Instagram media container creation",
     )
     creation_id = created.get("id")
     if not isinstance(creation_id, str) or not creation_id:
@@ -217,7 +248,8 @@ def _publish_instagram(
             _graph_url(f"{account.account_id}/media_publish"),
             data={"creation_id": creation_id, "access_token": token},
             timeout=30,
-        )
+        ),
+        "Instagram media publishing",
     )
     post_id = published.get("id")
     if not isinstance(post_id, str) or not post_id:
@@ -303,10 +335,7 @@ def publish_publication(publication_id: str) -> None:
             publication = session.get(SocialPublication, publication_id)
             if publication is not None:
                 publication.status = "failed"
-                publication.last_error = (
-                    "Unexpected publishing error. Check the platform before retrying "
-                    "to avoid a duplicate public post."
-                )
+                publication.last_error = UNEXPECTED_PUBLISHING_FAILURE
                 publication.next_attempt_at = 0
                 session.commit()
 
@@ -315,15 +344,25 @@ def process_due_publications() -> None:
     now = int(time.time())
     stale_before = datetime.fromtimestamp(now - 900, timezone.utc)
     with SessionLocal() as session:
-        session.execute(
-            update(SocialPublication)
-            .where(
+        failed_before_provider = session.scalars(
+            select(SocialPublication).where(
                 SocialPublication.status == "failed",
-                SocialPublication.last_error == LEGACY_POSTER_FAILURE,
-            )
-            .values(status="pending", next_attempt_at=now, last_error=None)
-        )
-        session.commit()
+                SocialPublication.last_error.in_(
+                    (LEGACY_POSTER_FAILURE, UNEXPECTED_PUBLISHING_FAILURE)
+                ),
+            ).limit(50)
+        ).all()
+        requeued = False
+        for publication in failed_before_provider:
+            model = LostItem if publication.report_type == "lost" else FoundItem
+            report = session.get(model, publication.report_id)
+            if report is not None and report.social_share_consent and not report.social_poster_url:
+                publication.status = "pending"
+                publication.next_attempt_at = now
+                publication.last_error = None
+                requeued = True
+        if requeued:
+            session.commit()
         stale_ids = session.scalars(
             select(SocialPublication.id).where(
                 SocialPublication.status == "processing",
@@ -406,7 +445,7 @@ def _finish_meta_oauth(session: Session, code: str, state: str) -> None:
         },
         timeout=20,
     )
-    token_result = _provider_response(response)
+    token_result = _provider_response(response, "OAuth token exchange")
     user_token = token_result.get("access_token")
     if not isinstance(user_token, str) or not user_token:
         raise RuntimeError("Meta did not return an access token")
@@ -418,7 +457,8 @@ def _finish_meta_oauth(session: Session, code: str, state: str) -> None:
                 "access_token": user_token,
             },
             timeout=20,
-        )
+        ),
+        "Facebook Page discovery",
     )
     pages = _response_array(pages_result.get("data"))
     available_pages = [

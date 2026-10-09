@@ -2,6 +2,7 @@ import asyncio
 import base64
 import io
 import json
+import logging
 import os
 import re
 from pathlib import Path
@@ -23,6 +24,7 @@ MUTED = (93, 105, 105)
 GREEN = (22, 104, 79)
 BACKGROUND = (248, 246, 239)
 MAX_REPORT_PHOTO_BYTES = 10 * 1024 * 1024
+logger = logging.getLogger(__name__)
 
 ANIMAL_NAMES = (
     "guinea pig", "goldfish", "cockatiel", "lovebird", "parakeet", "hamster",
@@ -241,6 +243,12 @@ async def _detect_subject_face(
         if box is None:
             logger.warning("Gemini did not return a valid %s face box for the social poster", subject_kind)
         return box
+    except httpx.HTTPStatusError as error:
+        logger.warning(
+            "Gemini subject detection returned HTTP %s; using a subject-biased poster crop",
+            error.response.status_code,
+        )
+        return None
     except (httpx.HTTPError, ValueError, KeyError, IndexError, TypeError):
         logger.exception("Gemini subject-face detection failed for the social poster")
         return None
@@ -369,7 +377,12 @@ async def _load_report_photo(image_url: str) -> Image.Image:
 async def render_report_poster(report: LostItem | FoundItem, report_type: str) -> bytes:
     title = sanitize_public_title(report.title) or "Reported item"
     report_url = fendly_report_url(report.id)
-    photo = await _load_report_photo(report.image_url) if report.image_url else None
+    photo = None
+    if report.image_url:
+        try:
+            photo = await _load_report_photo(report.image_url)
+        except (httpx.HTTPError, RuntimeError, ValueError, OSError):
+            logger.exception("Could not load report photo for social poster %s", report.id)
     focus_box = (
         await _detect_subject_face(photo, title, report.category or "")
         if photo is not None

@@ -278,6 +278,93 @@ def test_gemini_animal_face_detection_returns_scaled_face_box(monkeypatch):
     assert "inline_data" in request_data["json"]["contents"][0]["parts"][1]
 
 
+def test_animal_poster_falls_back_when_gemini_key_is_missing(monkeypatch):
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+
+    focus_box = asyncio.run(
+        social_poster._detect_subject_face(
+            Image.new("RGB", (100, 100), "green"),
+            "Parrot",
+            "Animals",
+        )
+    )
+
+    assert focus_box is None
+
+
+def test_animal_poster_falls_back_when_gemini_returns_503(monkeypatch):
+    monkeypatch.setenv("GEMINI_API_KEY", "test-gemini-key")
+
+    class FakeResponse:
+        status_code = 503
+
+        def raise_for_status(self):
+            request = social_poster.httpx.Request(
+                "POST",
+                "https://generativelanguage.googleapis.com/test",
+            )
+            response = social_poster.httpx.Response(503, request=request)
+            raise social_poster.httpx.HTTPStatusError(
+                "Gemini temporarily unavailable",
+                request=request,
+                response=response,
+            )
+
+    class FakeClient:
+        def __init__(self, timeout):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+        async def post(self, *_args, **_kwargs):
+            return FakeResponse()
+
+    monkeypatch.setattr(social_poster.httpx, "AsyncClient", FakeClient)
+
+    focus_box = asyncio.run(
+        social_poster._detect_subject_face(
+            Image.new("RGB", (100, 100), "green"),
+            "Parrot",
+            "Animals",
+        )
+    )
+
+    assert focus_box is None
+
+
+def test_social_poster_still_renders_when_report_photo_cannot_be_loaded(monkeypatch):
+    report = LostItem(
+        id="report-with-unavailable-photo",
+        created_by="report-owner",
+        title="Parrot",
+        description="Green parrot",
+        category="animal",
+        lat=0,
+        lng=0,
+        image_url="https://fendly-api.onrender.com/static/uploads/missing.jpg",
+    )
+    renderer_args = {}
+
+    async def unavailable_photo(_image_url):
+        raise RuntimeError("photo download failed")
+
+    def render_poster(title, report_type, category, report_url, photo, focus_box=None):
+        renderer_args["photo"] = photo
+        return b"poster"
+
+    monkeypatch.setattr(social_poster, "_load_report_photo", unavailable_photo)
+    monkeypatch.setattr(social_poster, "render_community_poster", render_poster)
+
+    poster_bytes = asyncio.run(social_poster.render_report_poster(report, "lost"))
+
+    assert poster_bytes == b"poster"
+    assert renderer_args["photo"] is None
+
+
 def test_subject_face_box_rejects_wrong_subject_or_invalid_coordinates():
     payload = {
         "candidates": [{
@@ -582,6 +669,38 @@ def test_instagram_publishes_generated_poster(monkeypatch):
     assert requests[0][1]["image_url"] != report.image_url
 
 
+def test_meta_http_error_includes_operation_and_provider_diagnostics():
+    class FakeErrorResponse:
+        is_error = True
+        status_code = 400
+
+        @staticmethod
+        def json():
+            return {
+                "error": {
+                    "message": "Invalid image URL",
+                    "type": "OAuthException",
+                    "code": 9004,
+                    "error_subcode": 2207052,
+                    "fbtrace_id": "trace-123",
+                }
+            }
+
+    with pytest.raises(RuntimeError) as raised:
+        social_publishing._provider_response(
+            FakeErrorResponse(),
+            "Instagram media container creation",
+        )
+
+    message = str(raised.value)
+    assert "Instagram media container creation" in message
+    assert "HTTP 400" in message
+    assert "code 9004" in message
+    assert "subcode 2207052" in message
+    assert "Invalid image URL" in message
+    assert "trace trace-123" in message
+
+
 def test_publication_worker_records_success(monkeypatch):
     factory = _session_factory()
     monkeypatch.setattr(social_publishing, "SessionLocal", factory)
@@ -610,7 +729,7 @@ def test_publication_worker_records_success(monkeypatch):
             report_type="lost",
             provider="facebook",
             status="failed",
-            last_error=social_publishing.LEGACY_POSTER_FAILURE,
+            last_error=social_publishing.UNEXPECTED_PUBLISHING_FAILURE,
             next_attempt_at=0,
         )
         session.add_all([report, account, publication])
