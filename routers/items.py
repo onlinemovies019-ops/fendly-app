@@ -34,7 +34,6 @@ from notifications import persist_admin_match_alert, send_admin_match_email, sen
 from routers.payments import require_lost_report_entitlement
 from schemas import ItemCreate, ItemResponse, ItemUpdate, MatchPreview, MatchRequest, MatchResponse
 from social_publishing import schedule_report_publications
-from social_poster import render_report_poster
 from translation import translate_report_fields
 
 router = APIRouter(prefix="/api", tags=["items"])
@@ -407,19 +406,6 @@ async def _save_item(
 
     session.add(record)
     session.flush()
-    if record.social_share_consent:
-        try:
-            poster_bytes = await render_report_poster(
-                record,
-                "lost" if model is LostItem else "found",
-            )
-            record.social_poster_url = await _store_image(
-                poster_bytes,
-                f"{uuid4().hex}.jpg",
-                "image/jpeg",
-            )
-        except Exception:
-            logger.exception("Could not generate social poster for report %s", record.id)
     schedule_report_publications(
         session,
         record,
@@ -487,6 +473,14 @@ async def _process_created_report(record: LostItem | FoundItem, session: Session
     except Exception:
         session.rollback()
         logger.exception("Automatic matching failed for report %s", getattr(record, "id", "unknown"))
+
+
+async def _process_created_report_background(report_id: str, report_type: str) -> None:
+    model = LostItem if report_type == "lost" else FoundItem
+    with SessionLocal() as session:
+        record = session.get(model, report_id)
+        if record is not None:
+            await _process_created_report(record, session)
 
 
 async def _store_image(data: bytes, filename: str, content_type: str) -> str:
@@ -572,7 +566,7 @@ async def create_lost_item(
     try:
         session = _require_db_session(session)
         record = await _save_item(payload, session, uid, LostItem, background_tasks)
-        await _process_created_report(record, session)
+        background_tasks.add_task(_process_created_report_background, record.id, "lost")
         return record
     except HTTPException:
         raise
@@ -590,7 +584,7 @@ async def create_found_item(
     try:
         session = _require_db_session(session)
         record = await _save_item(payload, session, uid, FoundItem, background_tasks)
-        await _process_created_report(record, session)
+        background_tasks.add_task(_process_created_report_background, record.id, "found")
         return record
     except HTTPException:
         raise
@@ -626,7 +620,11 @@ async def create_item_compat(
         )
         model = LostItem if request.type == "lost" else FoundItem
         record = await _save_item(payload, session, uid, model, background_tasks)
-        await _process_created_report(record, session)
+        background_tasks.add_task(
+            _process_created_report_background,
+            record.id,
+            "lost" if model is LostItem else "found",
+        )
         return record
     except HTTPException:
         raise

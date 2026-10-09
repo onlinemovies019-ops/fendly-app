@@ -184,7 +184,11 @@ date, location, contact
 details, and IMEI are not included. The poster is stored with report media and
 is removed during account deletion when no other report references it. This
 version creates standard photo posts, not Reels, because reports have no video
-source. Already published posts are public copies on
+source. Poster generation and provider publishing run after the report is saved;
+use the status and publication endpoints to track progress or inspect failures.
+Jobs previously failed only because a poster was unavailable are safely queued
+again by the publication worker.
+Already published posts are public copies on
 Fendly's brand accounts and are not automatically removed when the reporter
 deletes their Fendly account. The privacy policy and account-deletion page
 describe this and provide the support contact for removal requests.

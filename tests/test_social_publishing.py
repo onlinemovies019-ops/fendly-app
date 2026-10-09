@@ -461,11 +461,11 @@ def test_report_submission_persists_consent_and_creates_publication_job(monkeypa
         monkeypatch.setattr(items_module, "create_embedding", AsyncMock(return_value=None))
         monkeypatch.setattr(items_module, "create_image_embedding", AsyncMock(return_value=None))
         monkeypatch.setattr(items_module, "translate_report_fields", AsyncMock(return_value=None))
-        monkeypatch.setattr(items_module, "_process_created_report", AsyncMock(return_value=None))
-        monkeypatch.setattr(items_module, "render_report_poster", AsyncMock(return_value=b"poster"))
+        poster_renderer = AsyncMock(return_value=b"poster")
+        monkeypatch.setattr(social_publishing, "render_report_poster", poster_renderer)
         monkeypatch.setattr(
-            items_module,
-            "_store_image",
+            social_publishing,
+            "store_image",
             AsyncMock(return_value="https://storage.example.test/community-poster.jpg"),
         )
         tasks = BackgroundTasks()
@@ -486,12 +486,14 @@ def test_report_submission_persists_consent_and_creates_publication_job(monkeypa
         )
 
         assert report.social_share_consent is True
-        assert report.social_poster_url == "https://storage.example.test/community-poster.jpg"
+        assert report.social_poster_url is None
         job = session.scalar(select(SocialPublication).where(SocialPublication.report_id == report.id))
         assert job is not None
         assert job.provider == "facebook"
         assert job.status == "pending"
-        assert len(tasks.tasks) == 1
+        assert len(tasks.tasks) == 2
+        assert tasks.tasks[1].func is items_module._process_created_report_background
+        poster_renderer.assert_not_awaited()
 
 
 def test_facebook_publishes_generated_poster_instead_of_report_photo(monkeypatch):
@@ -607,20 +609,40 @@ def test_publication_worker_records_success(monkeypatch):
             report_id=report.id,
             report_type="lost",
             provider="facebook",
-            status="pending",
+            status="failed",
+            last_error=social_publishing.LEGACY_POSTER_FAILURE,
             next_attempt_at=0,
         )
         session.add_all([report, account, publication])
         session.commit()
 
-    monkeypatch.setattr(social_publishing, "_publish_facebook", lambda *_: "external-post-1")
+    monkeypatch.setattr(
+        social_publishing,
+        "render_report_poster",
+        AsyncMock(return_value=b"poster-bytes"),
+    )
+    monkeypatch.setattr(
+        social_publishing,
+        "store_image",
+        AsyncMock(return_value="https://storage.example.test/generated-poster.jpg"),
+    )
+    published_poster_urls = []
+
+    def publish_facebook(_account, report, _caption):
+        published_poster_urls.append(report.social_poster_url)
+        return "external-post-1"
+
+    monkeypatch.setattr(social_publishing, "_publish_facebook", publish_facebook)
     social_publishing.process_due_publications()
 
     with factory() as session:
         saved = session.get(SocialPublication, "publication-1")
+        report = session.get(LostItem, "lost-social-report")
         assert saved.status == "published"
         assert saved.external_post_id == "external-post-1"
         assert saved.attempt_count == 1
+        assert report.social_poster_url == "https://storage.example.test/generated-poster.jpg"
+    assert published_poster_urls == ["https://storage.example.test/generated-poster.jpg"]
 
 
 def test_external_post_feed_refresh_uses_provider_edges_and_pagination(monkeypatch):

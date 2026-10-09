@@ -1,3 +1,4 @@
+import asyncio
 import base64
 import hashlib
 import logging
@@ -8,6 +9,7 @@ import time
 from datetime import datetime, timezone
 from typing import Literal, cast
 from urllib.parse import quote, urlencode, urlsplit
+from uuid import uuid4
 
 import httpx
 from cryptography.fernet import Fernet, InvalidToken
@@ -21,10 +23,16 @@ from database import SessionLocal, get_db
 from models import FoundItem, LostItem, SocialAccount, SocialOAuthState, SocialPublication
 from routers.admin import require_admin
 from social_content import sanitize_public_title
+from social_poster import render_report_poster
+from image_storage import store_image
 
 router = APIRouter(prefix="/api/social", tags=["social publishing"])
 logger = logging.getLogger(__name__)
 PROVIDER_NAMES = ("facebook", "instagram")
+LEGACY_POSTER_FAILURE = (
+    "Fendly community poster could not be generated; "
+    "the original report photo was not published."
+)
 
 
 def _secret_box() -> Fernet:
@@ -132,12 +140,6 @@ def schedule_report_publications(
             status="pending",
             next_attempt_at=now,
         )
-        if provider in {"facebook", "instagram"} and not report.social_poster_url:
-            job.status = "failed"
-            job.last_error = (
-                "Fendly community poster could not be generated; "
-                "the original report photo was not published."
-            )
         session.add(job)
         if job.status == "pending":
             queued_ids.append(job)
@@ -154,6 +156,11 @@ def _safe_caption(report: LostItem | FoundItem, report_type: str) -> str:
         f"Fendly community alert: {report_type.upper()} — {title or 'reported item'}.\n"
         f"Help reunite it with its owner.\nFendly: {report_url}"
     )
+
+
+async def _generate_and_store_poster(report: LostItem | FoundItem, report_type: str) -> str:
+    poster_bytes = await render_report_poster(report, report_type)
+    return await store_image(poster_bytes, f"{uuid4().hex}.jpg", "image/jpeg")
 
 
 def _provider_response(response: httpx.Response) -> dict[str, object]:
@@ -252,6 +259,11 @@ def publish_publication(publication_id: str) -> None:
                 publication.last_error = "The report no longer exists or social-sharing consent was withdrawn."
                 session.commit()
                 return
+            if not report.social_poster_url:
+                report.social_poster_url = asyncio.run(
+                    _generate_and_store_poster(report, publication.report_type)
+                )
+                session.commit()
             caption = _safe_caption(report, publication.report_type)
             if publication.provider == "facebook":
                 post_id = _publish_facebook(account, report, caption)
@@ -303,6 +315,15 @@ def process_due_publications() -> None:
     now = int(time.time())
     stale_before = datetime.fromtimestamp(now - 900, timezone.utc)
     with SessionLocal() as session:
+        session.execute(
+            update(SocialPublication)
+            .where(
+                SocialPublication.status == "failed",
+                SocialPublication.last_error == LEGACY_POSTER_FAILURE,
+            )
+            .values(status="pending", next_attempt_at=now, last_error=None)
+        )
+        session.commit()
         stale_ids = session.scalars(
             select(SocialPublication.id).where(
                 SocialPublication.status == "processing",
