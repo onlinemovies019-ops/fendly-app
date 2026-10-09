@@ -1690,7 +1690,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                             username.setError("User already exists");
                             username.requestFocus();
                         } else {
-                            username.setError(accountCreationErrorMessage(errorCode, diagnostic));
+                            username.setError(accountCreationErrorMessage(errorCode));
                             username.requestFocus();
                         }
                     });
@@ -1729,12 +1729,12 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                 || message.contains("already in use");
     }
 
-    private String accountCreationErrorMessage(String errorCode, String diagnostic) {
+    private String accountCreationErrorMessage(String errorCode) {
         if ("ERROR_OPERATION_NOT_ALLOWED".equalsIgnoreCase(errorCode)) {
-            return "Email/password sign-up is disabled in Firebase Authentication.";
+            return "Account creation is temporarily unavailable. Please try again later.";
         }
         if ("CONFIGURATION_NOT_FOUND".equalsIgnoreCase(errorCode)) {
-            return "Firebase Authentication is not configured for this project. Enable Email/Password sign-in in Firebase Console.";
+            return "Account creation is temporarily unavailable. Please try again later.";
         }
         if ("ERROR_NETWORK_REQUEST_FAILED".equalsIgnoreCase(errorCode)) {
             return "Network error. Check your connection and try again.";
@@ -1743,20 +1743,13 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             return "Too many attempts. Please wait and try again.";
         }
         if ("ERROR_INVALID_EMAIL".equalsIgnoreCase(errorCode)) {
-            return "Firebase rejected the account email. Check the username and try again.";
+            return "Check your username and try again.";
         }
         if ("ERROR_APP_NOT_AUTHORIZED".equalsIgnoreCase(errorCode)
                 || "ERROR_INVALID_API_KEY".equalsIgnoreCase(errorCode)) {
-            return "This app is not authorized for the configured Firebase project.";
+            return "Account creation is temporarily unavailable. Please try again later.";
         }
-        if (diagnostic != null && !diagnostic.trim().isEmpty()) {
-            String readableDiagnostic = diagnostic.replaceAll("\\s+", " ").trim();
-            if (readableDiagnostic.length() > 140) {
-                readableDiagnostic = readableDiagnostic.substring(0, 137) + "...";
-            }
-            return "Firebase could not create the account: " + readableDiagnostic;
-        }
-        return "Could not create account (" + errorCode + "). Please try again.";
+        return "Could not create your account right now. Please try again.";
     }
 
     private interface UsernameAvailabilityCallback {
@@ -2880,10 +2873,10 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                 || normalizedCode.contains("USER_NOT_FOUND")
                 || normalizedCode.contains("INVALID_CREDENTIAL")
                 || normalizedCode.contains("INVALID_LOGIN_CREDENTIALS")) {
-            return "Firebase did not accept this username and PIN. Check both, or tap Forgot PIN to recover your account.";
+            return "Incorrect username or PIN. Check your details, or tap Forgot PIN to recover your account.";
         }
         if (normalizedCode.contains("NETWORK_REQUEST_FAILED")) {
-            return "Could not reach Firebase. Check your internet connection and try again.";
+            return "Could not sign you in. Check your internet connection and try again.";
         }
         if (normalizedCode.contains("TOO_MANY_REQUESTS")) {
             return "Too many sign-in attempts. Wait a while, then try again.";
@@ -2891,8 +2884,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         if (normalizedCode.contains("USER_DISABLED")) {
             return "This account is disabled. Contact Fendly support.";
         }
-        return "Sign-in failed (" + (normalizedCode.isEmpty() ? "unknown error" : normalizedCode)
-                + "). Please try again.";
+        return "We could not sign you in right now. Please try again.";
     }
 
     private void showPinLogin() {
@@ -10911,7 +10903,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                         String platformStatus = item.optString("platform_status", "not_checked");
                         String jobStatus = item.optString("status", "unknown");
                         if ("available".equals(platformStatus)) {
-                            jobStatus += " (available on platform)";
+                            jobStatus += " (present in platform feed)";
                         } else if ("unavailable".equals(platformStatus)) {
                             jobStatus = "not found (deleted or inaccessible)";
                         } else if ("check_failed".equals(platformStatus)) {

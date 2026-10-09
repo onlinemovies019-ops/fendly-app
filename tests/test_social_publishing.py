@@ -526,7 +526,71 @@ def test_publication_worker_records_success(monkeypatch):
         assert saved.attempt_count == 1
 
 
-def test_external_post_refresh_reports_available_and_unavailable(monkeypatch):
+def test_external_post_feed_refresh_uses_provider_edges_and_pagination(monkeypatch):
+    monkeypatch.setenv("META_GRAPH_API_VERSION", "v23.0")
+    monkeypatch.setattr(social_publishing, "_decrypt_token", lambda _: "page-token")
+
+    class FakeResponse:
+        status_code = 200
+        is_error = False
+
+        def __init__(self, payload):
+            self.payload = payload
+
+        def json(self):
+            return self.payload
+
+    calls = []
+
+    def fake_get(url, params, timeout):
+        calls.append((url, params, timeout))
+        if url.endswith("/page-id/published_posts"):
+            if "after" not in params:
+                return FakeResponse(
+                    {
+                        "data": [{"id": "facebook-post"}],
+                        "paging": {
+                            "next": "https://graph.facebook.com/next",
+                            "cursors": {"after": "page-cursor"},
+                        },
+                    }
+                )
+            assert params["after"] == "page-cursor"
+            return FakeResponse({"data": [{"id": "older-facebook-post"}]})
+        assert url.endswith("/instagram-id/media")
+        return FakeResponse({"data": [{"id": "instagram-post"}]})
+
+    monkeypatch.setattr(social_publishing.httpx, "get", fake_get)
+    facebook = SocialAccount(
+        provider="facebook",
+        account_id="page-id",
+        account_name="Fendly",
+        access_token_encrypted="encrypted-token",
+    )
+    instagram = SocialAccount(
+        provider="instagram",
+        account_id="instagram-id",
+        account_name="Fendly",
+        access_token_encrypted="encrypted-token",
+    )
+
+    assert social_publishing._list_external_post_ids(
+        facebook,
+        {"facebook-post", "older-facebook-post"},
+    ) == (
+        {"facebook-post", "older-facebook-post"},
+        True,
+    )
+    assert social_publishing._list_external_post_ids(instagram, {"instagram-post"}) == (
+        {"instagram-post"},
+        True,
+    )
+    assert calls[0][0] == "https://graph.facebook.com/v23.0/page-id/published_posts"
+    assert calls[0][1] == {"fields": "id", "limit": 100, "access_token": "page-token"}
+    assert calls[2][0] == "https://graph.facebook.com/v23.0/instagram-id/media"
+
+
+def test_external_post_lookup_reports_missing_posts_and_inconclusive_errors(monkeypatch):
     monkeypatch.setenv("META_GRAPH_API_VERSION", "v23.0")
     monkeypatch.setattr(social_publishing, "_decrypt_token", lambda _: "page-token")
 
@@ -540,16 +604,14 @@ def test_external_post_refresh_reports_available_and_unavailable(monkeypatch):
             return self.payload
 
     responses = iter([
-        FakeResponse(200, {"id": "existing-post"}),
         FakeResponse(400, {"error": {"code": 100, "error_subcode": 33}}),
+        FakeResponse(400, {"error": {"code": 190}}),
     ])
-    calls = []
-
-    def fake_get(url, params, timeout):
-        calls.append((url, params, timeout))
-        return next(responses)
-
-    monkeypatch.setattr(social_publishing.httpx, "get", fake_get)
+    monkeypatch.setattr(
+        social_publishing.httpx,
+        "get",
+        lambda *_args, **_kwargs: next(responses),
+    )
     account = SocialAccount(
         provider="facebook",
         account_id="page-id",
@@ -557,22 +619,27 @@ def test_external_post_refresh_reports_available_and_unavailable(monkeypatch):
         access_token_encrypted="encrypted-token",
     )
 
-    assert social_publishing._check_external_post(account, "existing-post") == "available"
     assert social_publishing._check_external_post(account, "deleted-post") == "unavailable"
-    assert calls[0][0] == "https://graph.facebook.com/v23.0/existing-post"
-    assert calls[0][1] == {"fields": "id", "access_token": "page-token"}
+    assert social_publishing._check_external_post(account, "inaccessible-post") == "check_failed"
 
 
-def test_publication_refresh_checks_recent_published_posts(monkeypatch):
+def test_publication_refresh_reconciles_feed_and_preserves_inconclusive_checks(monkeypatch):
     factory = _session_factory()
-    checked = []
+    monkeypatch.setattr(
+        social_publishing,
+        "_list_external_post_ids",
+        lambda account, _expected_post_ids: (
+            (set(), False) if account.provider == "facebook" else (set(), True)
+        ),
+    )
     monkeypatch.setattr(
         social_publishing,
         "_check_external_post",
-        lambda account, post_id: (
-            checked.append((account.provider, post_id))
-            or ("unavailable" if post_id == "deleted-instagram-post" else "check_failed")
-        ),
+        lambda _account, post_id: {
+            "live-facebook-post": "available",
+            "temporarily-unavailable-post": "check_failed",
+            "deleted-facebook-post": "unavailable",
+        }[post_id],
     )
     with factory() as session:
         accounts = [
@@ -594,12 +661,28 @@ def test_publication_refresh_checks_recent_published_posts(monkeypatch):
                 external_post_id="deleted-instagram-post",
             ),
             SocialPublication(
+                id="publication-live",
+                report_id="report-live",
+                report_type="found",
+                provider="facebook",
+                status="published",
+                external_post_id="live-facebook-post",
+            ),
+            SocialPublication(
                 id="publication-check-failed",
                 report_id="report-3",
                 report_type="lost",
                 provider="facebook",
                 status="published",
-                external_post_id="temporarily-inaccessible-post",
+                external_post_id="temporarily-unavailable-post",
+            ),
+            SocialPublication(
+                id="publication-fallback-deleted",
+                report_id="report-deleted",
+                report_type="lost",
+                provider="facebook",
+                status="published",
+                external_post_id="deleted-facebook-post",
             ),
         ]
         legacy_x_publication = SocialPublication(
@@ -619,20 +702,52 @@ def test_publication_refresh_checks_recent_published_posts(monkeypatch):
             _="admin-uid",
         )
         assert session.get(SocialPublication, "publication-refresh").status == "removed"
+        assert session.get(SocialPublication, "publication-live").status == "published"
+        assert session.get(SocialPublication, "publication-check-failed").status == "published"
+        assert session.get(SocialPublication, "publication-fallback-deleted").status == "removed"
         visible = social_publishing.list_social_publications(
             limit=20,
             session=session,
             _="admin-uid",
         )
-        assert [item["report_id"] for item in visible] == ["report-3"]
+        assert {item["report_id"] for item in visible} == {"report-live", "report-3"}
 
-    assert set(checked) == {
-        ("instagram", "deleted-instagram-post"),
-        ("facebook", "temporarily-inaccessible-post"),
-    }
-    assert [item["report_id"] for item in result] == ["report-3"]
-    assert result[0]["platform_status"] == "check_failed"
-    assert result[0]["status"] == "published"
+    results = {item["report_id"]: item for item in result}
+    assert set(results) == {"report-live", "report-3"}
+    assert results["report-live"]["platform_status"] == "available"
+    assert results["report-3"]["platform_status"] == "check_failed"
+    assert results["report-3"]["status"] == "published"
+
+
+def test_incomplete_external_post_feed_is_not_treated_as_deleted(monkeypatch):
+    monkeypatch.setenv("META_GRAPH_API_VERSION", "v23.0")
+    monkeypatch.setattr(social_publishing, "_decrypt_token", lambda _: "page-token")
+
+    class FakeResponse:
+        status_code = 200
+        is_error = False
+
+        def json(self):
+            return {
+                "data": [{"id": "first-page-post"}],
+                "paging": {"next": "https://graph.facebook.com/next"},
+            }
+
+    monkeypatch.setattr(social_publishing.httpx, "get", lambda *_args, **_kwargs: FakeResponse())
+    account = SocialAccount(
+        provider="facebook",
+        account_id="page-id",
+        account_name="Fendly",
+        access_token_encrypted="encrypted-token",
+    )
+
+    post_ids, complete = social_publishing._list_external_post_ids(
+        account,
+        {"post-missing-from-feed"},
+    )
+
+    assert post_ids == {"first-page-post"}
+    assert not complete
 
 
 def test_publication_list_excludes_legacy_x_and_removed_jobs():

@@ -151,6 +151,14 @@ the selected Page, and the Page must meet Meta's publishing authorization
 requirements. If the Page is assigned through Business Manager, Meta may also
 require `ads_read` and `ads_management` for Instagram publishing.
 
+The admin publication refresh reconciles saved Facebook post IDs against the
+Page's `published_posts` feed and Instagram media IDs against the account's
+`media` feed, including Graph API pagination. A completed feed check removes
+jobs whose posts are no longer listed. If feed access or pagination is
+inconclusive, Fendly checks each missing post ID directly. If Meta still cannot
+confirm the post's status, the job remains unknown and is not treated as
+deleted; check the connection and Meta permissions before relying on the result.
+
 After configuring secrets and deploying the backend, an authorized Fendly
 administrator can call `POST /api/social/connect/meta` with a Fendly bearer
 token, open the returned

@@ -483,6 +483,69 @@ def _publication_summary(
     }
 
 
+def _list_external_post_ids(
+    account: SocialAccount,
+    expected_post_ids: set[str],
+) -> tuple[set[str], bool]:
+    edge = "published_posts" if account.provider == "facebook" else "media"
+    account_id = quote(account.account_id, safe="")
+    access_token = _decrypt_token(account.access_token_encrypted)
+    post_ids: set[str] = set()
+    after: str | None = None
+    seen_cursors: set[str] = set()
+
+    for _ in range(100):
+        params: dict[str, str | int] = {
+            "fields": "id",
+            "limit": 100,
+            "access_token": access_token,
+        }
+        if after is not None:
+            params["after"] = after
+        try:
+            response = httpx.get(
+                _graph_url(f"{account_id}/{edge}"),
+                params=params,
+                timeout=15,
+            )
+            payload = _response_object(response.json())
+        except (httpx.HTTPError, RuntimeError, ValueError, TypeError) as error:
+            logger.warning("Meta post feed check failed: %s", type(error).__name__)
+            return post_ids, False
+
+        if response.is_error or "error" in payload:
+            logger.warning("Meta post feed check was inconclusive: HTTP %s", response.status_code)
+            return post_ids, False
+
+        try:
+            entries = _response_array(payload.get("data"))
+            for entry in entries:
+                post_id = entry.get("id")
+                if isinstance(post_id, str) and post_id:
+                    post_ids.add(post_id)
+        except (RuntimeError, TypeError):
+            logger.warning("Meta post feed check returned an invalid response")
+            return post_ids, False
+
+        if expected_post_ids.issubset(post_ids):
+            return post_ids, True
+
+        paging = payload.get("paging")
+        if not isinstance(paging, dict) or not paging.get("next"):
+            return post_ids, True
+
+        cursors = paging.get("cursors")
+        next_cursor = cursors.get("after") if isinstance(cursors, dict) else None
+        if not isinstance(next_cursor, str) or not next_cursor or next_cursor in seen_cursors:
+            logger.warning("Meta post feed pagination was incomplete")
+            return post_ids, False
+        seen_cursors.add(next_cursor)
+        after = next_cursor
+
+    logger.warning("Meta post feed exceeded the pagination safety limit")
+    return post_ids, False
+
+
 def _check_external_post(account: SocialAccount, external_post_id: str) -> str:
     try:
         response = httpx.get(
@@ -493,14 +556,17 @@ def _check_external_post(account: SocialAccount, external_post_id: str) -> str:
             },
             timeout=15,
         )
-    except (httpx.HTTPError, RuntimeError, ValueError) as error:
-        logger.warning("Meta post status check failed: %s", type(error).__name__)
+    except (httpx.HTTPError, RuntimeError, ValueError, TypeError) as error:
+        logger.warning("Meta post lookup failed: %s", type(error).__name__)
         return "check_failed"
+
+    if response.status_code == 404:
+        return "unavailable"
 
     try:
         payload = _response_object(response.json())
-    except (ValueError, RuntimeError):
-        logger.warning("Meta post status check returned invalid JSON: HTTP %s", response.status_code)
+    except (httpx.HTTPError, RuntimeError, ValueError, TypeError) as error:
+        logger.warning("Meta post lookup failed: %s", type(error).__name__)
         return "check_failed"
 
     if not response.is_error and isinstance(payload.get("id"), str):
@@ -509,12 +575,10 @@ def _check_external_post(account: SocialAccount, external_post_id: str) -> str:
     error_value = payload.get("error")
     if isinstance(error_value, dict):
         error_payload = _response_object(error_value)
-        error_code = error_payload.get("code")
-        error_subcode = error_payload.get("error_subcode")
-        if response.status_code == 404 or (error_code == 100 and error_subcode == 33):
+        if error_payload.get("code") == 100 and error_payload.get("error_subcode") == 33:
             return "unavailable"
 
-    logger.warning("Meta post status check was inconclusive: HTTP %s", response.status_code)
+    logger.warning("Meta post lookup was inconclusive: HTTP %s", response.status_code)
     return "check_failed"
 
 
@@ -557,15 +621,46 @@ def refresh_social_publications(
             select(SocialAccount).where(SocialAccount.provider.in_(PROVIDER_NAMES))
         ).all()
     }
+    feed_results: dict[str, tuple[set[str], bool]] = {}
+    post_lookup_results: dict[tuple[str, str], str] = {}
+    for provider in PROVIDER_NAMES:
+        provider_publications = [
+            publication
+            for publication in publications
+            if publication.provider == provider
+            and publication.status == "published"
+            and publication.external_post_id
+        ]
+        account = accounts.get(provider)
+        if provider_publications and account is not None:
+            expected_post_ids = {
+                publication.external_post_id
+                for publication in provider_publications
+                if publication.external_post_id
+            }
+            feed_results[provider] = _list_external_post_ids(account, expected_post_ids)
+            post_ids, complete = feed_results[provider]
+            if not complete:
+                for post_id in expected_post_ids - post_ids:
+                    post_lookup_results[(provider, post_id)] = _check_external_post(account, post_id)
 
     refreshed = []
     has_removed_publications = False
     for publication in publications:
         platform_status = "not_checked"
-        account = accounts.get(publication.provider)
         if publication.status == "published" and publication.external_post_id:
-            if account is not None:
-                platform_status = _check_external_post(account, publication.external_post_id)
+            feed_result = feed_results.get(publication.provider)
+            if feed_result is not None:
+                post_ids, complete = feed_result
+                if publication.external_post_id in post_ids:
+                    platform_status = "available"
+                elif complete:
+                    platform_status = "unavailable"
+                else:
+                    platform_status = post_lookup_results.get(
+                        (publication.provider, publication.external_post_id),
+                        "check_failed",
+                    )
             else:
                 platform_status = "check_failed"
         if platform_status == "unavailable":
