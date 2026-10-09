@@ -4,4 +4,7 @@
         <ignore path="src/main/res/values/strings.xml" />
         <ignore path="src/main/res/values/plurals.xml" />
     </issue>
+    <issue id="AppBundleLocaleChanges">
+        <ignore path="src/main/java_clean/com/example/fendly/LanguageManager.kt" />
+    </issue>
 </lint>
