@@ -11540,9 +11540,18 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                 "fraud",
                 "other"
         };
-        new AlertDialog.Builder(this)
-                .setTitle("Why are you reporting this content?")
-                .setItems(reasons, (dialog, selected) -> user.getIdToken(false)
+        Dialog dialog = new Dialog(this);
+        LinearLayout content = themedDialogContent(
+                0,
+                "Report this content",
+                "Choose the reason that best describes your concern."
+        );
+        for (int index = 0; index < reasons.length; index++) {
+            final int selected = index;
+            TextView reason = actionButton(reasons[index], false);
+            reason.setOnClickListener(view -> {
+                dialog.dismiss();
+                user.getIdToken(false)
                         .addOnSuccessListener(token -> network.execute(() -> {
                             String reportType = report.optString("type", "").toLowerCase(Locale.US);
                             String reportId = report.optString("id", "");
@@ -11564,9 +11573,18 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                                 this,
                                 "Could not authenticate your content report.",
                                 Toast.LENGTH_LONG
-                        ).show()))
-                .setNegativeButton("Cancel", null)
-                .show();
+                        ).show());
+            });
+            addFieldToDialog(content, reason);
+        }
+        TextView cancel = actionButton("Cancel", true);
+        cancel.setOnClickListener(view -> dialog.dismiss());
+        addFieldToDialog(content, cancel);
+
+        dialog.setContentView(content);
+        dialog.setCanceledOnTouchOutside(true);
+        dialog.show();
+        sizeThemedDialog(dialog);
     }
 
     private boolean isActiveCommunityReport(JSONObject report) {
@@ -11690,9 +11708,13 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             String itemUrl,
             Map<String, String> profileLinks
     ) {
+        boolean preferFace = shouldFocusOnPersonFace(title, category);
+        boolean focusOnAnimalHead = !preferFace
+                && !"Item".equals(CommunityPosterSubject.homeSubject(title, category));
         CommunityPosterPhotoFocus.detect(
                 photo,
-                shouldFocusOnPersonFace(title, category),
+                preferFace,
+                focusOnAnimalHead,
                 new CommunityPosterPhotoFocus.Callback() {
                     @Override
                     public void onFocusDetected(android.graphics.Rect bounds) {

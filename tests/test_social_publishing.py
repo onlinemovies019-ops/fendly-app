@@ -10,7 +10,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 from fastapi import BackgroundTasks
 from fastapi import HTTPException
-from PIL import Image
+from PIL import Image, ImageDraw
 
 import social_publishing
 import social_poster
@@ -198,10 +198,10 @@ def test_generated_community_poster_uses_the_report_link(monkeypatch):
     poster_args = {}
     original_renderer = social_poster.render_community_poster
 
-    def render_poster(title, report_type, category, report_url, photo):
+    def render_poster(title, report_type, category, report_url, photo, focus_box=None):
         poster_args["report_url"] = report_url
         return original_renderer(
-            title, report_type, category, report_url, photo
+            title, report_type, category, report_url, photo, focus_box
         )
 
     monkeypatch.setattr(social_poster, "render_community_poster", render_poster)
@@ -212,6 +212,103 @@ def test_generated_community_poster_uses_the_report_link(monkeypatch):
     assert poster_args["report_url"] == (
         "https://download.fendly.example/item/7e5e744d-1be9-4c47-b1d1-95a9d817d980"
     )
+
+
+def test_social_poster_focuses_animal_and_person_subjects_near_top():
+    assert social_poster._poster_photo_centering("Parrot", "Animals") == (0.5, 0.08)
+    assert social_poster._poster_photo_centering("Missing child", "People") == (0.5, 0.08)
+    assert social_poster._poster_photo_centering("Blue backpack", "Items") == (0.5, 0.5)
+
+
+def test_social_poster_crop_keeps_top_subject_in_image():
+    photo = Image.new("RGB", (100, 200), "blue")
+    ImageDraw.Draw(photo).rectangle((0, 0, 99, 24), fill="red")
+
+    cropped = social_poster._rounded_photo(photo, (100, 50), (0.5, 0.08))
+
+    assert cropped.getpixel((50, 5))[0] > cropped.getpixel((50, 5))[2]
+
+
+def test_gemini_animal_face_detection_returns_scaled_face_box(monkeypatch):
+    monkeypatch.setenv("GEMINI_API_KEY", "test-gemini-key")
+    request_data = {}
+
+    class FakeResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {
+                "candidates": [{
+                    "content": {
+                        "parts": [{
+                            "text": (
+                                '{"found":true,"subject":"animal","x_min":100,'
+                                '"y_min":100,"x_max":500,"y_max":500}'
+                            )
+                        }]
+                    }
+                }]
+            }
+
+    class FakeClient:
+        def __init__(self, timeout):
+            request_data["timeout"] = timeout
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+        async def post(self, url, json, headers):
+            request_data.update(url=url, json=json, headers=headers)
+            return FakeResponse()
+
+    monkeypatch.setattr(social_poster.httpx, "AsyncClient", FakeClient)
+    photo = Image.new("RGB", (200, 400), "green")
+
+    focus_box = asyncio.run(
+        social_poster._detect_subject_face(photo, "Parrot", "Animals")
+    )
+
+    assert focus_box == (20, 40, 100, 200)
+    assert request_data["headers"] == {"x-goog-api-key": "test-gemini-key"}
+    assert request_data["json"]["generationConfig"]["responseMimeType"] == "application/json"
+    assert "inline_data" in request_data["json"]["contents"][0]["parts"][1]
+
+
+def test_subject_face_box_rejects_wrong_subject_or_invalid_coordinates():
+    payload = {
+        "candidates": [{
+            "content": {
+                "parts": [{
+                    "text": (
+                        '{"found":true,"subject":"human","x_min":100,'
+                        '"y_min":100,"x_max":500,"y_max":500}'
+                    )
+                }]
+            }
+        }]
+    }
+
+    assert social_poster._parse_subject_face_box(payload, 200, 400, "animal") is None
+    assert social_poster._parse_subject_face_box({}, 200, 400, "animal") is None
+
+
+def test_social_poster_crop_centers_detected_animal_face():
+    photo = Image.new("RGB", (200, 400), "blue")
+    ImageDraw.Draw(photo).rectangle((80, 270, 120, 320), fill="red")
+
+    cropped = social_poster._rounded_photo(
+        photo,
+        (200, 100),
+        (0.5, 0.08),
+        (80, 270, 120, 320),
+    )
+
+    center_pixel = cropped.getpixel((100, 55))
+    assert center_pixel[0] > center_pixel[2]
 
 
 def test_schedule_report_publications_only_queues_connected_channels():

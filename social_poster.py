@@ -1,5 +1,7 @@
 import asyncio
+import base64
 import io
+import json
 import os
 import re
 from pathlib import Path
@@ -54,7 +56,7 @@ def _home_subject(title: str, category: str) -> str:
             matches.append((match.start(), -len(match.group()), species))
     if matches:
         return min(matches)[2].capitalize()
-    if category.strip().casefold() in {"animal", "animals", "pet", "pets"}:
+    if re.search(r"\b(animal|animals|pet|pets)\b", category.strip().casefold()):
         return "Animal"
     return "Item"
 
@@ -81,8 +83,210 @@ def _draw_wrapped(draw: ImageDraw.ImageDraw, value: str, xy: tuple[int, int],
         draw.text((x, y + index * 68), line, fill=INK, font=font)
 
 
-def _rounded_photo(photo: Image.Image, size: tuple[int, int]) -> Image.Image:
-    image = ImageOps.fit(photo.convert("RGB"), size, method=Image.Resampling.LANCZOS)
+def _poster_photo_centering(title: str, category: str) -> tuple[float, float]:
+    subject = _home_subject(title, category)
+    normalized_category = category.strip().casefold()
+    normalized_title = title.casefold()
+    is_person = normalized_category in {"people", "person", "missing person"} or re.search(
+        r"\b(person|people|man|woman|child|children|kid|boy|girl)\b",
+        normalized_title,
+    )
+    if subject != "Item" or is_person:
+        return 0.5, 0.08
+    return 0.5, 0.5
+
+
+def _poster_subject_kind(title: str, category: str) -> str | None:
+    if _home_subject(title, category) != "Item":
+        return "animal"
+    normalized_category = category.strip().casefold()
+    normalized_title = title.casefold()
+    if normalized_category in {"people", "person", "missing person"} or re.search(
+        r"\b(person|people|man|woman|child|children|kid|boy|girl)\b",
+        normalized_title,
+    ):
+        return "human"
+    return None
+
+
+def _parse_subject_face_box(
+    payload: object,
+    image_width: int,
+    image_height: int,
+    expected_subject: str,
+) -> tuple[int, int, int, int] | None:
+    if not isinstance(payload, dict):
+        return None
+    candidates = payload.get("candidates")
+    if not isinstance(candidates, list) or not candidates or not isinstance(candidates[0], dict):
+        return None
+    content = candidates[0].get("content")
+    if not isinstance(content, dict) or not isinstance(content.get("parts"), list):
+        return None
+    text = next(
+        (
+            part.get("text")
+            for part in content["parts"]
+            if isinstance(part, dict) and isinstance(part.get("text"), str)
+        ),
+        None,
+    )
+    if not isinstance(text, str):
+        return None
+    try:
+        result = json.loads(text)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(result, dict) or result.get("found") is not True:
+        return None
+    if result.get("subject") != expected_subject:
+        return None
+    values = [result.get(key) for key in ("x_min", "y_min", "x_max", "y_max")]
+    if not all(isinstance(value, (int, float)) and not isinstance(value, bool) for value in values):
+        return None
+    x_min, y_min, x_max, y_max = (float(value) for value in values)
+    if not (0 <= x_min < x_max <= 1000 and 0 <= y_min < y_max <= 1000):
+        return None
+    box = (
+        round(x_min * image_width / 1000),
+        round(y_min * image_height / 1000),
+        round(x_max * image_width / 1000),
+        round(y_max * image_height / 1000),
+    )
+    if box[2] - box[0] < image_width * 0.02 or box[3] - box[1] < image_height * 0.02:
+        return None
+    return box
+
+
+async def _detect_subject_face(
+    photo: Image.Image,
+    title: str,
+    category: str,
+) -> tuple[int, int, int, int] | None:
+    subject_kind = _poster_subject_kind(title, category)
+    api_key = os.getenv("GEMINI_API_KEY", "").strip()
+    if subject_kind is None:
+        return None
+    if not api_key:
+        logger.warning("GEMINI_API_KEY is not configured; using a subject-biased poster crop")
+        return None
+
+    model = os.getenv(
+        "GEMINI_VISION_MODEL",
+        os.getenv("GEMINI_TRANSLATION_MODEL", "gemini-3.8-flash"),
+    ).removeprefix("models/")
+    endpoint = (
+        "https://generativelanguage.googleapis.com/v1beta/"
+        f"models/{model}:generateContent"
+    )
+    resized = photo.convert("RGB")
+    resized.thumbnail((1024, 1024), Image.Resampling.LANCZOS)
+    encoded_image = io.BytesIO()
+    resized.save(encoded_image, format="JPEG", quality=82, optimize=True)
+    prompt = (
+        "Inspect this lost-and-found report photo. Locate the main "
+        f"{'human face' if subject_kind == 'human' else 'animal face/head'} "
+        "that belongs to the reported subject. Return the tight bounding box "
+        "around the face and head only, not the whole body or background. "
+        "Coordinates must be integers from 0 to 1000 relative to the image, "
+        "with x_min/x_max measured left-to-right and y_min/y_max top-to-bottom. "
+        "If the requested subject face/head is not clearly visible, set found "
+        "to false, subject to none, and all coordinates to 0."
+    )
+    schema = {
+        "type": "OBJECT",
+        "properties": {
+            "found": {"type": "BOOLEAN"},
+            "subject": {"type": "STRING", "enum": [subject_kind, "none"]},
+            "x_min": {"type": "INTEGER"},
+            "y_min": {"type": "INTEGER"},
+            "x_max": {"type": "INTEGER"},
+            "y_max": {"type": "INTEGER"},
+        },
+        "required": ["found", "subject", "x_min", "y_min", "x_max", "y_max"],
+    }
+    request = {
+        "contents": [{
+            "role": "user",
+            "parts": [
+                {"text": prompt},
+                {
+                    "inline_data": {
+                        "mime_type": "image/jpeg",
+                        "data": base64.b64encode(encoded_image.getvalue()).decode("ascii"),
+                    }
+                },
+            ],
+        }],
+        "generationConfig": {
+            "temperature": 0,
+            "responseMimeType": "application/json",
+            "responseSchema": schema,
+        },
+    }
+    try:
+        async with httpx.AsyncClient(timeout=20) as client:
+            response = await client.post(
+                endpoint,
+                json=request,
+                headers={"x-goog-api-key": api_key},
+            )
+        response.raise_for_status()
+        box = _parse_subject_face_box(
+            response.json(),
+            photo.width,
+            photo.height,
+            subject_kind,
+        )
+        if box is None:
+            logger.warning("Gemini did not return a valid %s face box for the social poster", subject_kind)
+        return box
+    except (httpx.HTTPError, ValueError, KeyError, IndexError, TypeError):
+        logger.exception("Gemini subject-face detection failed for the social poster")
+        return None
+
+
+def _rounded_photo(
+    photo: Image.Image,
+    size: tuple[int, int],
+    centering: tuple[float, float],
+    focus_box: tuple[int, int, int, int] | None = None,
+) -> Image.Image:
+    if focus_box is None:
+        crop = ImageOps.fit(
+            photo.convert("RGB"),
+            size,
+            method=Image.Resampling.LANCZOS,
+            centering=centering,
+        )
+    else:
+        target_width, target_height = size
+        target_ratio = target_width / target_height
+        source_width, source_height = photo.size
+        max_crop_width = min(source_width, source_height * target_ratio)
+        max_crop_height = max_crop_width / target_ratio
+        x_min, y_min, x_max, y_max = focus_box
+        focus_width = x_max - x_min
+        focus_height = y_max - y_min
+        crop_height = min(
+            max_crop_height,
+            max(focus_height * 1.9, focus_width / target_ratio * 1.9),
+        )
+        crop_width = crop_height * target_ratio
+        focus_center_x = (x_min + x_max) / 2
+        focus_center_y = y_min + focus_height * 0.48
+        left = focus_center_x - crop_width / 2
+        top = focus_center_y - crop_height * 0.34
+        left = min(max(left, 0), source_width - crop_width)
+        top = min(max(top, 0), source_height - crop_height)
+        crop_box = (
+            max(0, round(left)),
+            max(0, round(top)),
+            min(source_width, max(round(left) + 1, round(left + crop_width))),
+            min(source_height, max(round(top) + 1, round(top + crop_height))),
+        )
+        crop = photo.convert("RGB").crop(crop_box).resize(size, Image.Resampling.LANCZOS)
+    image = crop
     mask = Image.new("L", size, 0)
     ImageDraw.Draw(mask).rounded_rectangle((0, 0, size[0] - 1, size[1] - 1), radius=28, fill=255)
     image.putalpha(mask)
@@ -92,6 +296,7 @@ def _rounded_photo(photo: Image.Image, size: tuple[int, int]) -> Image.Image:
 def render_community_poster(
     title: str, report_type: str, category: str,
     report_url: str, photo: Image.Image | None,
+    focus_box: tuple[int, int, int, int] | None = None,
 ) -> bytes:
     poster = Image.new("RGB", (POSTER_WIDTH, POSTER_HEIGHT), BACKGROUND)
     draw = ImageDraw.Draw(poster)
@@ -110,6 +315,8 @@ def render_community_poster(
         fitted_photo = _rounded_photo(
             photo,
             (image_bounds[2] - image_bounds[0], image_bounds[3] - image_bounds[1]),
+            _poster_photo_centering(title, category),
+            focus_box,
         )
         poster.paste(fitted_photo, image_bounds[:2], fitted_photo.getchannel("A"))
 
@@ -154,7 +361,7 @@ async def _load_report_photo(image_url: str) -> Image.Image:
                     raise RuntimeError("Report photo exceeds the 10 MB poster limit")
     try:
         image = Image.open(io.BytesIO(image_bytes))
-        return image.convert("RGB")
+        return ImageOps.exif_transpose(image).convert("RGB")
     except (UnidentifiedImageError, OSError) as error:
         raise RuntimeError("Report photo is not a readable image") from error
 
@@ -163,6 +370,17 @@ async def render_report_poster(report: LostItem | FoundItem, report_type: str) -
     title = sanitize_public_title(report.title) or "Reported item"
     report_url = fendly_report_url(report.id)
     photo = await _load_report_photo(report.image_url) if report.image_url else None
+    focus_box = (
+        await _detect_subject_face(photo, title, report.category or "")
+        if photo is not None
+        else None
+    )
     return await asyncio.to_thread(
-        render_community_poster, title, report_type, report.category or "", report_url, photo,
+        render_community_poster,
+        title,
+        report_type,
+        report.category or "",
+        report_url,
+        photo,
+        focus_box,
     )

@@ -28,7 +28,12 @@ final class CommunityPosterPhotoFocus {
 
     private CommunityPosterPhotoFocus() {}
 
-    static void detect(Bitmap photo, boolean preferFace, Callback callback) {
+    static void detect(
+            Bitmap photo,
+            boolean preferFace,
+            boolean focusOnAnimalHead,
+            Callback callback
+    ) {
         if (photo == null || photo.isRecycled()) {
             callback.onFocusDetected(null);
             return;
@@ -40,18 +45,48 @@ final class CommunityPosterPhotoFocus {
                 detectFace(
                         image,
                         callback,
-                        () -> detectObject(image, callback, () -> callback.onFocusDetected(null), error -> callback.onDetectionFailed(error)),
-                        error -> detectObject(image, callback, () -> callback.onDetectionFailed(error), callback::onDetectionFailed)
+                        () -> detectObject(
+                                image,
+                                false,
+                                callback,
+                                () -> callback.onFocusDetected(null),
+                                error -> callback.onDetectionFailed(error)
+                        ),
+                        error -> detectObject(
+                                image,
+                                false,
+                                callback,
+                                () -> callback.onDetectionFailed(error),
+                                callback::onDetectionFailed
+                        )
                 );
             } else {
                 detectObject(
                         image,
+                        focusOnAnimalHead,
                         callback,
-                        () -> detectFace(image, callback, () -> callback.onFocusDetected(null), callback::onDetectionFailed),
+                        () -> {
+                            if (focusOnAnimalHead) {
+                                callback.onFocusDetected(upperCenterFallback(image));
+                            } else {
+                                detectFace(
+                                        image,
+                                        callback,
+                                        () -> callback.onFocusDetected(null),
+                                        callback::onDetectionFailed
+                                );
+                            }
+                        },
                         error -> detectFace(
                                 image,
                                 callback,
-                                () -> callback.onDetectionFailed(error),
+                                () -> {
+                                    if (focusOnAnimalHead) {
+                                        callback.onFocusDetected(upperCenterFallback(image));
+                                    } else {
+                                        callback.onDetectionFailed(error);
+                                    }
+                                },
                                 callback::onDetectionFailed
                         )
                 );
@@ -89,19 +124,21 @@ final class CommunityPosterPhotoFocus {
 
     private static void detectObject(
             InputImage image,
+            boolean focusOnAnimalHead,
             Callback callback,
             Runnable onNoObject,
             FailureHandler onFailure
     ) {
         ObjectDetectorOptions options = new ObjectDetectorOptions.Builder()
                 .setDetectorMode(ObjectDetectorOptions.SINGLE_IMAGE_MODE)
+                .enableMultipleObjects()
                 .enableClassification()
                 .build();
         ObjectDetector detector = ObjectDetection.getClient(options);
         detector.process(image)
                 .addOnSuccessListener(objects -> {
                     detector.close();
-                    Rect focus = largestObjectBounds(objects);
+                    Rect focus = largestObjectBounds(objects, focusOnAnimalHead);
                     if (focus != null) {
                         callback.onFocusDetected(focus);
                     } else {
@@ -123,13 +160,27 @@ final class CommunityPosterPhotoFocus {
         return largest;
     }
 
-    private static Rect largestObjectBounds(List<DetectedObject> objects) {
+    private static Rect largestObjectBounds(List<DetectedObject> objects, boolean focusOnAnimalHead) {
         Rect largest = null;
         for (DetectedObject object : objects) {
             Rect bounds = object.getBoundingBox();
             if (largest == null || area(bounds) > area(largest)) largest = bounds;
         }
+        if (focusOnAnimalHead && largest != null && !largest.isEmpty()) {
+            int headRegionHeight = Math.max(1, Math.round(largest.height() * 0.4f));
+            return new Rect(
+                    largest.left,
+                    largest.top,
+                    largest.right,
+                    Math.min(largest.bottom, largest.top + headRegionHeight)
+            );
+        }
         return largest;
+    }
+
+    private static Rect upperCenterFallback(InputImage image) {
+        int height = Math.max(1, Math.round(image.getHeight() * 0.4f));
+        return new Rect(0, 0, image.getWidth(), height);
     }
 
     private static long area(Rect bounds) {
