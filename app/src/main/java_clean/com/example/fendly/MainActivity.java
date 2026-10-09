@@ -16,6 +16,7 @@ import android.graphics.Matrix;
 import android.graphics.Paint;
 import android.graphics.Path;
 import android.graphics.Rect;
+import android.graphics.RectF;
 import android.graphics.Typeface;
 import android.graphics.LinearGradient;
 import android.graphics.Shader;
@@ -7204,7 +7205,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
 
     private Bitmap createAlertFlyerBitmap(JSONObject report) throws Exception {
         final int width = 1080;
-        final int height = 1350;
+        final int height = 1600;
         Bitmap photo = loadAlertFlyerPhoto(report.optString("image_url", "").trim());
         Bitmap flyer = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888);
         Canvas canvas = new Canvas(flyer);
@@ -7231,44 +7232,57 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         drawFlyerText(canvas, "REUNITE WHAT MATTERS", 238, 190, 25,
                 Color.rgb(220, 237, 228), Typeface.NORMAL);
 
-        drawFlyerRoundRect(canvas, 70, 330, 1010, 845, 34, Color.WHITE);
+        RectF photoBounds = new RectF(70, 330, 1010, 1055);
+        drawFlyerRoundRect(canvas, photoBounds.left, photoBounds.top,
+                photoBounds.right, photoBounds.bottom, 34, Color.rgb(239, 237, 229));
         if (photo != null) {
             Path photoClip = new Path();
-            photoClip.addRoundRect(75, 335, 1005, 840, 28, 28, Path.Direction.CW);
+            photoClip.addRoundRect(75, 335, 1005, 1050, 28, 28, Path.Direction.CW);
             canvas.save();
             canvas.clipPath(photoClip);
-            Rect destination = cropRect(photo, 75, 335, 1005, 840);
-            canvas.drawBitmap(photo, null, destination, paint);
+            float photoScale = Math.min(
+                    930f / photo.getWidth(),
+                    715f / photo.getHeight()
+            );
+            float photoWidth = photo.getWidth() * photoScale;
+            float photoHeight = photo.getHeight() * photoScale;
+            RectF photoDestination = new RectF(
+                    540f - photoWidth / 2f,
+                    692.5f - photoHeight / 2f,
+                    540f + photoWidth / 2f,
+                    692.5f + photoHeight / 2f
+            );
+            canvas.drawBitmap(photo, null, photoDestination, paint);
             canvas.restore();
             if (!photo.isRecycled()) photo.recycle();
         } else {
             paint.setColor(Color.rgb(229, 237, 231));
-            canvas.drawRoundRect(75, 335, 1005, 840, 28, 28, paint);
-            drawFlyerText(canvas, "PHOTO NOT AVAILABLE", 540, 610, 28,
+            canvas.drawRoundRect(75, 335, 1005, 1050, 28, 28, paint);
+            drawFlyerText(canvas, "PHOTO NOT AVAILABLE", 540, 700, 28,
                     brandGreen, Typeface.BOLD, Paint.Align.CENTER);
         }
 
         boolean reunited = resolveReportWorkflowStage(report) == 4;
         String alertLabel = reunited ? "SUCCESSFULLY REUNITED" : "COMMUNITY ALERT";
-        drawFlyerRoundRect(canvas, 70, 890, 520, 958, 28, reunited ? brandGreen : urgentRed);
-        drawFlyerText(canvas, alertLabel, 295, 936, 25, Color.WHITE,
+        drawFlyerRoundRect(canvas, 70, 1080, 520, 1148, 28, reunited ? brandGreen : urgentRed);
+        drawFlyerText(canvas, alertLabel, 295, 1126, 25, Color.WHITE,
                 Typeface.BOLD, Paint.Align.CENTER);
 
         String title = report.optString("title", "").trim();
         if (title.isEmpty()) title = "Fendly community report";
-        drawFlyerWrappedText(canvas, title, 72, 1015, 900, 54,
+        drawFlyerWrappedText(canvas, title, 72, 1215, 900, 54,
                 Color.rgb(28, 43, 36), Typeface.BOLD, 2);
 
-        drawFlyerText(canvas, "LAST-SEEN LOCATION", 75, 1160, 22,
+        drawFlyerText(canvas, "LAST-SEEN LOCATION", 75, 1360, 22,
                 Color.rgb(98, 111, 103), Typeface.BOLD);
         String location = report.optString("report_location", "").trim();
         if (location.isEmpty()) location = "Location shared with the Fendly team";
-        drawFlyerWrappedText(canvas, location, 75, 1205, 900, 34,
+        drawFlyerWrappedText(canvas, location, 75, 1405, 900, 34,
                 Color.rgb(48, 63, 54), Typeface.NORMAL, 2);
 
         paint.setColor(Color.rgb(216, 226, 217));
-        canvas.drawRect(70, 1280, 1010, 1283, paint);
-        drawFlyerText(canvas, "FENDLY  ·  LOST & FOUND COMMUNITY", 75, 1325, 22,
+        canvas.drawRect(70, 1525, 1010, 1528, paint);
+        drawFlyerText(canvas, "FENDLY  ·  LOST & FOUND COMMUNITY", 75, 1570, 22,
                 deepGreen, Typeface.BOLD);
         return flyer;
     }
@@ -7316,25 +7330,12 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             BitmapFactory.Options options = new BitmapFactory.Options();
             options.inSampleSize = Math.max(
                     1,
-                    Math.min(bounds.outWidth / 930, bounds.outHeight / 505)
+                    Math.min(bounds.outWidth / 930, bounds.outHeight / 715)
             );
             return BitmapFactory.decodeByteArray(imageBytes, 0, imageBytes.length, options);
         } finally {
             connection.disconnect();
         }
-    }
-
-    private Rect cropRect(Bitmap bitmap, int left, int top, int right, int bottom) {
-        float targetRatio = (right - left) / (float) (bottom - top);
-        float imageRatio = bitmap.getWidth() / (float) bitmap.getHeight();
-        if (imageRatio > targetRatio) {
-            int cropWidth = Math.round(bitmap.getHeight() * targetRatio);
-            int cropLeft = (bitmap.getWidth() - cropWidth) / 2;
-            return new Rect(cropLeft, 0, cropLeft + cropWidth, bitmap.getHeight());
-        }
-        int cropHeight = Math.round(bitmap.getWidth() / targetRatio);
-        int cropTop = (bitmap.getHeight() - cropHeight) / 2;
-        return new Rect(0, cropTop, bitmap.getWidth(), cropTop + cropHeight);
     }
 
     private void drawFlyerRoundRect(Canvas canvas, float left, float top, float right,
