@@ -247,7 +247,9 @@ async def test_batch_translation_preserves_report_ids_and_passes_english_through
 
 @pytest.mark.asyncio
 async def test_report_creation_keeps_original_and_stores_english_fields(monkeypatch):
-    async def no_moderation(title, description):
+    monkeypatch.setenv("PUBLIC_BASE_URL", "https://cdn.example")
+
+    async def no_moderation(title, description, **_):
         return None
 
     async def no_embedding(text):
@@ -306,7 +308,7 @@ async def test_report_creation_keeps_original_and_stores_english_fields(monkeypa
 async def test_report_creation_infers_category_from_english_translation(monkeypatch):
     embedding_inputs = []
 
-    async def no_moderation(title, description):
+    async def no_moderation(title, description, **_):
         return None
 
     async def capture_embedding(text):
@@ -403,7 +405,7 @@ async def test_report_update_refreshes_english_fields(monkeypatch):
     session = Mock(spec=Session)
     session.scalar.return_value = report
 
-    async def no_moderation(title, description):
+    async def no_moderation(title, description, **_):
         return None
 
     async def translated_fields(title, description, report_location, category="other", source_language=None):

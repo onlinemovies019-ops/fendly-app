@@ -7,4 +7,43 @@
     <issue id="AppBundleLocaleChanges">
         <ignore path="src/main/java_clean/com/example/fendly/LanguageManager.kt" />
     </issue>
+    <issue id="UnusedResources">
+        <!-- These app-level overrides are retained for resource lookups inside AndroidX, Material, and media libraries. -->
+        <ignore path="src/main/res/color/" />
+        <ignore path="src/main/res/color-v26/" />
+        <ignore path="src/main/res/drawable/" />
+        <ignore path="src/main/res/drawable-ldpi/" />
+        <ignore path="src/main/res/drawable-mdpi/" />
+        <ignore path="src/main/res/drawable-xhdpi/" />
+        <ignore path="src/main/res/layout/" />
+        <ignore path="src/main/res/layout-v26/" />
+        <ignore path="src/main/res/values/" />
+        <ignore path="src/main/res/values-sw600dp/" />
+        <ignore path="src/main/res/values-v28/" />
+        <ignore path="src/main/res/values-v30/" />
+    </issue>
+    <issue id="IconXmlAndPng">
+        <ignore path="src/main/res/drawable-xxxhdpi/" />
+    </issue>
+    <issue id="IconDipSize">
+        <ignore path="src/main/res/drawable-xxxhdpi/exo_icon_stop.png" />
+    </issue>
+    <issue id="IconDuplicatesConfig">
+        <ignore path="src/main/res/drawable-xhdpi/abc_list_divider_mtrl_alpha.9.png" />
+    </issue>
+    <issue id="IconDuplicates">
+        <ignore path="src/main/res/drawable-xhdpi/exo_ic_fullscreen_enter.png" />
+        <ignore path="src/main/res/drawable-xxxhdpi/exo_ic_fullscreen_enter.png" />
+        <ignore path="src/main/res/drawable-xhdpi/exo_ic_fullscreen_exit.png" />
+        <ignore path="src/main/res/drawable-xxxhdpi/exo_ic_fullscreen_exit.png" />
+    </issue>
+    <issue id="IconDensities">
+        <ignore path="src/main/res/drawable-hdpi" />
+        <ignore path="src/main/res/drawable-mdpi" />
+        <ignore path="src/main/res/drawable-xxhdpi" />
+    </issue>
+    <issue id="VectorPath">
+        <ignore path="src/main/res/drawable-anydpi/exo_edit_mode_logo.xml" />
+        <ignore path="src/main/res/drawable-anydpi/exo_ic_settings.xml" />
+    </issue>
 </lint>

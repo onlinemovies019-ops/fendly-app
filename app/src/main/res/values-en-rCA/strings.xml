@@ -115,9 +115,6 @@
     <string name="m3c_wide_navigation_rail_pane_title">Navigation rail</string>
     <string name="search_menu_title">Search</string>
     <string name="snackbar_pane_title">Alert</string>
-    <string name="state_empty">Empty</string>
-    <string name="state_off">Off</string>
-    <string name="state_on">On</string>
     <string name="status_bar_notification_info_overflow">999+</string>
     <string name="tooltip_description">tooltip</string>
     <string name="tooltip_label">show tooltip</string>
@@ -127,11 +124,9 @@
 <string name="profile_first_name">First name</string>
 <string name="profile_surname">Surname</string>
 <string name="profile_email_address">Email address</string>
-<string name="profile_mobile_number">Mobile number</string>
 <string name="profile_state">State</string>
 <string name="profile_city">City</string>
 <string name="profile_email">Email</string>
-<string name="profile_mobile">Mobile</string>
 <string name="profile_new_pin">New PIN</string>
 <string name="profile_change_pin">Change PIN</string>
 <string name="profile_save_changes">Save changes</string>

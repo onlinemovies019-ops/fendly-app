@@ -3918,6 +3918,14 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                 connection.setRequestMethod("GET");
                 connection.setConnectTimeout(8000);
                 connection.setReadTimeout(10000);
+                FirebaseUser currentUser = FirebaseAuth.getInstance().getCurrentUser();
+                if (currentUser != null) {
+                    String idToken = Tasks.await(currentUser.getIdToken(false)).getToken();
+                    if (idToken == null || idToken.trim().isEmpty()) {
+                        throw new java.io.IOException("Could not authenticate blocked-user filtering");
+                    }
+                    connection.setRequestProperty("Authorization", "Bearer " + idToken);
+                }
                 int responseCode = connection.getResponseCode();
                 if (responseCode < 200 || responseCode >= 300) {
                     throw new java.io.IOException("Public reports returned HTTP " + responseCode);
@@ -4756,7 +4764,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         pendingPaymentLocation = null;
         pendingPaymentDate = null;
         pendingPaymentButton = button;
-        button.setText("Opening checkout...");
+        button.setText(getString(R.string.payment_opening_checkout));
         button.setEnabled(false);
         FirebaseAuth.getInstance().getCurrentUser().getIdToken(false).addOnSuccessListener(tokenResult -> {
             if (tokenResult == null || tokenResult.getToken() == null) {
@@ -4798,7 +4806,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         pendingPaymentLocation = location;
         pendingPaymentDate = date;
         pendingPaymentButton = button;
-        button.setText("Opening checkout...");
+        button.setText(getString(R.string.payment_opening_checkout));
         button.setEnabled(false);
         FirebaseAuth.getInstance().getCurrentUser().getIdToken(false).addOnSuccessListener(tokenResult -> {
             if (tokenResult == null || tokenResult.getToken() == null) {
@@ -4856,7 +4864,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
 
     private void paymentFailed(String message) {
         if (pendingPaymentButton != null) {
-            pendingPaymentButton.setText("Try payment again");
+            pendingPaymentButton.setText(getString(R.string.payment_retry));
             pendingPaymentButton.setEnabled(true);
         }
         Toast.makeText(this, message, Toast.LENGTH_LONG).show();
@@ -5030,7 +5038,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             updateItem(type, item, description, location, date, publish, draftGuidelinesAccepted);
             return;
         }
-        publish.setText("Submitting...");
+        publish.setText(getString(R.string.report_submitting));
         publish.setEnabled(false);
         Uri[] images = reportImages.clone();
         Bitmap[] cameraImages = reportCameraImages.clone();
@@ -5038,13 +5046,13 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         double latitude = reportHasLocation ? reportLocationLatitude(type) : 0.0;
         double longitude = reportHasLocation ? reportLocationLongitude(type) : 0.0;
         if (FirebaseAuth.getInstance().getCurrentUser() == null) {
-            publish.setText("Sign in to submit");
+            publish.setText(getString(R.string.report_sign_in_required));
             publish.setEnabled(true);
             return;
         }
         FirebaseAuth.getInstance().getCurrentUser().getIdToken(false).addOnSuccessListener(token -> {
             if (token == null || token.getToken() == null) {
-                publish.setText("Authentication unavailable");
+                publish.setText(getString(R.string.auth_unavailable));
                 publish.setEnabled(true);
                 return;
             }
@@ -5069,11 +5077,11 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                         showReports();
                     } else {
                         if (code == 402 && "LOST".equalsIgnoreCase(type)) {
-                            publish.setText("Continue to payment");
+                            publish.setText(getString(R.string.report_continue_payment));
                             publish.setOnClickListener(view ->
                                     showPaymentOptions(item, description, location, date));
                         } else {
-                            publish.setText("Retry submission");
+                            publish.setText(getString(R.string.report_retry_submission));
                         }
                         String detail = submission.errorMessage == null || submission.errorMessage.trim().isEmpty()
                                 ? "Could not save report (" + code + ")"
@@ -5083,7 +5091,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                 });
             });
         }).addOnFailureListener(error -> {
-            publish.setText("Retry submission");
+            publish.setText(getString(R.string.report_retry_submission));
             publish.setEnabled(true);
             Toast.makeText(this, "Authentication failed", Toast.LENGTH_LONG).show();
         });
@@ -9200,6 +9208,10 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         deleteAccount.setOnClickListener(view -> showDeleteAccountDialog());
         root.addView(deleteAccount, contentParams(-1, dp(44), dp(4)));
 
+        TextView blockedUsers = actionButton(LanguageManager.profileText(this, "blocked_users"), false);
+        blockedUsers.setOnClickListener(view -> showBlockedUsersDialog());
+        root.addView(blockedUsers, contentParams(-1, dp(44), dp(4)));
+
         TextView privacyPolicy = actionButton(LanguageManager.profileText(this, "privacy_data_deletion"), false);
         privacyPolicy.setOnClickListener(view -> showPrivacyPolicyDialog());
         root.addView(privacyPolicy, contentParams(-1, dp(44), dp(4)));
@@ -11514,6 +11526,14 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             TextView reportContent = actionButton("Report this content", false);
             addFieldToDialog(content, reportContent);
             reportContent.setOnClickListener(view -> promptReportContent(report));
+            if (signedInUser != null) {
+                TextView blockAuthor = actionButton(
+                        LanguageManager.profileText(this, "block_account"),
+                        false
+                );
+                addFieldToDialog(content, blockAuthor);
+                blockAuthor.setOnClickListener(view -> promptBlockReportAuthor(report, dialog));
+            }
         }
 
         TextView close = actionButton("Close", true);
@@ -11572,6 +11592,121 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                                 Toast.LENGTH_LONG
                         ).show()))
                 .setNegativeButton("Cancel", null)
+                .show();
+    }
+
+    private void promptBlockReportAuthor(JSONObject report, Dialog reportDialog) {
+        String type = report.optString("type", "").toLowerCase(Locale.US);
+        String reportId = report.optString("id", "").trim();
+        if (!("lost".equals(type) || "found".equals(type)) || reportId.isEmpty()) {
+            Toast.makeText(this, "Could not identify this report's creator.", Toast.LENGTH_LONG).show();
+            return;
+        }
+        new AlertDialog.Builder(this)
+                .setTitle(LanguageManager.profileText(this, "block_account_title"))
+                .setMessage(LanguageManager.profileText(this, "block_account_body"))
+                .setNegativeButton("Cancel", null)
+                .setPositiveButton(LanguageManager.profileText(this, "confirm_block"), (confirmation, which) -> {
+                    FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
+                    if (user == null) {
+                        Toast.makeText(this, "Sign in to block an account.", Toast.LENGTH_LONG).show();
+                        return;
+                    }
+                    user.getIdToken(false).addOnSuccessListener(token -> network.execute(() -> {
+                        String path = "/api/users/blocked-users/" + type + "/" + Uri.encode(reportId);
+                        boolean blocked = postAuthorized(path, token.getToken());
+                        runOnUiThread(() -> {
+                            if (blocked) {
+                                reportDialog.dismiss();
+                                Toast.makeText(
+                                        this,
+                                        LanguageManager.profileText(this, "account_blocked"),
+                                        Toast.LENGTH_LONG
+                                ).show();
+                                showHome();
+                            } else {
+                                Toast.makeText(this, "Could not block this account. Please try again.", Toast.LENGTH_LONG).show();
+                            }
+                        });
+                    })).addOnFailureListener(error ->
+                            Toast.makeText(this, "Could not authenticate this request.", Toast.LENGTH_LONG).show());
+                })
+                .show();
+    }
+
+    private void showBlockedUsersDialog() {
+        FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
+        if (user == null) {
+            Toast.makeText(this, "Sign in to manage blocked accounts.", Toast.LENGTH_LONG).show();
+            return;
+        }
+        user.getIdToken(false).addOnSuccessListener(token -> network.execute(() -> {
+            String response = getAuthorized("/api/users/blocked-users", token.getToken());
+            runOnUiThread(() -> {
+                if (response == null) {
+                    Toast.makeText(this, "Could not load blocked accounts. Please try again.", Toast.LENGTH_LONG).show();
+                    return;
+                }
+                try {
+                    JSONArray blockedUsers = new JSONArray(response);
+                    if (blockedUsers.length() == 0) {
+                        new AlertDialog.Builder(this)
+                                .setTitle(LanguageManager.profileText(this, "blocked_users"))
+                                .setMessage(LanguageManager.profileText(this, "no_blocked_users"))
+                                .setPositiveButton("Close", null)
+                                .show();
+                        return;
+                    }
+                    String[] userIds = new String[blockedUsers.length()];
+                    String[] labels = new String[blockedUsers.length()];
+                    for (int index = 0; index < blockedUsers.length(); index++) {
+                        userIds[index] = blockedUsers.getString(index);
+                        String suffix = userIds[index].substring(Math.max(0, userIds[index].length() - 6));
+                        labels[index] = "Blocked account • " + suffix;
+                    }
+                    new AlertDialog.Builder(this)
+                            .setTitle(LanguageManager.profileText(this, "blocked_users"))
+                            .setItems(labels, (dialog, index) -> confirmUnblockUser(userIds[index]))
+                            .setNegativeButton("Close", null)
+                            .show();
+                } catch (Exception error) {
+                    Log.e("USER_BLOCKS", "Could not parse blocked account list", error);
+                    Toast.makeText(this, "Could not read blocked accounts.", Toast.LENGTH_LONG).show();
+                }
+            });
+        })).addOnFailureListener(error ->
+                Toast.makeText(this, "Could not authenticate this request.", Toast.LENGTH_LONG).show());
+    }
+
+    private void confirmUnblockUser(String blockedUid) {
+        new AlertDialog.Builder(this)
+                .setTitle(LanguageManager.profileText(this, "unblock_account_title"))
+                .setMessage(LanguageManager.profileText(this, "unblock_account_body"))
+                .setNegativeButton("Cancel", null)
+                .setPositiveButton(LanguageManager.profileText(this, "confirm_unblock"), (dialog, which) -> {
+                    FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
+                    if (user == null) {
+                        Toast.makeText(this, "Sign in to manage blocked accounts.", Toast.LENGTH_LONG).show();
+                        return;
+                    }
+                    user.getIdToken(false).addOnSuccessListener(token -> network.execute(() -> {
+                        String path = "/api/users/blocked-users/" + Uri.encode(blockedUid);
+                        boolean unblocked = deleteAuthorized(path, token.getToken());
+                        runOnUiThread(() -> {
+                            if (unblocked) {
+                                Toast.makeText(
+                                        this,
+                                        LanguageManager.profileText(this, "account_unblocked"),
+                                        Toast.LENGTH_LONG
+                                ).show();
+                                showHome();
+                            } else {
+                                Toast.makeText(this, "Could not unblock this account. Please try again.", Toast.LENGTH_LONG).show();
+                            }
+                        });
+                    })).addOnFailureListener(error ->
+                            Toast.makeText(this, "Could not authenticate this request.", Toast.LENGTH_LONG).show());
+                })
                 .show();
     }
 
@@ -12744,6 +12879,23 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                 }
             }
             return connection.getResponseCode() >= 200 && connection.getResponseCode() < 300;
+        } catch (Exception error) {
+            return false;
+        } finally {
+            if (connection != null) connection.disconnect();
+        }
+    }
+
+    private boolean deleteAuthorized(String path, String idToken) {
+        HttpURLConnection connection = null;
+        try {
+            connection = (HttpURLConnection) new URL(API_BASE + path).openConnection();
+            connection.setRequestMethod("DELETE");
+            connection.setConnectTimeout(15000);
+            connection.setReadTimeout(30000);
+            connection.setRequestProperty("Authorization", "Bearer " + idToken);
+            int responseCode = connection.getResponseCode();
+            return responseCode >= 200 && responseCode < 300;
         } catch (Exception error) {
             return false;
         } finally {

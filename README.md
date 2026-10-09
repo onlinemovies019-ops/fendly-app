@@ -28,6 +28,12 @@ Required environment variables:
 	Keep this value stable: changing it makes existing SafeTrade IMEI hashes
 	impossible to compare with new lookups.
 - `PUBLIC_BASE_URL`: Public API URL used in uploaded image URLs.
+- `OPENAI_API_KEY`: Required in production for fail-closed moderation of report
+  text and report images before upload/publication. Moderation uses
+  `OPENAI_MODERATION_MODEL` (default `omni-moderation-latest`) and
+  `OPENAI_MODERATION_URL` (default OpenAI's moderation endpoint). If the key is
+  missing or the provider is unavailable, submissions are rejected with a
+  temporary-service error; there is no keyword-only fallback.
 - `CORS_ORIGINS`: Comma-separated browser origins allowed to call the API.
   Defaults to the production API origin; wildcard entries are ignored in
   production and logged. Bearer-token authentication is used instead of cookies.
@@ -91,6 +97,10 @@ development writes to `static/uploads`; Render's free filesystem is ephemeral.
   accounts receive a limited potential-match preview, while explicitly listed
   admins can access full report details)
 - `DELETE /api/users/account` (deletes account data and its reports)
+- `GET /api/users/blocked-users`, `POST
+  /api/users/blocked-users/{lost|found}/{report_id}`, and `DELETE
+  /api/users/blocked-users/{user_id}` (manage blocked report authors; signed-in
+  discovery and matching omit reports by accounts involved in a block)
 - `GET /api/social/status`, `GET /api/social/publications`, and
   `POST /api/social/publications/refresh` (admin-only; refresh checks recent
   published post IDs against Meta and reports whether each post is available,
@@ -113,8 +123,8 @@ SMS send/verify endpoints are unauthenticated for sign-up support and are
 protected by persistent rate limits and short-lived challenges. Admin access
 requires an explicit Firebase UID in `ADMIN_FIREBASE_UIDS`; wildcard
 configuration is not accepted. Alternatively, configure `ADMIN_EMAIL` for a
-verified Fendly profile. Set `OPENAI_API_KEY` to enable provider-backed
-moderation; without it, the backend uses its local safety blocklist.
+verified Fendly profile. Content moderation fails closed unless the production
+moderation provider is configured and responds successfully.
 
 Apply `supabase/migrations/20261004090000_safetrade_imei_verification.sql`
 before deploying SafeTrade. It adds a status and keyed-IMEI-hash index for

@@ -44,6 +44,9 @@
       <li><strong>Notifications:</strong> a push-notification token and
         notification delivery/read status may be stored to send match
         notifications.</li>
+      <li><strong>Blocked accounts:</strong> the account IDs of users you
+        block are stored so their public reports can be hidden from your
+        discovery feed. You can review or unblock accounts from your profile.</li>
       <li><strong>Payments:</strong> subscription status and a payment
         transaction identifier are stored by Fendly. Payment details are
         processed by Razorpay; Fendly does not receive or store your full card
@@ -62,7 +65,8 @@
 
     <h2>How information is used and shared</h2>
     <p>Fendly uses this information to authenticate accounts, maintain profiles
-      and reports, support lost-item matching, moderate report text, translate
+      and reports, support lost-item matching, moderate report text and
+      images, translate
       reports when enabled, send notifications, process subscriptions, and
       respond to privacy requests. Authorized Fendly administrators can access
       report details, including report locations, to help coordinate recovery.
@@ -76,8 +80,10 @@
       database and image-storage provider (including Supabase Storage or the
       Fendly API host); Resend for email verification codes; Fast2SMS for SMS
       verification; Razorpay for payments; and Brevo for administrator email
-      alerts. When configured, report text may be sent to OpenAI or Google
-      Gemini for moderation, translation or text matching. Image matching may
+      alerts. Report text and submitted report images are sent to OpenAI for
+      safety moderation before they are published. When configured, report text may
+      also be sent to OpenAI or Google Gemini for translation or text matching.
+      Image matching may
       process report images locally or through the configured matching
       service, which may include Cloudinary. These providers process information
       under their own terms and privacy notices.</p>
@@ -132,6 +138,7 @@
       <a href="/static/delete-account.html">account deletion request page</a>.
       The request deletes your Firebase sign-in, profile information, profile
       document copies, notification records and token, username reservation,
+      blocked-account settings,
       pending email-verification challenges, lost-and-found reports, content
       reports submitted by the account or concerning its reports, and related
       match alerts. Fendly also attempts to delete report and profile photos stored
@@ -145,10 +152,10 @@
       review and removal.</p>
 
     <h2>Community content</h2>
-    <p>Fendly reviews report text before publication and provides an in-app
-      option to report inappropriate, spam, privacy-invasive, fraudulent, or
-      otherwise concerning reports. Administrators review submitted reports
-      and may hide content that violates the
+    <p>Fendly checks report text and images for safety before publication and
+      provides in-app options to report concerning reports and block their
+      authors. Administrators review submitted reports and may hide content
+      that violates the
       <a href="/static/community-guidelines.html">Community Guidelines</a>.</p>
 
     <h2>Security and your choices</h2>

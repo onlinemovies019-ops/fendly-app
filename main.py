@@ -39,6 +39,7 @@ def _validate_production_config() -> None:
         "FIREBASE_SERVICE_ACCOUNT_JSON",
         "APP_SECRET_KEY",
         "RESEND_API_KEY",
+        "OPENAI_API_KEY",
     )
     missing = [name for name in required if not os.getenv(name)]
     if missing:
@@ -75,6 +76,7 @@ async def lifespan(_: FastAPI):
                     "social_oauth_states",
                     "social_publications",
                     "content_reports",
+                    "user_blocks",
                 ):
                     connection.execute(
                         text(f"ALTER TABLE public.{table_name} ENABLE ROW LEVEL SECURITY")

@@ -10,6 +10,7 @@ from datetime import datetime, timedelta, timezone
 from functools import lru_cache
 from pathlib import Path
 from typing import Literal, Optional
+from urllib.parse import urlsplit
 from uuid import uuid4
 
 import firebase_admin
@@ -23,12 +24,12 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from ai_matching import create_embedding, item_text
-from auth import get_current_user
+from auth import get_current_user, get_optional_current_user
 from database import SessionLocal, get_db
 from image_matching import cosine_similarity, create_image_embedding
 from imei_security import imei_digest, validate_imei
 from moderation import moderate_content
-from models import AdminMatchAlert, ContentReport, FoundItem, LostItem, SocialPublication, UserNotification
+from models import AdminMatchAlert, ContentReport, FoundItem, LostItem, SocialPublication, UserBlock, UserNotification
 from notifications import persist_admin_match_alert, send_admin_match_email, send_match_notifications
 from routers.payments import require_lost_report_entitlement
 from schemas import ItemCreate, ItemResponse, ItemUpdate, MatchPreview, MatchRequest, MatchResponse
@@ -210,6 +211,67 @@ def _require_db_session(session: Session | None) -> Session:
     return session
 
 
+def _validate_report_image_urls(image_urls: list[str]) -> None:
+    public_base = os.getenv("PUBLIC_BASE_URL", "https://fendly-api.onrender.com").rstrip("/")
+    supabase_base = os.getenv("SUPABASE_URL", "").rstrip("/")
+    cloudinary_name = os.getenv("CLOUDINARY_CLOUD_NAME", "")
+    cloudinary_url = os.getenv("CLOUDINARY_URL", "")
+    is_production = os.getenv("ENVIRONMENT", "development").lower() == "production"
+    if not cloudinary_name and cloudinary_url:
+        cloudinary_name = urlsplit(cloudinary_url).hostname or ""
+        cloudinary_name = cloudinary_name.removeprefix("api.")
+
+    allowed_origins = {
+        (parsed.scheme, parsed.netloc)
+        for value in (public_base, supabase_base)
+        if value
+        for parsed in [urlsplit(value)]
+    }
+    for image_url in image_urls:
+        parsed = urlsplit(image_url)
+        is_local_http_upload = (
+            not is_production
+            and parsed.scheme == "http"
+            and parsed.hostname in {"localhost", "127.0.0.1", "::1"}
+        )
+        if (
+            (parsed.scheme != "https" and not is_local_http_upload)
+            or not parsed.path
+            or parsed.username
+            or parsed.password
+            or parsed.query
+            or parsed.fragment
+        ):
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "Report images must use a Fendly upload URL")
+
+        is_fendly_upload = (parsed.scheme, parsed.netloc) in allowed_origins
+        is_supabase_upload = (
+            bool(supabase_base)
+            and (parsed.scheme, parsed.netloc) == (
+                urlsplit(supabase_base).scheme,
+                urlsplit(supabase_base).netloc,
+            )
+        )
+        is_cloudinary_upload = (
+            bool(cloudinary_name)
+            and parsed.scheme == "https"
+            and parsed.netloc == "res.cloudinary.com"
+            and parsed.path.startswith(f"/{cloudinary_name}/image/upload/")
+        )
+        if not (is_fendly_upload or is_supabase_upload or is_cloudinary_upload):
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "Report images must use a Fendly upload URL")
+
+
+def _blocked_user_ids(session: Session, uid: str) -> set[str]:
+    blocked = set(session.scalars(
+        select(UserBlock.blocked_uid).where(UserBlock.blocker_uid == uid)
+    ).all())
+    blocked.update(session.scalars(
+        select(UserBlock.blocker_uid).where(UserBlock.blocked_uid == uid)
+    ).all())
+    return blocked
+
+
 def _stored_report_field(value: str | None, label: str) -> str | None:
     if not value:
         return None
@@ -304,7 +366,15 @@ async def _save_item(
     if model is LostItem:
         require_lost_report_entitlement(session, uid, payload.payment_id)
 
-    mod_task = asyncio.create_task(moderate_content(payload.title, payload.description))
+    report_image_urls = list(dict.fromkeys(
+        [*payload.image_urls, *([payload.image_url] if payload.image_url else [])]
+    ))
+    _validate_report_image_urls(report_image_urls)
+    mod_task = asyncio.create_task(moderate_content(
+        payload.title,
+        payload.description,
+        image_urls=report_image_urls,
+    ))
     emb_task = asyncio.create_task(create_embedding(item_text(payload.title, payload.description, category)))
     img_task = asyncio.create_task(create_image_embedding(payload.image_url))
     translation_task = asyncio.create_task(translate_report_fields(
@@ -469,12 +539,29 @@ async def upload_image(
         try:
             with Image.open(io.BytesIO(data)) as checked:
                 checked.verify()
-                extension = "jpg" if checked.format == "JPEG" else checked.format.lower()
+                image_format = checked.format
         except (UnidentifiedImageError, OSError) as exc:
             raise HTTPException(400, "Invalid image") from exc
 
+        image_content_type = {
+            "JPEG": "image/jpeg",
+            "PNG": "image/png",
+            "WEBP": "image/webp",
+        }.get(image_format)
+        if image_content_type is None:
+            raise HTTPException(415, "Only JPEG, PNG, and WebP images are supported")
+        extension = "jpg" if image_format == "JPEG" else image_format.lower()
+        rejection_reason = await moderate_content(
+            "",
+            "",
+            image_data=data,
+            image_content_type=image_content_type,
+        )
+        if rejection_reason:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, rejection_reason)
+
         filename = f"{uuid4().hex}.{extension}"
-        image_url = await _store_image(data, filename, image.content_type)
+        image_url = await _store_image(data, filename, image_content_type)
         return {"url": image_url, "filename": filename}
     except HTTPException:
         raise
@@ -630,14 +717,18 @@ async def list_my_items(
 def list_public_reports(
     city: str | None = Query(default=None, max_length=120),
     session: Session | None = Depends(get_db),
+    uid: str | None = Depends(get_optional_current_user),
 ) -> list[dict[str, object]]:
     session = _require_db_session(session)
     normalized_city = city.strip().casefold() if city else ""
     escaped_city = normalized_city.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    blocked_uids = _blocked_user_ids(session, uid) if uid else set()
 
     reports: list[tuple[str, LostItem | FoundItem]] = []
     for item_type, model in (("LOST", LostItem), ("FOUND", FoundItem)):
         query = select(model).where(model.hidden_from_public.is_(False))
+        if blocked_uids:
+            query = query.where(model.created_by.not_in(blocked_uids))
         if model is LostItem:
             query = query.where(LostItem.status == "LOST")
         if escaped_city:
@@ -750,7 +841,17 @@ async def update_item(
         created_at = record.created_at if record.created_at.tzinfo else record.created_at.replace(tzinfo=timezone.utc)
         if (now - created_at) > timedelta(hours=5):
             raise HTTPException(409, "Reports can only be edited within 5 hours of creation")
-    rejection_reason = await moderate_content(payload.title, payload.description)
+    report_image_urls = payload.image_urls or (
+        [payload.image_url] if payload.image_url else
+        record.image_urls or ([record.image_url] if record.image_url else [])
+    )
+    report_image_urls = list(dict.fromkeys(report_image_urls))
+    _validate_report_image_urls(report_image_urls)
+    rejection_reason = await moderate_content(
+        payload.title,
+        payload.description,
+        image_urls=report_image_urls,
+    )
     if rejection_reason:
         raise HTTPException(status_code=422, detail=rejection_reason)
     category = resolve_item_category(payload.category, payload.title, payload.description)
@@ -939,6 +1040,12 @@ async def match_items(
             if not owned_image:
                 raise HTTPException(404, "Report not found")
         results = await _find_cloudinary_image_matches(request.imageUrl, target_type, session)
+        if not is_admin:
+            blocked_uids = _blocked_user_ids(session, uid)
+            results = [
+                result for result in results
+                if result["item"].created_by not in blocked_uids
+            ]
         return [
             {
                 **result,
@@ -974,6 +1081,11 @@ async def match_items(
             func.abs(candidate_model.lng - query_item.lng) <= request.radius_degrees,
         )
     ).all()
+    blocked_uids = _blocked_user_ids(session, uid)
+    candidates = [
+        item for item in candidates
+        if item.created_by not in blocked_uids
+    ]
     query_embedding = query_item.embedding or await create_embedding(
         item_text(query_item.title, query_item.description, query_item.category)
     )

@@ -130,7 +130,7 @@ async def test_lost_report_imei_is_hashed_and_never_serialized(monkeypatch, imei
     monkeypatch.setenv("APP_SECRET_KEY", "test-imei-secret-0123456789abcdef")
     monkeypatch.setattr(items_module, "require_lost_report_entitlement", lambda *_: None)
 
-    async def no_moderation(*_):
+    async def no_moderation(*_, **__):
         return None
 
     async def no_embedding(*_):
