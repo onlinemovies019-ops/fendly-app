@@ -198,10 +198,10 @@ def test_generated_community_poster_uses_the_report_link(monkeypatch):
     poster_args = {}
     original_renderer = social_poster.render_community_poster
 
-    def render_poster(title, report_type, category, report_url, photo, focus_box=None):
+    def render_poster(title, report_type, category, report_url, photo):
         poster_args["report_url"] = report_url
         return original_renderer(
-            title, report_type, category, report_url, photo, focus_box
+            title, report_type, category, report_url, photo
         )
 
     monkeypatch.setattr(social_poster, "render_community_poster", render_poster)
@@ -214,19 +214,17 @@ def test_generated_community_poster_uses_the_report_link(monkeypatch):
     )
 
 
-def test_social_poster_focuses_animal_and_person_subjects_near_top():
-    assert social_poster._poster_photo_centering("Parrot", "Animals") == (0.5, 0.08)
-    assert social_poster._poster_photo_centering("Missing child", "People") == (0.5, 0.08)
-    assert social_poster._poster_photo_centering("Blue backpack", "Items") == (0.5, 0.5)
+def test_social_poster_fits_entire_photo_in_square_frame():
+    photo = Image.new("RGB", (200, 100), "green")
+    ImageDraw.Draw(photo).rectangle((0, 0, 49, 99), fill="red")
+    ImageDraw.Draw(photo).rectangle((150, 0, 199, 99), fill="blue")
 
+    fitted = social_poster._rounded_photo(photo, (100, 100))
 
-def test_social_poster_crop_keeps_top_subject_in_image():
-    photo = Image.new("RGB", (100, 200), "blue")
-    ImageDraw.Draw(photo).rectangle((0, 0, 99, 24), fill="red")
-
-    cropped = social_poster._rounded_photo(photo, (100, 50), (0.5, 0.08))
-
-    assert cropped.getpixel((50, 5))[0] > cropped.getpixel((50, 5))[2]
+    assert fitted.size == (100, 100)
+    assert fitted.getpixel((10, 50))[0] > fitted.getpixel((10, 50))[2]
+    assert fitted.getpixel((90, 50))[2] > fitted.getpixel((90, 50))[0]
+    assert fitted.getpixel((50, 10))[:3] == (231, 229, 218)
 
 
 def test_social_poster_does_not_call_gemini(monkeypatch):
@@ -246,9 +244,8 @@ def test_social_poster_does_not_call_gemini(monkeypatch):
     def reject_external_request(*_args, **_kwargs):
         raise AssertionError("Social poster generation must not call Gemini")
 
-    def capture_renderer(title, report_type, category, report_url, photo, focus_box=None):
+    def capture_renderer(title, report_type, category, report_url, photo):
         renderer_args["photo"] = photo
-        renderer_args["focus_box"] = focus_box
         return b"poster"
 
     monkeypatch.setattr(social_poster.httpx, "AsyncClient", reject_external_request)
@@ -262,7 +259,6 @@ def test_social_poster_does_not_call_gemini(monkeypatch):
 
     assert poster_bytes == b"poster"
     assert renderer_args["photo"] is not None
-    assert renderer_args["focus_box"] is None
 
 
 def test_social_poster_still_renders_when_report_photo_cannot_be_loaded(monkeypatch):
@@ -281,7 +277,7 @@ def test_social_poster_still_renders_when_report_photo_cannot_be_loaded(monkeypa
     async def unavailable_photo(_image_url):
         raise RuntimeError("photo download failed")
 
-    def render_poster(title, report_type, category, report_url, photo, focus_box=None):
+    def render_poster(title, report_type, category, report_url, photo):
         renderer_args["photo"] = photo
         return b"poster"
 
@@ -292,21 +288,6 @@ def test_social_poster_still_renders_when_report_photo_cannot_be_loaded(monkeypa
 
     assert poster_bytes == b"poster"
     assert renderer_args["photo"] is None
-
-
-def test_social_poster_crop_centers_detected_animal_face():
-    photo = Image.new("RGB", (200, 400), "blue")
-    ImageDraw.Draw(photo).rectangle((80, 270, 120, 320), fill="red")
-
-    cropped = social_poster._rounded_photo(
-        photo,
-        (200, 100),
-        (0.5, 0.08),
-        (80, 270, 120, 320),
-    )
-
-    center_pixel = cropped.getpixel((100, 55))
-    assert center_pixel[0] > center_pixel[2]
 
 
 def test_schedule_report_publications_only_queues_connected_channels():

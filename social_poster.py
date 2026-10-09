@@ -83,60 +83,21 @@ def _draw_wrapped(draw: ImageDraw.ImageDraw, value: str, xy: tuple[int, int],
         draw.text((x, y + index * 68), line, fill=INK, font=font)
 
 
-def _poster_photo_centering(title: str, category: str) -> tuple[float, float]:
-    subject = _home_subject(title, category)
-    normalized_category = category.strip().casefold()
-    normalized_title = title.casefold()
-    is_person = normalized_category in {"people", "person", "missing person"} or re.search(
-        r"\b(person|people|man|woman|child|children|kid|boy|girl)\b",
-        normalized_title,
-    )
-    if subject != "Item" or is_person:
-        return 0.5, 0.08
-    return 0.5, 0.5
-
-
 def _rounded_photo(
     photo: Image.Image,
     size: tuple[int, int],
-    centering: tuple[float, float],
-    focus_box: tuple[int, int, int, int] | None = None,
 ) -> Image.Image:
-    if focus_box is None:
-        crop = ImageOps.fit(
-            photo.convert("RGB"),
-            size,
-            method=Image.Resampling.LANCZOS,
-            centering=centering,
-        )
-    else:
-        target_width, target_height = size
-        target_ratio = target_width / target_height
-        source_width, source_height = photo.size
-        max_crop_width = min(source_width, source_height * target_ratio)
-        max_crop_height = max_crop_width / target_ratio
-        x_min, y_min, x_max, y_max = focus_box
-        focus_width = x_max - x_min
-        focus_height = y_max - y_min
-        crop_height = min(
-            max_crop_height,
-            max(focus_height * 1.9, focus_width / target_ratio * 1.9),
-        )
-        crop_width = crop_height * target_ratio
-        focus_center_x = (x_min + x_max) / 2
-        focus_center_y = y_min + focus_height * 0.48
-        left = focus_center_x - crop_width / 2
-        top = focus_center_y - crop_height * 0.34
-        left = min(max(left, 0), source_width - crop_width)
-        top = min(max(top, 0), source_height - crop_height)
-        crop_box = (
-            max(0, round(left)),
-            max(0, round(top)),
-            min(source_width, max(round(left) + 1, round(left + crop_width))),
-            min(source_height, max(round(top) + 1, round(top + crop_height))),
-        )
-        crop = photo.convert("RGB").crop(crop_box).resize(size, Image.Resampling.LANCZOS)
-    image = crop
+    background = Image.new("RGB", size, (231, 229, 218))
+    fitted = ImageOps.contain(
+        photo.convert("RGB"),
+        size,
+        method=Image.Resampling.LANCZOS,
+    )
+    background.paste(
+        fitted,
+        ((size[0] - fitted.width) // 2, (size[1] - fitted.height) // 2),
+    )
+    image = background
     mask = Image.new("L", size, 0)
     ImageDraw.Draw(mask).rounded_rectangle((0, 0, size[0] - 1, size[1] - 1), radius=28, fill=255)
     image.putalpha(mask)
@@ -146,7 +107,6 @@ def _rounded_photo(
 def render_community_poster(
     title: str, report_type: str, category: str,
     report_url: str, photo: Image.Image | None,
-    focus_box: tuple[int, int, int, int] | None = None,
 ) -> bytes:
     poster = Image.new("RGB", (POSTER_WIDTH, POSTER_HEIGHT), BACKGROUND)
     draw = ImageDraw.Draw(poster)
@@ -157,7 +117,7 @@ def render_community_poster(
 
     _draw_wrapped(draw, title.strip() or "Lost item", (76, 220), POSTER_WIDTH - 152,
                   _font(56, bold=True))
-    image_bounds = (76, 330, POSTER_WIDTH - 76, 820)
+    image_bounds = (130, 330, 950, 1150)
     draw.rounded_rectangle(image_bounds, radius=28, fill=(231, 229, 218))
     if photo is None:
         draw.text((112, 552), "Photo not available", fill=MUTED, font=_font(30))
@@ -165,18 +125,24 @@ def render_community_poster(
         fitted_photo = _rounded_photo(
             photo,
             (image_bounds[2] - image_bounds[0], image_bounds[3] - image_bounds[1]),
-            _poster_photo_centering(title, category),
-            focus_box,
         )
         poster.paste(fitted_photo, image_bounds[:2], fitted_photo.getchannel("A"))
 
-    draw.text((78, 862), f"{report_type.title()} report · View details in Fendly",
-              fill=INK, font=_font(34, bold=True))
     qr = cast(Image.Image, qrcode.make(report_url)).convert("RGB").resize(
-        (250, 250), Image.Resampling.NEAREST
+        (150, 150), Image.Resampling.NEAREST
     )
-    poster.paste(qr, (744, 980))
-    draw.text((775, 1240), "SCAN FOR FENDLY", fill=MUTED, font=_font(22))
+    poster.paste(qr, (842, 1170))
+    _draw_wrapped(
+        draw,
+        f"{report_type.title()} report · View details in Fendly",
+        (78, 1200),
+        720,
+        _font(34, bold=True),
+    )
+    scan_text = "SCAN FOR FENDLY"
+    scan_font = _font(18)
+    scan_width = draw.textbbox((0, 0), scan_text, font=scan_font)[2]
+    draw.text((917 - scan_width / 2, 1342), scan_text, fill=MUTED, font=scan_font)
     output = io.BytesIO()
     poster.save(output, format="JPEG", quality=90, optimize=True)
     return output.getvalue()

@@ -4,7 +4,6 @@ import android.graphics.Bitmap;
 import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.Paint;
-import android.graphics.Rect;
 import android.graphics.RectF;
 import android.graphics.Typeface;
 
@@ -32,8 +31,7 @@ final class CommunityPoster {
             String itemType,
             String category,
             String itemUrl,
-            Bitmap photo,
-            Rect photoFocus
+            Bitmap photo
     ) throws Exception {
         Bitmap poster = Bitmap.createBitmap(WIDTH, HEIGHT, Bitmap.Config.ARGB_8888);
         Canvas canvas = new Canvas(poster);
@@ -61,16 +59,15 @@ final class CommunityPoster {
         paint.setTextSize(56);
         drawWrapped(canvas, title == null || title.trim().isEmpty() ? "Lost item" : title, 76, 260, WIDTH - 152, 68, 2, paint);
 
-        RectF imageBounds = new RectF(76, 330, WIDTH - 76, 820);
+        RectF imageBounds = new RectF(130, 330, 950, 1150);
         paint.setColor(Color.rgb(231, 229, 218));
         canvas.drawRoundRect(imageBounds, 28, 28, paint);
         if (photo != null && !photo.isRecycled()) {
-            Rect source = centerCropSource(photo, imageBounds.width(), imageBounds.height(), photoFocus);
             canvas.save();
             android.graphics.Path clip = new android.graphics.Path();
             clip.addRoundRect(imageBounds, 28, 28, android.graphics.Path.Direction.CW);
             canvas.clipPath(clip);
-            canvas.drawBitmap(photo, source, imageBounds, paint);
+            canvas.drawBitmap(photo, null, fitRect(photo, imageBounds), paint);
             canvas.restore();
         } else {
             paint.setColor(MUTED);
@@ -79,59 +76,36 @@ final class CommunityPoster {
             canvas.drawText("Photo not available", imageBounds.left + 36, imageBounds.centerY(), paint);
         }
 
-        paint.setColor(INK);
-        paint.setTypeface(Typeface.create("sans-serif-medium", Typeface.BOLD));
-        paint.setTextSize(34);
-        canvas.drawText(
-                CommunityPosterSubject.reportType(itemType, title, category)
-                        + " · " + (location == null || location.trim().isEmpty() ? "Location shared on Fendly" : location),
-                78,
-                890,
-                paint
-        );
-        paint.setColor(MUTED);
-        paint.setTypeface(Typeface.create("sans-serif", Typeface.NORMAL));
-        paint.setTextSize(30);
-        canvas.drawText(date == null || date.trim().isEmpty() ? "Date not provided" : date, 78, 944, paint);
-
         Bitmap qr = createQr(itemUrl);
-        canvas.drawBitmap(qr, null, new RectF(744, 980, 994, 1230), null);
+        canvas.drawBitmap(qr, null, new RectF(842, 1170, 992, 1320), null);
         qr.recycle();
         paint.setColor(MUTED);
-        paint.setTextSize(22);
+        paint.setTextSize(18);
         paint.setTextAlign(Paint.Align.CENTER);
-        canvas.drawText("SCAN TO VIEW", 869, 1262, paint);
+        canvas.drawText("SCAN TO VIEW", 917, 1342, paint);
         paint.setTextAlign(Paint.Align.LEFT);
+
+        paint.setColor(INK);
+        paint.setTypeface(Typeface.create("sans-serif-medium", Typeface.BOLD));
+        String reportLabel = CommunityPosterSubject.reportType(itemType, title, category);
+        drawWrapped(canvas, reportLabel, 78, 1200, 720, 42, 2, paint);
+        paint.setColor(MUTED);
+        paint.setTypeface(Typeface.create("sans-serif", Typeface.NORMAL));
+        paint.setTextSize(24);
+        canvas.drawText(date == null || date.trim().isEmpty() ? "Date not provided" : date, 78, 1315, paint);
         return poster;
     }
 
-    private static Rect centerCropSource(Bitmap bitmap, float targetWidth, float targetHeight, Rect focus) {
-        float targetRatio = targetWidth / targetHeight;
-        float maxCropWidth = Math.min(bitmap.getWidth(), bitmap.getHeight() * targetRatio);
-        float maxCropHeight = maxCropWidth / targetRatio;
-        float centerX = focus == null ? bitmap.getWidth() / 2f : focus.exactCenterX();
-        float centerY = focus == null ? bitmap.getHeight() / 2f : focus.exactCenterY();
-        float cropWidth = maxCropWidth;
-        float cropHeight = maxCropHeight;
-
-        if (focus != null && !focus.isEmpty()) {
-            float wantedWidth = Math.max(focus.width() * 1.5f, focus.height() * targetRatio * 1.5f);
-            cropWidth = Math.min(maxCropWidth, wantedWidth);
-            cropHeight = cropWidth / targetRatio;
-        }
-
-        float left = clamp(centerX - cropWidth / 2f, 0, bitmap.getWidth() - cropWidth);
-        float top = clamp(centerY - cropHeight / 2f, 0, bitmap.getHeight() - cropHeight);
-        return new Rect(
-                Math.round(left),
-                Math.round(top),
-                Math.round(left + cropWidth),
-                Math.round(top + cropHeight)
+    private static RectF fitRect(Bitmap bitmap, RectF bounds) {
+        float scale = Math.min(
+                bounds.width() / bitmap.getWidth(),
+                bounds.height() / bitmap.getHeight()
         );
-    }
-
-    private static float clamp(float value, float min, float max) {
-        return Math.max(min, Math.min(max, value));
+        float width = bitmap.getWidth() * scale;
+        float height = bitmap.getHeight() * scale;
+        float left = bounds.centerX() - width / 2f;
+        float top = bounds.centerY() - height / 2f;
+        return new RectF(left, top, left + width, top + height);
     }
 
     private static Bitmap createQr(String value) throws Exception {

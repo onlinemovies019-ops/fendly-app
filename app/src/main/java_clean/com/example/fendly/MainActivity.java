@@ -4674,10 +4674,10 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         return true;
     }
 
-    private String backendReportCategory(String title, String description) {
+    private String backendReportCategory() {
         if ("pet".equals(draftReportCategory)) return "Animals";
         if ("person".equals(draftReportCategory)) return "People";
-        return AiMatchService.inferCategory(title, description);
+        return "Items";
     }
 
     private String reportCategoryDisplayName() {
@@ -5118,7 +5118,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                     title, description, imageUrl, imageUrls, type, latitude, longitude,
                     location, date, paymentId,
                     getTtsLocaleForSelectedLanguage().getLanguage(), idToken, imeiNumber,
-                    backendReportCategory(title, description), socialShareConsent,
+                    backendReportCategory(), socialShareConsent,
                     draftGuidelinesAccepted);
             if (!response.isSuccessful()) {
                 lastSubmissionError = "Could not save report (" + response.getStatusCode() + "): " + response.getErrorMessage();
@@ -5364,7 +5364,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             connection.setRequestProperty("Authorization", "Bearer " + idToken);
             connection.setRequestProperty("Content-Type", "application/json; charset=UTF-8");
             String imageJson = imageUrl == null || imageUrl.trim().isEmpty() ? "null" : "\"" + escapeJson(imageUrl) + "\"";
-            String body = "{\"title\":\"" + escapeJson(title) + "\",\"description\":\"" + escapeJson(description) + "\",\"source_language\":\"" + getTtsLocaleForSelectedLanguage().getLanguage() + "\",\"report_location\":\"" + escapeJson(location) + "\",\"report_date\":\"" + escapeJson(date) + "\",\"category\":\"" + escapeJson(backendReportCategory(title, description)) + "\",\"community_guidelines_accepted\":" + guidelinesAccepted + ",\"lat\":0.0,\"lng\":0.0,\"image_url\":" + imageJson + "}";
+            String body = "{\"title\":\"" + escapeJson(title) + "\",\"description\":\"" + escapeJson(description) + "\",\"source_language\":\"" + getTtsLocaleForSelectedLanguage().getLanguage() + "\",\"report_location\":\"" + escapeJson(location) + "\",\"report_date\":\"" + escapeJson(date) + "\",\"category\":\"" + escapeJson(backendReportCategory()) + "\",\"community_guidelines_accepted\":" + guidelinesAccepted + ",\"lat\":0.0,\"lng\":0.0,\"image_url\":" + imageJson + "}";
             try (OutputStream output = connection.getOutputStream()) {
                 output.write(body.getBytes(StandardCharsets.UTF_8));
             }
@@ -11708,42 +11708,11 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             String itemUrl,
             Map<String, String> profileLinks
     ) {
-        boolean preferFace = shouldFocusOnPersonFace(title, category);
-        boolean focusOnAnimalHead = !preferFace
-                && !"Item".equals(CommunityPosterSubject.homeSubject(title, category));
-        CommunityPosterPhotoFocus.detect(
-                photo,
-                preferFace,
-                focusOnAnimalHead,
-                new CommunityPosterPhotoFocus.Callback() {
-                    @Override
-                    public void onFocusDetected(android.graphics.Rect bounds) {
-                        runOnUiThread(() -> renderCommunityPoster(
-                                photo, bounds, title, location, date, itemType, category, itemUrl, profileLinks
-                        ));
-                    }
-
-                    @Override
-                    public void onDetectionFailed(Exception error) {
-                        Log.w("COMMUNITY_POSTER", "Could not detect the photo subject; using a centered poster crop", error);
-                        runOnUiThread(() -> renderCommunityPoster(
-                                photo, null, title, location, date, itemType, category, itemUrl, profileLinks
-                        ));
-                    }
-                }
-        );
-    }
-
-    private boolean shouldFocusOnPersonFace(String title, String category) {
-        String normalizedCategory = category == null ? "" : category.toLowerCase(Locale.ROOT);
-        String normalizedTitle = title == null ? "" : title.toLowerCase(Locale.ROOT);
-        if (normalizedCategory.contains("people") || normalizedCategory.contains("person")) return true;
-        return normalizedTitle.matches(".*\\b(person|people|man|woman|child|children|kid|boy|girl)\\b.*");
+        renderCommunityPoster(photo, title, location, date, itemType, category, itemUrl, profileLinks);
     }
 
     private void renderCommunityPoster(
             Bitmap photo,
-            android.graphics.Rect photoFocus,
             String title,
             String location,
             String date,
@@ -11754,7 +11723,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
     ) {
         Bitmap poster = null;
         try {
-            poster = CommunityPoster.render(title, location, date, itemType, category, itemUrl, photo, photoFocus);
+            poster = CommunityPoster.render(title, location, date, itemType, category, itemUrl, photo);
             String subject = CommunityPosterSubject.homeSubject(title, category);
             String homeMessage = "Help bring this "
                     + ("Item".equals(subject) ? "item" : subject) + " home";

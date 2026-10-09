@@ -173,7 +173,9 @@ Each report has an unchecked opt-in. A consented report publishes its type and
 title plus a link to that specific report (`FENDLY_APP_URL/item/{report_id}`;
 the base defaults to `https://fendly.app`). Facebook and Instagram receive a generated JPEG
 community poster containing the title, report type, optional selected photo,
-and report link. The caption ends with `Fendly: <report URL>`. The description,
+and report link. Photos fit inside a square frame without cropping; the report
+label sits beside the QR code below the photo. The caption ends with
+`Fendly: <report URL>`. The description,
 date, location, contact
 details, and IMEI are not included. The poster is stored with report media and
 is removed during account deletion when no other report references it. This
