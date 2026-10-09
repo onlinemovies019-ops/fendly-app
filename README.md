@@ -76,12 +76,6 @@ Required environment variables:
 	`OPENAI_TRANSLATION_MODEL` (default `gpt-4o-mini`) as applicable. Provider
 	usage may incur charges. Without a working key, admins see an explicit
 	translation-unavailable message instead of untranslated text.
-- `GEMINI_VISION_MODEL` (default `gemini-3.8-flash`) detects human faces or
-	animal heads in report photos used for Facebook and Instagram posters.
-	Images are sent to the Gemini API for this detection. If detection is
-	unavailable, poster generation falls back to an upper-subject crop for
-	people and animals. Each eligible poster generation uses a Gemini API call
-	and may incur provider charges.
 
 Uploads use Supabase Storage when configured. Without those variables, local
 development writes to `static/uploads`; Render's free filesystem is ephemeral.

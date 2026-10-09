@@ -229,111 +229,40 @@ def test_social_poster_crop_keeps_top_subject_in_image():
     assert cropped.getpixel((50, 5))[0] > cropped.getpixel((50, 5))[2]
 
 
-def test_gemini_animal_face_detection_returns_scaled_face_box(monkeypatch):
+def test_social_poster_does_not_call_gemini(monkeypatch):
     monkeypatch.setenv("GEMINI_API_KEY", "test-gemini-key")
-    request_data = {}
-
-    class FakeResponse:
-        def raise_for_status(self):
-            return None
-
-        def json(self):
-            return {
-                "candidates": [{
-                    "content": {
-                        "parts": [{
-                            "text": (
-                                '{"found":true,"subject":"animal","x_min":100,'
-                                '"y_min":100,"x_max":500,"y_max":500}'
-                            )
-                        }]
-                    }
-                }]
-            }
-
-    class FakeClient:
-        def __init__(self, timeout):
-            request_data["timeout"] = timeout
-
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, *_args):
-            return None
-
-        async def post(self, url, json, headers):
-            request_data.update(url=url, json=json, headers=headers)
-            return FakeResponse()
-
-    monkeypatch.setattr(social_poster.httpx, "AsyncClient", FakeClient)
-    photo = Image.new("RGB", (200, 400), "green")
-
-    focus_box = asyncio.run(
-        social_poster._detect_subject_face(photo, "Parrot", "Animals")
+    report = LostItem(
+        id="report-with-parrot",
+        created_by="report-owner",
+        title="Parrot",
+        description="Green parrot",
+        category="animal",
+        lat=0,
+        lng=0,
+        image_url="https://fendly-api.onrender.com/static/uploads/parrot.jpg",
     )
+    renderer_args = {}
 
-    assert focus_box == (20, 40, 100, 200)
-    assert request_data["headers"] == {"x-goog-api-key": "test-gemini-key"}
-    assert request_data["json"]["generationConfig"]["responseMimeType"] == "application/json"
-    assert "inline_data" in request_data["json"]["contents"][0]["parts"][1]
+    def reject_external_request(*_args, **_kwargs):
+        raise AssertionError("Social poster generation must not call Gemini")
 
+    def capture_renderer(title, report_type, category, report_url, photo, focus_box=None):
+        renderer_args["photo"] = photo
+        renderer_args["focus_box"] = focus_box
+        return b"poster"
 
-def test_animal_poster_falls_back_when_gemini_key_is_missing(monkeypatch):
-    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.setattr(social_poster.httpx, "AsyncClient", reject_external_request)
+    async def load_photo(_url):
+        return Image.new("RGB", (200, 400), "green")
 
-    focus_box = asyncio.run(
-        social_poster._detect_subject_face(
-            Image.new("RGB", (100, 100), "green"),
-            "Parrot",
-            "Animals",
-        )
-    )
+    monkeypatch.setattr(social_poster, "_load_report_photo", load_photo)
+    monkeypatch.setattr(social_poster, "render_community_poster", capture_renderer)
 
-    assert focus_box is None
+    poster_bytes = asyncio.run(social_poster.render_report_poster(report, "lost"))
 
-
-def test_animal_poster_falls_back_when_gemini_returns_503(monkeypatch):
-    monkeypatch.setenv("GEMINI_API_KEY", "test-gemini-key")
-
-    class FakeResponse:
-        status_code = 503
-
-        def raise_for_status(self):
-            request = social_poster.httpx.Request(
-                "POST",
-                "https://generativelanguage.googleapis.com/test",
-            )
-            response = social_poster.httpx.Response(503, request=request)
-            raise social_poster.httpx.HTTPStatusError(
-                "Gemini temporarily unavailable",
-                request=request,
-                response=response,
-            )
-
-    class FakeClient:
-        def __init__(self, timeout):
-            pass
-
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, *_args):
-            return None
-
-        async def post(self, *_args, **_kwargs):
-            return FakeResponse()
-
-    monkeypatch.setattr(social_poster.httpx, "AsyncClient", FakeClient)
-
-    focus_box = asyncio.run(
-        social_poster._detect_subject_face(
-            Image.new("RGB", (100, 100), "green"),
-            "Parrot",
-            "Animals",
-        )
-    )
-
-    assert focus_box is None
+    assert poster_bytes == b"poster"
+    assert renderer_args["photo"] is not None
+    assert renderer_args["focus_box"] is None
 
 
 def test_social_poster_still_renders_when_report_photo_cannot_be_loaded(monkeypatch):
@@ -363,24 +292,6 @@ def test_social_poster_still_renders_when_report_photo_cannot_be_loaded(monkeypa
 
     assert poster_bytes == b"poster"
     assert renderer_args["photo"] is None
-
-
-def test_subject_face_box_rejects_wrong_subject_or_invalid_coordinates():
-    payload = {
-        "candidates": [{
-            "content": {
-                "parts": [{
-                    "text": (
-                        '{"found":true,"subject":"human","x_min":100,'
-                        '"y_min":100,"x_max":500,"y_max":500}'
-                    )
-                }]
-            }
-        }]
-    }
-
-    assert social_poster._parse_subject_face_box(payload, 200, 400, "animal") is None
-    assert social_poster._parse_subject_face_box({}, 200, 400, "animal") is None
 
 
 def test_social_poster_crop_centers_detected_animal_face():
