@@ -16,6 +16,7 @@ class ItemCreate(BaseModel):
     image_urls: list[str] = Field(default_factory=list, max_length=3)
     category: str = Field(default="other", min_length=1, max_length=80)
     social_share_consent: bool = False
+    community_guidelines_accepted: bool = False
     payment_id: str | None = Field(default=None, max_length=128)
     imei_number: str | None = Field(default=None, exclude=True)
 
@@ -31,6 +32,7 @@ class ItemUpdate(BaseModel):
     image_url: str | None = Field(default=None, max_length=1000)
     image_urls: list[str] = Field(default_factory=list, max_length=3)
     category: str = Field(default="other", min_length=1, max_length=80)
+    community_guidelines_accepted: bool = False
 
 
 class ItemResponse(ItemCreate):

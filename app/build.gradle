@@ -5,6 +5,14 @@ plugins {
     id 'com.google.gms.google-services'
 }
 
+def releaseSigningValues = [
+        storeFile: providers.gradleProperty('FENDLY_RELEASE_STORE_FILE').orNull ?: System.getenv('FENDLY_RELEASE_STORE_FILE'),
+        storePassword: providers.gradleProperty('FENDLY_RELEASE_STORE_PASSWORD').orNull ?: System.getenv('FENDLY_RELEASE_STORE_PASSWORD'),
+        keyAlias: providers.gradleProperty('FENDLY_RELEASE_KEY_ALIAS').orNull ?: System.getenv('FENDLY_RELEASE_KEY_ALIAS'),
+        keyPassword: providers.gradleProperty('FENDLY_RELEASE_KEY_PASSWORD').orNull ?: System.getenv('FENDLY_RELEASE_KEY_PASSWORD')
+]
+def hasReleaseSigning = releaseSigningValues.values().every { it != null && !it.isBlank() }
+
 android {
     namespace 'com.example.fendly'
     compileSdk 36
@@ -23,10 +31,28 @@ android {
         targetSdk 36
         versionCode 1
         versionName "1.0"
+        resourceConfigurations += ['en', 'hi', 'mr', 'gu', 'bn', 'ta', 'te', 'kn', 'ml']
 
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
             useSupportLibrary true
+        }
+    }
+
+    bundle {
+        language {
+            enableSplit = false
+        }
+    }
+
+    if (hasReleaseSigning) {
+        signingConfigs {
+            release {
+                storeFile file(releaseSigningValues.storeFile)
+                storePassword releaseSigningValues.storePassword
+                keyAlias releaseSigningValues.keyAlias
+                keyPassword releaseSigningValues.keyPassword
+            }
         }
     }
 
@@ -35,6 +61,9 @@ android {
             buildConfigField "String", "API_BASE_URL", '"https://fendly-api.onrender.com"'
         }
         release {
+            if (hasReleaseSigning) {
+                signingConfig signingConfigs.release
+            }
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
             buildConfigField "String", "API_BASE_URL", '"https://fendly-api.onrender.com"'
@@ -42,6 +71,7 @@ android {
     }
 
     compileOptions {
+        coreLibraryDesugaringEnabled true
         sourceCompatibility JavaVersion.VERSION_17
         targetCompatibility JavaVersion.VERSION_17
     }
@@ -63,13 +93,28 @@ android {
 
     // This bypasses the string format compilation errors from external libraries
     lint {
-        checkReleaseBuilds false
-        abortOnError false
+        lintConfig file("lint.xml")
         disable 'StringFormatInvalid', 'StringFormatMatches'
+        disable 'AutoboxingStateCreation', 'MutableCollectionMutableState'
+    }
+}
+
+tasks.configureEach { task ->
+    if (task.name in ['assembleRelease', 'bundleRelease']) {
+        task.doFirst {
+            if (!hasReleaseSigning) {
+                throw new GradleException(
+                        'Release signing is not configured. Set FENDLY_RELEASE_STORE_FILE, ' +
+                                'FENDLY_RELEASE_STORE_PASSWORD, FENDLY_RELEASE_KEY_ALIAS, and ' +
+                                'FENDLY_RELEASE_KEY_PASSWORD in local Gradle properties or environment variables.'
+                )
+            }
+        }
     }
 }
 
 dependencies {
+    coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs:2.1.5'
     implementation 'androidx.core:core-ktx:1.12.0'
     implementation 'androidx.lifecycle:lifecycle-runtime-ktx:2.7.0'
     implementation 'androidx.lifecycle:lifecycle-viewmodel-compose:2.7.0'

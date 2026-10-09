@@ -66,9 +66,11 @@ public final class LanguageActivity extends AppCompatActivity {
         getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_HIDDEN);
         getWindow().setStatusBarColor(backgroundColor());
         getWindow().setNavigationBarColor(backgroundColor());
-        getWindow().getDecorView().setSystemUiVisibility(
-                darkMode ? 0 : View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR | View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR
-        );
+        int systemUiVisibility = darkMode ? 0 : View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR;
+        if (!darkMode && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            systemUiVisibility |= View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR;
+        }
+        getWindow().getDecorView().setSystemUiVisibility(systemUiVisibility);
 
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);

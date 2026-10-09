@@ -2,7 +2,21 @@ from datetime import date, datetime
 from uuid import uuid4
 
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import BigInteger, Boolean, Date, DateTime, Float, Index, Integer, JSON, String, Text, UniqueConstraint, func
+from sqlalchemy import (
+    BigInteger,
+    Boolean,
+    CheckConstraint,
+    Date,
+    DateTime,
+    Float,
+    Index,
+    Integer,
+    JSON,
+    String,
+    Text,
+    UniqueConstraint,
+    func,
+)
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -165,6 +179,7 @@ class LostItem(Base):
     image_url: Mapped[str | None] = mapped_column(String(1000))
     image_urls: Mapped[list[str] | None] = mapped_column(JSON)
     social_share_consent: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    hidden_from_public: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     social_poster_url: Mapped[str | None] = mapped_column(String(1000))
     edit_count: Mapped[int] = mapped_column(default=0)
     image_embedding: Mapped[list[float] | None] = mapped_column(Vector(512))
@@ -192,6 +207,7 @@ class FoundItem(Base):
     image_url: Mapped[str | None] = mapped_column(String(1000))
     image_urls: Mapped[list[str] | None] = mapped_column(JSON)
     social_share_consent: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    hidden_from_public: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     social_poster_url: Mapped[str | None] = mapped_column(String(1000))
     edit_count: Mapped[int] = mapped_column(default=0)
     image_embedding: Mapped[list[float] | None] = mapped_column(Vector(512))
@@ -241,3 +257,30 @@ class SocialPublication(Base):
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
     published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class ContentReport(Base):
+    __tablename__ = "content_reports"
+    __table_args__ = (
+        CheckConstraint("report_type IN ('lost', 'found')", name="content_reports_report_type_check"),
+        CheckConstraint(
+            "reason IN ('inappropriate', 'spam', 'personal_information', 'fraud', 'other')",
+            name="content_reports_reason_check",
+        ),
+        UniqueConstraint(
+            "reporter_uid",
+            "report_type",
+            "report_id",
+            name="content_reports_reporter_target_uq",
+        ),
+        Index("content_reports_status_created_idx", "status", "created_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    reporter_uid: Mapped[str] = mapped_column(String(128), index=True)
+    report_type: Mapped[str] = mapped_column(String(8))
+    report_id: Mapped[str] = mapped_column(String(36), index=True)
+    reason: Mapped[str] = mapped_column(String(32))
+    details: Mapped[str | None] = mapped_column(String(1000))
+    status: Mapped[str] = mapped_column(String(16), default="pending", nullable=False, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

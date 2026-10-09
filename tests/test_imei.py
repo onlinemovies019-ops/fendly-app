@@ -151,6 +151,7 @@ async def test_lost_report_imei_is_hashed_and_never_serialized(monkeypatch, imei
         ItemCreate(
             title="Phone",
             description="Lost phone",
+            community_guidelines_accepted=True,
             payment_id="test_bypass",
             imei_number=imei,
         ),

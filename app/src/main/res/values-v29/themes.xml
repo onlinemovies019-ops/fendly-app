@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.Fendly" parent="Theme.AppCompat.Light.NoActionBar">
+        <item name="android:fontFamily">@font/noto_sans_indic</item>
+        <item name="android:textColorPrimary">#000000</item>
+        <item name="android:textColorSecondary">#000000</item>
+        <item name="android:windowBackground">#F7F3EE</item>
+        <item name="android:windowDrawsSystemBarBackgrounds">true</item>
+        <item name="android:statusBarColor">#F7F3EE</item>
+        <item name="android:navigationBarColor">#F7F3EE</item>
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:windowLightNavigationBar">true</item>
+        <item name="android:forceDarkAllowed">false</item>
+    </style>
+
+    <style name="Theme.Fendly.Dark" parent="Theme.AppCompat.NoActionBar">
+        <item name="android:fontFamily">@font/noto_sans_indic</item>
+        <item name="android:textColorPrimary">#FFFFFF</item>
+        <item name="android:textColorSecondary">#FFFFFF</item>
+        <item name="android:windowBackground">#121319</item>
+        <item name="android:windowDrawsSystemBarBackgrounds">true</item>
+        <item name="android:statusBarColor">#121319</item>
+        <item name="android:navigationBarColor">#121319</item>
+        <item name="android:forceDarkAllowed">false</item>
+    </style>
+
+    <style name="Theme.Fendly.Splash" parent="Theme.AppCompat.Light.NoActionBar">
+        <item name="android:fontFamily">@font/noto_sans_indic</item>
+        <item name="android:windowActionModeOverlay">true</item>
+        <item name="android:windowBackground">#F7F3EE</item>
+        <item name="android:windowDrawsSystemBarBackgrounds">true</item>
+        <item name="android:statusBarColor">#F7F3EE</item>
+        <item name="android:navigationBarColor">#F7F3EE</item>
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:windowLightNavigationBar">true</item>
+        <item name="android:forceDarkAllowed">false</item>
+    </style>
+</resources>

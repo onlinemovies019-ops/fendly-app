@@ -42,7 +42,11 @@ public final class SplashActivity extends Activity {
         }
         WindowInsetsHelper.applySafeArea(root);
         
-        getWindow().getDecorView().setSystemUiVisibility(darkMode ? 0 : View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR | View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR);
+        int systemUiVisibility = darkMode ? 0 : View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR;
+        if (!darkMode && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            systemUiVisibility |= View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR;
+        }
+        getWindow().getDecorView().setSystemUiVisibility(systemUiVisibility);
         getWindow().setStatusBarColor(background);
         getWindow().setNavigationBarColor(background);
 

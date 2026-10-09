@@ -742,7 +742,7 @@ object LanguageManager {
                 <h2>${value("privacy_use_heading")}</h2>
                 <p>${value("privacy_use_data")}</p>
                 <h2>${value("privacy_sharing_heading")}</h2>
-                <p>${value("privacy_providers_data")}</p>
+                <p>${value("privacy_providers_data").replace("2Factor", "Fast2SMS")}</p>
                 <p>${value("privacy_sharing_data")}</p>
                 <h2>${value("privacy_retention_heading")}</h2>
                 <p>${value("privacy_retention_data")}</p>

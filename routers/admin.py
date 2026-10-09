@@ -16,7 +16,7 @@ from ai_matching import create_embedding, item_text
 from auth import get_current_user
 from database import get_db
 from image_matching import cosine_similarity, create_image_embedding
-from models import AdminMatchAlert, FoundItem, LostItem, User
+from models import AdminMatchAlert, ContentReport, FoundItem, LostItem, User
 from notifications import persist_admin_match_alert, send_match_notifications
 from schemas import ItemResponse
 from translation import translate_report_fields, translate_report_fields_batch
@@ -68,6 +68,10 @@ class AlertReviewRequest(BaseModel):
 
 class SubscriptionOverrideRequest(BaseModel):
     action: str = Field(pattern="^(add|cancel)$")
+
+
+class ContentReportReviewRequest(BaseModel):
+    decision: str = Field(pattern="^(dismiss|reviewed|hide)$")
 
 
 def _parse_admin_uids(raw_value: str | None) -> set[str]:
@@ -340,6 +344,66 @@ async def list_all_items(
         }
         for item_type, item in items
     ]
+
+
+@router.get("/content-reports")
+def list_content_reports(
+    session: Session = Depends(get_db),
+    _: str = Depends(require_admin),
+) -> list[dict[str, object]]:
+    reports = session.scalars(
+        select(ContentReport)
+        .where(ContentReport.status == "pending")
+        .order_by(desc(ContentReport.created_at))
+        .limit(100)
+    ).all()
+    results: list[dict[str, object]] = []
+    for content_report in reports:
+        model = LostItem if content_report.report_type == "lost" else FoundItem
+        item = session.get(model, content_report.report_id)
+        if item is None:
+            content_report.status = "stale"
+            continue
+        results.append({
+            "id": content_report.id,
+            "report_id": content_report.report_id,
+            "report_type": content_report.report_type.upper(),
+            "title": item.title,
+            "description": item.description,
+            "reason": content_report.reason,
+            "details": content_report.details or "",
+            "reporter_uid": content_report.reporter_uid,
+            "created_at": content_report.created_at.isoformat() if content_report.created_at else "",
+        })
+    session.commit()
+    return results
+
+
+@router.post("/content-reports/{content_report_id}/review")
+def review_content_report(
+    content_report_id: str,
+    payload: ContentReportReviewRequest,
+    session: Session = Depends(get_db),
+    _: str = Depends(require_admin),
+) -> dict[str, str]:
+    content_report = session.get(ContentReport, content_report_id)
+    if content_report is None:
+        raise HTTPException(404, "Content report not found")
+    if content_report.status != "pending":
+        raise HTTPException(409, "Content report has already been reviewed")
+
+    if payload.decision == "hide":
+        model = LostItem if content_report.report_type == "lost" else FoundItem
+        item = session.get(model, content_report.report_id)
+        if item is None:
+            content_report.status = "stale"
+        else:
+            item.hidden_from_public = True
+            content_report.status = "action_taken"
+    else:
+        content_report.status = "dismissed" if payload.decision == "dismiss" else "reviewed"
+    session.commit()
+    return {"status": content_report.status}
 
 
 @router.get("/alerts")

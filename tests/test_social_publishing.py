@@ -380,6 +380,7 @@ def test_report_submission_persists_consent_and_creates_publication_job(monkeypa
                     description="Black shoulder bag",
                     type="found",
                     social_share_consent=True,
+                    community_guidelines_accepted=True,
                 ),
                 tasks,
                 session,

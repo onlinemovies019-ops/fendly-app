@@ -20,6 +20,7 @@ from database import get_db
 from models import (
     DeviceToken,
     AdminMatchAlert,
+    ContentReport,
     EmailOTPChallenge,
     FoundItem,
     LostItem,
@@ -288,6 +289,12 @@ def delete_account(
                 delete(SocialPublication).where(SocialPublication.report_id.in_(report_ids))
             )
             session.execute(
+                delete(ContentReport).where(
+                    ContentReport.report_type.in_(("lost", "found")),
+                    ContentReport.report_id.in_(report_ids),
+                )
+            )
+            session.execute(
                 delete(AdminMatchAlert).where(
                     or_(
                         AdminMatchAlert.found_item_id.in_(report_ids),
@@ -303,6 +310,7 @@ def delete_account(
         session.execute(delete(LostItem).where(LostItem.created_by == uid))
         session.execute(delete(FoundItem).where(FoundItem.created_by == uid))
         session.execute(delete(UserNotification).where(UserNotification.firebase_uid == uid))
+        session.execute(delete(ContentReport).where(ContentReport.reporter_uid == uid))
         session.execute(delete(DeviceToken).where(DeviceToken.firebase_uid == uid))
         session.execute(delete(EmailOTPChallenge).where(EmailOTPChallenge.firebase_uid == uid))
         session.execute(delete(UsernameReservation).where(UsernameReservation.firebase_uid == uid))

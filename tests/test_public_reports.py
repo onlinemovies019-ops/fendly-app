@@ -8,6 +8,8 @@ from sqlalchemy.pool import StaticPool
 
 import database
 import main
+from routers import admin as admin_module
+from routers import items as items_module
 from models import AdminMatchAlert, Base, FoundItem, LostItem
 from routers.items import list_my_items
 
@@ -81,6 +83,81 @@ def test_public_reports_returns_only_active_lost_and_found_reports(reports_clien
     reports = response.json()
     assert {report["title"] for report in reports} == {"Lost blue bag", "Found keys"}
     assert all("created_by" not in report for report in reports)
+
+
+def test_content_reports_can_be_submitted_reviewed_and_hidden(reports_client, monkeypatch):
+    client, session_factory = reports_client
+    with Session(session_factory.kw["bind"]) as session:
+        item = FoundItem(
+            created_by="owner",
+            title="Found wallet",
+            description="Brown wallet near the library",
+            category="accessories",
+            report_location="Nagpur",
+            lat=21.1458,
+            lng=79.0882,
+        )
+        session.add(item)
+        session.commit()
+        item_id = item.id
+
+    monkeypatch.setitem(
+        main.app.dependency_overrides,
+        items_module.get_current_user,
+        lambda: "reporter",
+    )
+    body = {"reason": "personal_information", "details": "Contains a phone number"}
+    response = client.post(f"/api/items/found/{item_id}/reports", json=body)
+    assert response.status_code == 201
+    assert response.json() == {"status": "received"}
+    assert client.post(f"/api/items/found/{item_id}/reports", json=body).status_code == 409
+
+    monkeypatch.setitem(
+        main.app.dependency_overrides,
+        admin_module.require_admin,
+        lambda: "admin",
+    )
+    pending = client.get("/api/admin/content-reports")
+    assert pending.status_code == 200
+    assert len(pending.json()) == 1
+    content_report_id = pending.json()[0]["id"]
+
+    review = client.post(
+        f"/api/admin/content-reports/{content_report_id}/review",
+        json={"decision": "hide"},
+    )
+    assert review.status_code == 200
+    assert review.json() == {"status": "action_taken"}
+    public_reports = client.get("/api/reports")
+    assert public_reports.status_code == 200
+    assert public_reports.json() == []
+
+
+def test_users_cannot_report_their_own_content(reports_client, monkeypatch):
+    client, session_factory = reports_client
+    with Session(session_factory.kw["bind"]) as session:
+        item = FoundItem(
+            created_by="owner",
+            title="Found wallet",
+            description="Brown wallet",
+            category="accessories",
+            lat=21.1458,
+            lng=79.0882,
+        )
+        session.add(item)
+        session.commit()
+        item_id = item.id
+
+    monkeypatch.setitem(
+        main.app.dependency_overrides,
+        items_module.get_current_user,
+        lambda: "owner",
+    )
+    response = client.post(
+        f"/api/items/found/{item_id}/reports",
+        json={"reason": "spam"},
+    )
+    assert response.status_code == 400
 
 
 def test_public_reports_filters_by_city_case_insensitively(reports_client):

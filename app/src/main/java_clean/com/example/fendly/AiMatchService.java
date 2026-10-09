@@ -62,7 +62,8 @@ public final class AiMatchService {
             String idToken,
             String imeiNumber,
             String reportCategory,
-            boolean socialShareConsent
+            boolean socialShareConsent,
+            boolean communityGuidelinesAccepted
     ) throws Exception {
         JSONArray images = new JSONArray();
         if (imageUrls != null) {
@@ -85,6 +86,7 @@ public final class AiMatchService {
                         ? inferCategory(title, description)
                         : reportCategory.trim())
                 .put("social_share_consent", socialShareConsent)
+                .put("community_guidelines_accepted", communityGuidelinesAccepted)
                 .put("payment_id", paymentId == null ? JSONObject.NULL : paymentId);
         if ("lost".equalsIgnoreCase(type) && imeiNumber != null && !imeiNumber.isEmpty()) {
             payload.put("imei_number", imeiNumber);

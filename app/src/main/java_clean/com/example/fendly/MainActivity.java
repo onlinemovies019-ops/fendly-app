@@ -23,9 +23,11 @@ import android.graphics.drawable.ColorDrawable;
 import android.graphics.drawable.Drawable;
 import android.content.res.ColorStateList;
 import android.graphics.drawable.LayerDrawable;
+import androidx.appcompat.content.res.AppCompatResources;
 import androidx.appcompat.app.AppCompatDelegate;
 import androidx.activity.OnBackPressedCallback;
 import androidx.core.os.LocaleListCompat;
+import androidx.core.widget.TextViewCompat;
 import android.os.Build;
 import android.os.Bundle;
 import android.speech.tts.UtteranceProgressListener;
@@ -45,7 +47,6 @@ import android.view.animation.ScaleAnimation;
 import android.view.animation.TranslateAnimation;
 import androidx.compose.ui.platform.ComposeView;
 import android.content.res.Configuration;
-import android.view.MotionEvent;
 import android.view.ViewParent;
 import android.view.Window;
 import android.view.WindowManager;
@@ -286,6 +287,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
     private int reportWizardStep = 1;
     private String draftImei = "";
     private boolean draftSocialShareConsent;
+    private boolean draftGuidelinesAccepted;
     private String localEmailOtp = "";
     private String draftFullName = "";
     private String draftEmail = "";
@@ -312,9 +314,9 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
     private static final int PAGE_SUBSCRIPTION = 6;
     private static final int PAGE_ADMIN = 7;
     private static final int PAGE_ADMIN_SUBSCRIPTIONS = 8;
-    private Handler adminPressHandler = new Handler();
     private boolean adminAlertsAutoShownThisVisit;
     private boolean adminSocialPageOpen;
+    private boolean adminContentReportsPageOpen;
     private boolean socialAuthorizationPending;
     private int pendingNotificationCount = 0;
     private TextView pendingNotificationBadge;
@@ -449,6 +451,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             reportWizardStep = savedInstanceState.getInt("state_report_wizard_step", 1);
             draftImei = savedInstanceState.getString("state_draft_imei", "");
             draftSocialShareConsent = savedInstanceState.getBoolean("state_draft_social_share_consent", false);
+            draftGuidelinesAccepted = savedInstanceState.getBoolean("state_draft_guidelines_accepted", false);
             draftFullName = savedInstanceState.getString("state_draft_full_name", "");
             draftEmail = savedInstanceState.getString("state_draft_email", "");
             draftMobile = savedInstanceState.getString("state_draft_mobile", "");
@@ -1031,6 +1034,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         outState.putInt("state_report_wizard_step", reportWizardStep);
         outState.putString("state_draft_imei", draftImei);
         outState.putBoolean("state_draft_social_share_consent", draftSocialShareConsent);
+        outState.putBoolean("state_draft_guidelines_accepted", draftGuidelinesAccepted);
         outState.putString("state_draft_full_name", draftFullName);
         outState.putString("state_draft_email", draftEmail);
         outState.putString("state_draft_mobile", draftMobile);
@@ -1439,16 +1443,9 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         emblem.setImageResource(R.drawable.logo_final);
         emblem.setScaleType(ImageView.ScaleType.FIT_CENTER);
         emblem.setAdjustViewBounds(true);
-        emblem.setContentDescription("Fendly emblem");
-        emblem.setOnTouchListener((view, event) -> {
-            if (event.getAction() == MotionEvent.ACTION_DOWN) {
-                adminPressHandler.postDelayed(() -> showAdminLoginDialog(), 1000);
-                return true;
-            }
-            if (event.getAction() == MotionEvent.ACTION_UP || event.getAction() == MotionEvent.ACTION_CANCEL) {
-                adminPressHandler.removeCallbacksAndMessages(null);
-                return true;
-            }
+        emblem.setContentDescription("Fendly emblem. Long press for administrator sign-in.");
+        emblem.setOnLongClickListener(view -> {
+            showAdminLoginDialog();
             return true;
         });
         LinearLayout.LayoutParams emblemParams = new LinearLayout.LayoutParams(-1, 0, 1f);
@@ -3838,6 +3835,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         reportWizardStep = 1;
         draftImei = "";
         draftSocialShareConsent = false;
+        draftGuidelinesAccepted = false;
         selectedImage = null;
         capturedImage = null;
         Arrays.fill(reportImages, null);
@@ -4449,6 +4447,23 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             addField(root, shareDisclosure);
         }
 
+        CheckBox guidelinesConsent = new CheckBox(this);
+        guidelinesConsent.setText(localizeReportWizardText(
+                "I agree to follow Fendly's Community Guidelines"
+        ));
+        guidelinesConsent.setTextColor(primaryTextColor());
+        guidelinesConsent.setChecked(draftGuidelinesAccepted);
+        guidelinesConsent.setOnCheckedChangeListener(
+                (button, checked) -> draftGuidelinesAccepted = checked
+        );
+        addField(root, guidelinesConsent);
+        TextView guidelinesLink = actionButton(
+                localizeReportWizardText("Read Community Guidelines"),
+                false
+        );
+        guidelinesLink.setOnClickListener(view -> openCommunityGuidelines());
+        addField(root, guidelinesLink);
+
         TextView editCategory = actionButton(localizeReportWizardText("Edit category"), false);
         editCategory.setOnClickListener(view -> {
             reportWizardStep = 1;
@@ -4474,7 +4489,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                 if (!validateWizardReport(item, submissionDescription, locationValue, date)) return;
                 location.setText(locationValue);
                 description.setText(submissionDescription);
-                updateItem(type, item, description, location, date, save);
+                updateItem(type, item, description, location, date, save, draftGuidelinesAccepted);
             });
             addField(root, save);
             return;
@@ -4626,6 +4641,14 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
     }
 
     private boolean validateWizardReport(EditText item, String details, String location, EditText date) {
+        if (!draftGuidelinesAccepted) {
+            Toast.makeText(
+                    this,
+                    localizeReportWizardText("Please accept the Community Guidelines to continue."),
+                    Toast.LENGTH_LONG
+            ).show();
+            return false;
+        }
         if (item.getText().toString().trim().isEmpty()) {
             Toast.makeText(this, localizeReportWizardText("Enter a report title."), Toast.LENGTH_LONG).show();
             return false;
@@ -5004,7 +5027,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             return;
         }
         if (editingReportId != null && type.equalsIgnoreCase(editingReportType)) {
-            updateItem(type, item, description, location, date, publish);
+            updateItem(type, item, description, location, date, publish, draftGuidelinesAccepted);
             return;
         }
         publish.setText("Submitting...");
@@ -5095,7 +5118,8 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                     title, description, imageUrl, imageUrls, type, latitude, longitude,
                     location, date, paymentId,
                     getTtsLocaleForSelectedLanguage().getLanguage(), idToken, imeiNumber,
-                    backendReportCategory(title, description), socialShareConsent);
+                    backendReportCategory(title, description), socialShareConsent,
+                    draftGuidelinesAccepted);
             if (!response.isSuccessful()) {
                 lastSubmissionError = "Could not save report (" + response.getStatusCode() + "): " + response.getErrorMessage();
                 return new ItemSubmissionResult(response.getStatusCode(), lastSubmissionError);
@@ -5259,7 +5283,23 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         return "Server did not provide details";
     }
 
-    private void updateItem(String type, EditText item, EditText description, EditText location, EditText date, TextView saveButton) {
+    private void updateItem(
+            String type,
+            EditText item,
+            EditText description,
+            EditText location,
+            EditText date,
+            TextView saveButton,
+            boolean guidelinesAccepted
+    ) {
+        if (!guidelinesAccepted) {
+            Toast.makeText(
+                    this,
+                    localizeReportWizardText("Please accept the Community Guidelines to continue."),
+                    Toast.LENGTH_LONG
+            ).show();
+            return;
+        }
         saveButton.setText("Saving...");
         saveButton.setEnabled(false);
         FirebaseAuth.getInstance().getCurrentUser().getIdToken(false).addOnSuccessListener(token -> network.execute(() -> {
@@ -5268,7 +5308,17 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             String details = description.getText().toString().trim();
             String locationValue = location.getText().toString().trim();
             String dateValue = date.getText().toString().trim();
-            int code = putItem(type, editingReportId, item.getText().toString().trim(), details, locationValue, dateValue, imageUrl, token.getToken());
+            int code = putItem(
+                    type,
+                    editingReportId,
+                    item.getText().toString().trim(),
+                    details,
+                    locationValue,
+                    dateValue,
+                    imageUrl,
+                    token.getToken(),
+                    guidelinesAccepted
+            );
             runOnUiThread(() -> {
                 saveButton.setEnabled(true);
                 if (code >= 200 && code < 300) {
@@ -5292,7 +5342,17 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         });
     }
 
-    private int putItem(String type, String id, String title, String description, String location, String date, String imageUrl, String idToken) {
+    private int putItem(
+            String type,
+            String id,
+            String title,
+            String description,
+            String location,
+            String date,
+            String imageUrl,
+            String idToken,
+            boolean guidelinesAccepted
+    ) {
         HttpURLConnection connection = null;
         try {
             String endpoint = API_BASE + "/api/items/" + type.toLowerCase(Locale.US) + "/" + id;
@@ -5304,7 +5364,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             connection.setRequestProperty("Authorization", "Bearer " + idToken);
             connection.setRequestProperty("Content-Type", "application/json; charset=UTF-8");
             String imageJson = imageUrl == null || imageUrl.trim().isEmpty() ? "null" : "\"" + escapeJson(imageUrl) + "\"";
-            String body = "{\"title\":\"" + escapeJson(title) + "\",\"description\":\"" + escapeJson(description) + "\",\"source_language\":\"" + getTtsLocaleForSelectedLanguage().getLanguage() + "\",\"report_location\":\"" + escapeJson(location) + "\",\"report_date\":\"" + escapeJson(date) + "\",\"category\":\"" + escapeJson(backendReportCategory(title, description)) + "\",\"lat\":0.0,\"lng\":0.0,\"image_url\":" + imageJson + "}";
+            String body = "{\"title\":\"" + escapeJson(title) + "\",\"description\":\"" + escapeJson(description) + "\",\"source_language\":\"" + getTtsLocaleForSelectedLanguage().getLanguage() + "\",\"report_location\":\"" + escapeJson(location) + "\",\"report_date\":\"" + escapeJson(date) + "\",\"category\":\"" + escapeJson(backendReportCategory(title, description)) + "\",\"community_guidelines_accepted\":" + guidelinesAccepted + ",\"lat\":0.0,\"lng\":0.0,\"image_url\":" + imageJson + "}";
             try (OutputStream output = connection.getOutputStream()) {
                 output.write(body.getBytes(StandardCharsets.UTF_8));
             }
@@ -5327,7 +5387,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
 
     private void pickDate(EditText target) {
         Calendar now = Calendar.getInstance();
-        DatePickerDialog picker = new DatePickerDialog(this, (dialog, year, month, day) -> target.setText(String.format("%02d/%02d/%04d", day, month + 1, year)), now.get(Calendar.YEAR), now.get(Calendar.MONTH), now.get(Calendar.DAY_OF_MONTH));
+        DatePickerDialog picker = new DatePickerDialog(this, (dialog, year, month, day) -> target.setText(String.format(Locale.getDefault(), "%02d/%02d/%04d", day, month + 1, year)), now.get(Calendar.YEAR), now.get(Calendar.MONTH), now.get(Calendar.DAY_OF_MONTH));
         picker.getDatePicker().setMaxDate(System.currentTimeMillis());
         picker.show();
     }
@@ -6490,9 +6550,6 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         date.setHint("");
         date.setInputType(InputType.TYPE_CLASS_NUMBER);
         date.setFilters(new InputFilter[]{new InputFilter.LengthFilter(10)});
-        date.setOnTouchListener((view, event) -> {
-            return false;
-        });
         date.addTextChangedListener(new TextWatcher() {
             private boolean formatting;
 
@@ -7158,7 +7215,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         canvas.drawRect(0, 0, width, 300, paint);
         paint.setShader(null);
 
-        Drawable logo = getDrawable(R.drawable.fendly_logo);
+        Drawable logo = AppCompatResources.getDrawable(this, R.drawable.fendly_logo);
         if (logo != null) {
             logo.setBounds(70, 70, 190, 190);
             logo.draw(canvas);
@@ -9226,6 +9283,20 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         );
     }
 
+    private void openCommunityGuidelines() {
+        Uri uri = Uri.parse(BuildConfig.API_BASE_URL + "/static/community-guidelines.html");
+        try {
+            startActivity(new Intent(Intent.ACTION_VIEW, uri));
+        } catch (ActivityNotFoundException error) {
+            Log.e("COMMUNITY_GUIDELINES", "No app is available to open the guidelines", error);
+            Toast.makeText(
+                    this,
+                    LanguageManager.profileText(this, "privacy_open_link_failed"),
+                    Toast.LENGTH_LONG
+            ).show();
+        }
+    }
+
     private boolean handlePrivacyPolicyNavigation(Uri uri) {
         if ("https".equalsIgnoreCase(uri.getScheme())
                 && "fendly-api.onrender.com".equalsIgnoreCase(uri.getHost())) {
@@ -9391,7 +9462,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
     }
 
     private void applyIcon(TextView view, int icon) {
-        Drawable fieldIcon = getDrawable(icon);
+        Drawable fieldIcon = AppCompatResources.getDrawable(this, icon);
         if (fieldIcon != null) {
             fieldIcon = fieldIcon.mutate();
             fieldIcon.setTint(accentColor());
@@ -10489,6 +10560,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
     private void showAdminDashboard() {
         currentPage = PAGE_ADMIN;
         adminSocialPageOpen = false;
+        adminContentReportsPageOpen = false;
         adminEnglishUi = true;
         screenRenderer = this::showAdminDashboard;
         LinearLayout root = screenBase("");
@@ -10508,6 +10580,10 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         TextView socialPublishingButton = actionButton("Manage social accounts and posts", false);
         socialPublishingButton.setOnClickListener(view -> showAdminSocialPublishingPage());
         root.addView(socialPublishingButton, contentParams(-1, dp(44), dp(10)));
+
+        TextView contentReportsButton = actionButton("Review user content reports", false);
+        contentReportsButton.setOnClickListener(view -> showAdminContentReportsPage());
+        root.addView(contentReportsButton, contentParams(-1, dp(44), dp(8)));
 
         LinearLayout overview = new LinearLayout(this);
         overview.setOrientation(LinearLayout.HORIZONTAL);
@@ -10598,9 +10674,137 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         });
     }
 
+    private void showAdminContentReportsPage() {
+        currentPage = PAGE_ADMIN;
+        adminSocialPageOpen = false;
+        adminContentReportsPageOpen = true;
+        adminEnglishUi = true;
+        screenRenderer = this::showAdminContentReportsPage;
+        LinearLayout root = screenBase("");
+        TextView back = actionButton("Back to admin workspace", false);
+        back.setOnClickListener(view -> showAdminDashboard());
+        addField(root, back);
+        addHeading("User content reports", "Review reports from the Fendly community");
+        TextView loading = text("Loading reports...", 13, secondaryTextColor(), Typeface.NORMAL);
+        addField(root, loading);
+
+        FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
+        if (user == null) {
+            loading.setText("Sign in as an administrator to review content reports.");
+            return;
+        }
+        user.getIdToken(false).addOnSuccessListener(token -> network.execute(() -> {
+            String response = getAuthorized("/api/admin/content-reports", token.getToken());
+            runOnUiThread(() -> {
+                if (currentPage != PAGE_ADMIN || !adminContentReportsPageOpen) {
+                    return;
+                }
+                root.removeView(loading);
+                if (response == null) {
+                    addField(root, text(
+                            "Could not load reports. Check admin access and try again.",
+                            13,
+                            secondaryTextColor(),
+                            Typeface.NORMAL
+                    ));
+                    return;
+                }
+                try {
+                    JSONArray reports = new JSONArray(response);
+                    if (reports.length() == 0) {
+                        addField(root, text("No pending content reports.", 13, secondaryTextColor(), Typeface.NORMAL));
+                        return;
+                    }
+                    for (int index = 0; index < reports.length(); index++) {
+                        JSONObject report = reports.getJSONObject(index);
+                        LinearLayout card = new LinearLayout(this);
+                        card.setOrientation(LinearLayout.VERTICAL);
+                        card.setPadding(dp(12), dp(10), dp(12), dp(10));
+                        card.setBackground(roundWithStroke(surfaceColor(), 12, borderColor()));
+                        card.addView(text(
+                                report.optString("report_type", "REPORT") + " · " +
+                                        report.optString("title", "Untitled"),
+                                14,
+                                primaryTextColor(),
+                                Typeface.BOLD
+                        ));
+                        card.addView(text(
+                                "Reason: " + report.optString("reason", "other") +
+                                        (report.optString("details", "").isEmpty()
+                                                ? ""
+                                                : "\nDetails: " + report.optString("details")),
+                                12,
+                                secondaryTextColor(),
+                                Typeface.NORMAL
+                        ));
+                        card.addView(text(
+                                report.optString("description", ""),
+                                12,
+                                primaryTextColor(),
+                                Typeface.NORMAL
+                        ));
+                        LinearLayout actions = new LinearLayout(this);
+                        actions.setOrientation(LinearLayout.HORIZONTAL);
+                        addContentReportDecisionButton(actions, "Dismiss", "dismiss", report, token.getToken());
+                        addContentReportDecisionButton(actions, "Reviewed", "reviewed", report, token.getToken());
+                        addContentReportDecisionButton(actions, "Hide", "hide", report, token.getToken());
+                        card.addView(actions);
+                        LinearLayout.LayoutParams cardParams = new LinearLayout.LayoutParams(-1, -2);
+                        cardParams.setMargins(0, 0, 0, dp(8));
+                        root.addView(card, cardParams);
+                    }
+                } catch (Exception error) {
+                    Log.e("CONTENT_REPORTS", "Could not parse administrator content reports", error);
+                    addField(root, text(
+                            "The content report response could not be read.",
+                            13,
+                            secondaryTextColor(),
+                            Typeface.NORMAL
+                    ));
+                }
+            });
+        })).addOnFailureListener(error -> runOnUiThread(() ->
+                loading.setText("Could not authenticate administrator access.")));
+    }
+
+    private void addContentReportDecisionButton(
+            LinearLayout actions,
+            String label,
+            String decision,
+            JSONObject report,
+            String idToken
+    ) {
+        TextView button = actionButton(label, "hide".equals(decision));
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(0, dp(40), 1f);
+        if (actions.getChildCount() > 0) params.setMargins(dp(5), 0, 0, 0);
+        actions.addView(button, params);
+        button.setOnClickListener(view -> {
+            button.setEnabled(false);
+            String reportId = Uri.encode(report.optString("id", ""));
+            String body = "{\"decision\":\"" + decision + "\"}";
+            network.execute(() -> {
+                boolean saved = postAuthorized(
+                        "/api/admin/content-reports/" + reportId + "/review",
+                        idToken,
+                        body
+                );
+                runOnUiThread(() -> {
+                    if (saved) {
+                        Toast.makeText(this, "Content report reviewed.", Toast.LENGTH_SHORT).show();
+                        showAdminContentReportsPage();
+                    } else {
+                        button.setEnabled(true);
+                        Toast.makeText(this, "Could not save the review decision.", Toast.LENGTH_LONG).show();
+                    }
+                });
+            });
+        });
+    }
+
     private void showAdminSocialPublishingPage() {
         currentPage = PAGE_ADMIN;
         adminSocialPageOpen = true;
+        adminContentReportsPageOpen = false;
         adminEnglishUi = true;
         screenRenderer = this::showAdminSocialPublishingPage;
         LinearLayout root = screenBase("");
@@ -11283,6 +11487,17 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             delete.setOnClickListener(view -> confirmDeleteReport(report, dialog));
         }
 
+        String contentId = report.optString("id", "").trim();
+        FirebaseUser signedInUser = FirebaseAuth.getInstance().getCurrentUser();
+        String authorId = report.optString("created_by", "").trim();
+        if (!adminView && !contentId.isEmpty()
+                && (authorId.isEmpty() || signedInUser == null
+                || !authorId.equals(signedInUser.getUid()))) {
+            TextView reportContent = actionButton("Report this content", false);
+            addFieldToDialog(content, reportContent);
+            reportContent.setOnClickListener(view -> promptReportContent(report));
+        }
+
         TextView close = actionButton("Close", true);
         close.setOnClickListener(view -> dialog.dismiss());
         addFieldToDialog(content, close);
@@ -11291,6 +11506,55 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         dialog.setCanceledOnTouchOutside(true);
         dialog.show();
         sizeThemedDialog(dialog);
+    }
+
+    private void promptReportContent(JSONObject report) {
+        FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
+        if (user == null) {
+            Toast.makeText(this, "Sign in to report content.", Toast.LENGTH_LONG).show();
+            return;
+        }
+        String[] reasons = {
+                "Inappropriate content",
+                "Spam or misleading",
+                "Personal information",
+                "Fraud or unsafe activity",
+                "Other concern"
+        };
+        String[] reasonCodes = {
+                "inappropriate",
+                "spam",
+                "personal_information",
+                "fraud",
+                "other"
+        };
+        new AlertDialog.Builder(this)
+                .setTitle("Why are you reporting this content?")
+                .setItems(reasons, (dialog, selected) -> user.getIdToken(false)
+                        .addOnSuccessListener(token -> network.execute(() -> {
+                            String reportType = report.optString("type", "").toLowerCase(Locale.US);
+                            String reportId = report.optString("id", "");
+                            String body = "{\"reason\":\"" + reasonCodes[selected] + "\"}";
+                            boolean submitted = postAuthorized(
+                                    "/api/items/" + reportType + "/" + Uri.encode(reportId) + "/reports",
+                                    token.getToken(),
+                                    body
+                            );
+                            runOnUiThread(() -> Toast.makeText(
+                                    this,
+                                    submitted
+                                            ? "Thanks. Your report was sent for review."
+                                            : "Could not send your report. Please try again.",
+                                    Toast.LENGTH_LONG
+                            ).show());
+                        }))
+                        .addOnFailureListener(error -> Toast.makeText(
+                                this,
+                                "Could not authenticate your content report.",
+                                Toast.LENGTH_LONG
+                        ).show()))
+                .setNegativeButton("Cancel", null)
+                .show();
     }
 
     private boolean isActiveCommunityReport(JSONObject report) {
@@ -12717,7 +12981,11 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         if (Build.VERSION.SDK_INT >= 29) getWindow().getDecorView().setForceDarkAllowed(false);
         getWindow().setStatusBarColor(backgroundColor());
         getWindow().setNavigationBarColor(backgroundColor());
-        getWindow().getDecorView().setSystemUiVisibility(darkMode ? 0 : View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR | View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR);
+        int systemUiVisibility = darkMode ? 0 : View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR;
+        if (!darkMode && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            systemUiVisibility |= View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR;
+        }
+        getWindow().getDecorView().setSystemUiVisibility(systemUiVisibility);
     }
 
     private void applyThemeInPlace() {
@@ -12801,9 +13069,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             expandButton.setPadding(dp(8), dp(8), dp(8), dp(8));
             expandButton.setCompoundDrawablesWithIntrinsicBounds(R.drawable.ic_gear, 0, 0, 0);
             expandButton.setElevation(dp(2));
-            if (Build.VERSION.SDK_INT >= 21) {
-                expandButton.setCompoundDrawableTintList(ColorStateList.valueOf(accentColor()));
-            }
+            TextViewCompat.setCompoundDrawableTintList(expandButton, ColorStateList.valueOf(accentColor()));
             expandButton.setContentDescription("Expand menu");
 
             LinearLayout expandedIconsContainer = new LinearLayout(this);
@@ -12816,9 +13082,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             languageIconView.setPadding(dp(8), dp(8), dp(8), dp(8));
             languageIconView.setCompoundDrawablesWithIntrinsicBounds(R.drawable.ic_language, 0, 0, 0);
             languageIconView.setElevation(dp(2));
-            if (Build.VERSION.SDK_INT >= 21) {
-                languageIconView.setCompoundDrawableTintList(ColorStateList.valueOf(accentColor()));
-            }
+            TextViewCompat.setCompoundDrawableTintList(languageIconView, ColorStateList.valueOf(accentColor()));
             languageIconView.setContentDescription("Select language");
             languageIconView.setOnClickListener(view -> showLanguagePicker());
             LinearLayout.LayoutParams langParams = new LinearLayout.LayoutParams(dp(42), dp(42));
@@ -12894,9 +13158,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             gearButton.setPadding(dp(8), dp(8), dp(8), dp(8));
             gearButton.setCompoundDrawablesWithIntrinsicBounds(R.drawable.ic_gear, 0, 0, 0);
             gearButton.setContentDescription("Admin display settings");
-            if (Build.VERSION.SDK_INT >= 21) {
-                gearButton.setCompoundDrawableTintList(ColorStateList.valueOf(accentColor()));
-            }
+            TextViewCompat.setCompoundDrawableTintList(gearButton, ColorStateList.valueOf(accentColor()));
 
             LinearLayout adminSettings = new LinearLayout(this);
             adminSettings.setGravity(Gravity.CENTER_VERTICAL);
@@ -12995,9 +13257,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             instaButton.setPadding(dp(8), dp(8), dp(8), dp(8));
             instaButton.setCompoundDrawablesWithIntrinsicBounds(R.drawable.ic_instagram, 0, 0, 0);
             instaButton.setElevation(dp(2));
-            if (Build.VERSION.SDK_INT >= 21) {
-                instaButton.setCompoundDrawableTintList(ColorStateList.valueOf(accentColor()));
-            }
+            TextViewCompat.setCompoundDrawableTintList(instaButton, ColorStateList.valueOf(accentColor()));
             instaButton.setContentDescription("Instagram");
             instaButton.setOnClickListener(view -> {
                 try {
@@ -13016,9 +13276,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             fbButton.setPadding(dp(8), dp(8), dp(8), dp(8));
             fbButton.setCompoundDrawablesWithIntrinsicBounds(R.drawable.ic_facebook, 0, 0, 0);
             fbButton.setElevation(dp(2));
-            if (Build.VERSION.SDK_INT >= 21) {
-                fbButton.setCompoundDrawableTintList(ColorStateList.valueOf(accentColor()));
-            }
+            TextViewCompat.setCompoundDrawableTintList(fbButton, ColorStateList.valueOf(accentColor()));
             fbButton.setContentDescription("Facebook");
             fbButton.setOnClickListener(view -> {
                 try {
@@ -13039,9 +13297,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             linkButton.setPadding(dp(8), dp(8), dp(8), dp(8));
             linkButton.setCompoundDrawablesWithIntrinsicBounds(R.drawable.ic_link, 0, 0, 0);
             linkButton.setElevation(dp(2));
-            if (Build.VERSION.SDK_INT >= 21) {
-                linkButton.setCompoundDrawableTintList(ColorStateList.valueOf(accentColor()));
-            }
+            TextViewCompat.setCompoundDrawableTintList(linkButton, ColorStateList.valueOf(accentColor()));
             linkButton.setContentDescription("Community links");
             linkButton.setOnClickListener(view -> {
                 isSocialExpanded[0] = !isSocialExpanded[0];
@@ -13322,7 +13578,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
     }
 
     private void updateAdminSubscriptionOverride(String userId, String action, String idToken) {
-        final String encodedUid = URLEncoder.encode(userId, StandardCharsets.UTF_8);
+        final String encodedUid = Uri.encode(userId);
         final String body = "{\"action\":\"" + action + "\"}";
         network.execute(() -> {
             boolean success = postAuthorized("/api/admin/users/" + encodedUid + "/subscription", idToken, body);

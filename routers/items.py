@@ -19,6 +19,7 @@ import httpx
 from pydantic import BaseModel, Field
 from PIL import Image, UnidentifiedImageError
 from sqlalchemy import delete, func, or_, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from ai_matching import create_embedding, item_text
@@ -27,7 +28,7 @@ from database import SessionLocal, get_db
 from image_matching import cosine_similarity, create_image_embedding
 from imei_security import imei_digest, validate_imei
 from moderation import moderate_content
-from models import AdminMatchAlert, FoundItem, LostItem, SocialPublication, UserNotification
+from models import AdminMatchAlert, ContentReport, FoundItem, LostItem, SocialPublication, UserNotification
 from notifications import persist_admin_match_alert, send_admin_match_email, send_match_notifications
 from routers.payments import require_lost_report_entitlement
 from schemas import ItemCreate, ItemResponse, ItemUpdate, MatchPreview, MatchRequest, MatchResponse
@@ -192,8 +193,14 @@ class ItemSubmission(BaseModel):
     report_location: str | None = Field(default=None, max_length=500)
     category: str = Field(default="other", min_length=1, max_length=80)
     social_share_consent: bool = False
+    community_guidelines_accepted: bool = False
     payment_id: str | None = Field(default=None, max_length=128)
     imei_number: str | None = Field(default=None, exclude=True)
+
+
+class ContentReportRequest(BaseModel):
+    reason: Literal["inappropriate", "spam", "personal_information", "fraud", "other"]
+    details: str | None = Field(default=None, max_length=1000)
 
 
 def _require_db_session(session: Session | None) -> Session:
@@ -283,6 +290,11 @@ async def _save_item(
     model: type[LostItem] | type[FoundItem],
     background_tasks: BackgroundTasks | None = None,
 ):
+    if not payload.community_guidelines_accepted:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "You must accept the Community Guidelines before submitting a report",
+        )
     if payload.imei_number is not None:
         if model is not LostItem:
             raise HTTPException(status.HTTP_400_BAD_REQUEST, "IMEI can only be attached to a lost-item report")
@@ -317,7 +329,9 @@ async def _save_item(
             translated_fields["category"] = category
 
     # 4. Create and persist record
-    item_values = payload.model_dump(exclude={"payment_id", "imei_number"})
+    item_values = payload.model_dump(
+        exclude={"payment_id", "imei_number", "community_guidelines_accepted"}
+    )
     item_values["category"] = category
     item_values["image_url"] = payload.image_url or (payload.image_urls[0] if payload.image_urls else None)
     if model is LostItem:
@@ -524,6 +538,7 @@ async def create_item_compat(
             image_url=request.imageUrl,
             image_urls=request.imageUrls,
             social_share_consent=request.social_share_consent,
+            community_guidelines_accepted=request.community_guidelines_accepted,
             lat=request.lat,
             lng=request.lng,
             report_date=request.report_date,
@@ -622,7 +637,7 @@ def list_public_reports(
 
     reports: list[tuple[str, LostItem | FoundItem]] = []
     for item_type, model in (("LOST", LostItem), ("FOUND", FoundItem)):
-        query = select(model)
+        query = select(model).where(model.hidden_from_public.is_(False))
         if model is LostItem:
             query = query.where(LostItem.status == "LOST")
         if escaped_city:
@@ -717,6 +732,11 @@ async def update_item(
     uid: str = Depends(get_current_user),
 ) -> LostItem | FoundItem:
     session = _require_db_session(session)
+    if not payload.community_guidelines_accepted:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "You must accept the Community Guidelines before updating a report",
+        )
     model = LostItem if item_type.lower() == "lost" else FoundItem if item_type.lower() == "found" else None
     if model is None:
         raise HTTPException(400, "Invalid item type")
@@ -766,6 +786,50 @@ async def update_item(
     return record
 
 
+@router.post("/items/{item_type}/{item_id}/reports", status_code=status.HTTP_201_CREATED)
+def submit_content_report(
+    item_type: str,
+    item_id: str,
+    payload: ContentReportRequest,
+    session: Session = Depends(get_db),
+    uid: str = Depends(get_current_user),
+) -> dict[str, str]:
+    normalized_type = item_type.strip().lower()
+    if normalized_type not in {"lost", "found"}:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Report type must be lost or found")
+
+    model = LostItem if normalized_type == "lost" else FoundItem
+    target = session.get(model, item_id)
+    if target is None or target.hidden_from_public:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Report not found")
+    if target.created_by == uid:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "You cannot report your own content")
+    existing = session.scalar(
+        select(ContentReport).where(
+            ContentReport.reporter_uid == uid,
+            ContentReport.report_type == normalized_type,
+            ContentReport.report_id == item_id,
+        )
+    )
+    if existing is not None:
+        raise HTTPException(status.HTTP_409_CONFLICT, "You have already reported this content")
+
+    report = ContentReport(
+        reporter_uid=uid,
+        report_type=normalized_type,
+        report_id=item_id,
+        reason=payload.reason,
+        details=payload.details.strip() if payload.details else None,
+    )
+    session.add(report)
+    try:
+        session.commit()
+    except IntegrityError as exc:
+        session.rollback()
+        raise HTTPException(status.HTTP_409_CONFLICT, "You have already reported this content") from exc
+    return {"status": "received"}
+
+
 @router.delete("/items/{item_type}/{item_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_item(
     item_type: str,
@@ -783,6 +847,12 @@ def delete_item(
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Report not found")
 
     try:
+        session.execute(
+            delete(ContentReport).where(
+                ContentReport.report_type == normalized_type,
+                ContentReport.report_id == item_id,
+            )
+        )
         session.execute(
             delete(AdminMatchAlert).where(
                 or_(

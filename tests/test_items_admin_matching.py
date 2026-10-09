@@ -20,6 +20,16 @@ from schemas import ItemCreate, ItemUpdate, MatchRequest, MatchResponse
 from translation import translate_report_fields, translate_report_fields_batch
 
 
+@pytest.mark.asyncio
+async def test_report_creation_requires_community_guidelines_acceptance():
+    payload = ItemCreate(title="Found keys", description="Keys found near the station")
+
+    with pytest.raises(HTTPException) as error:
+        await items_module._save_item(payload, None, "user-1", FoundItem)
+
+    assert error.value.status_code == 400
+
+
 @pytest.mark.parametrize(("title", "description", "expected"), [
     ("Mobile phone", "Black smartphone", "Electronics"),
     ("Cat", "Small brown pet", "Animals"),
@@ -272,6 +282,7 @@ async def test_report_creation_keeps_original_and_stores_english_fields(monkeypa
         report_location="मध्यवर्ती स्थानक",
         category="पिशवी",
         source_language="mr",
+        community_guidelines_accepted=True,
     )
 
     record = await items_module._save_item(payload, session, "user-1", FoundItem)
@@ -323,6 +334,7 @@ async def test_report_creation_infers_category_from_english_translation(monkeypa
         description="काली वस्तु",
         category="other",
         source_language="hi",
+        community_guidelines_accepted=True,
     )
 
     record = await items_module._save_item(payload, session, "user-1", FoundItem)
@@ -410,6 +422,7 @@ async def test_report_update_refreshes_english_fields(monkeypatch):
         report_location="मध्यवर्ती स्थानक",
         category="पिशवी",
         source_language="mr",
+        community_guidelines_accepted=True,
     )
 
     updated = await items_module.update_item("lost", "lost-1", payload, session=session, uid="user-1")

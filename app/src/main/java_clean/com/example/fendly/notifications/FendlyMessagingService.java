@@ -4,6 +4,7 @@ import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.app.PendingIntent;
 import android.content.Intent;
+import android.content.pm.PackageManager;
 import android.os.Build;
 import androidx.core.app.NotificationCompat;
 import androidx.core.app.NotificationManagerCompat;
@@ -36,7 +37,8 @@ public final class FendlyMessagingService extends FirebaseMessagingService {
 
     private void showNotification(String title, String body) {
         if (Build.VERSION.SDK_INT >= 33
-                && checkSelfPermission("android.permission.POST_NOTIFICATIONS") != 0) {
+                && checkSelfPermission("android.permission.POST_NOTIFICATIONS")
+                != PackageManager.PERMISSION_GRANTED) {
             return;
         }
         NotificationManager manager = getSystemService(NotificationManager.class);

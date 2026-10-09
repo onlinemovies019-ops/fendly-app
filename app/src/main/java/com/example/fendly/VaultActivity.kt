@@ -264,7 +264,7 @@ private fun VaultScreen(onBack: () -> Unit) {
                             output.write("--$boundary\r\nContent-Disposition: form-data; name=\"$name\"\r\n\r\n$value\r\n".toByteArray(StandardCharsets.UTF_8))
                         }
                         val name = "bill-${System.currentTimeMillis()}.jpg"
-                            output.write("--$boundary\r\nContent-Disposition: form-data; name=\"file\"; filename=\"$name\"\r\nContent-Type: image/jpeg\r\n\r\n".toByteArray(StandardCharsets.UTF_8))
+                        output.write("--$boundary\r\nContent-Disposition: form-data; name=\"file\"; filename=\"$name\"\r\nContent-Type: image/jpeg\r\n\r\n".toByteArray(StandardCharsets.UTF_8))
                         context.contentResolver.openInputStream(uri)?.use { it.copyTo(output) }
                             ?: error("The selected photo is no longer available")
                         output.write("\r\n".toByteArray(StandardCharsets.UTF_8))
