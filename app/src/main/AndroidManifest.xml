@@ -49,6 +49,18 @@
             android:windowSoftInputMode="adjustResize">
         </activity>
 
+        <receiver
+            android:name=".FendlyWidgetProvider"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+                <action android:name="com.example.fendly.action.REFRESH_WIDGET" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/fendly_widget_info" />
+        </receiver>
+
         <activity
             android:name=".VaultActivity"
             android:exported="false"

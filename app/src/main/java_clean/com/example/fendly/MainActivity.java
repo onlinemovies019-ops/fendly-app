@@ -128,6 +128,7 @@ import androidx.exifinterface.media.ExifInterface;
 import android.app.AlertDialog;
 import android.content.SharedPreferences;
 import com.example.fendly.notifications.FcmRegistration;
+import com.example.fendly.FendlyWidgetProvider;
 import com.google.firebase.auth.FirebaseAuth;
 import com.google.firebase.auth.FirebaseAuthException;
 import com.google.firebase.auth.FirebaseUser;
@@ -950,6 +951,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
     @Override
     protected void onResume() {
         super.onResume();
+        FendlyWidgetProvider.refresh(this);
         // Don't restore profile drafts when there's no current Firebase user,
         // as this would re-populate old email/phone from a previous session.
         // Only restore if user is authenticated.
@@ -1249,6 +1251,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                 responseCode = connection.getResponseCode();
                 if (responseCode >= 200 && responseCode < 300) {
                     runOnUiThread(() -> {
+                        FendlyWidgetProvider.refresh(this);
                         detailsDialog.dismiss();
                         Toast.makeText(this, LanguageManager.profileText(this, "report_deleted"), Toast.LENGTH_LONG).show();
                         showReports();
@@ -4901,6 +4904,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                     publish.setEnabled(true);
                     int code = submission.statusCode;
                     if (code >= 200 && code < 300) {
+                        FendlyWidgetProvider.refresh(this);
                         boolean paidLostReport = paymentId != null && "LOST".equalsIgnoreCase(type);
                         String message = ReportSubmissionMessages.buildSubmissionSuccessMessage(paidLostReport, submission.errorMessage, null);
                         Toast.makeText(this, message, Toast.LENGTH_LONG).show();
@@ -12357,6 +12361,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                     if (unreadCount > 0) {
                         network.execute(() -> {
                             if (postAuthorized("/api/users/notifications/read", token.getToken())) {
+                                FendlyWidgetProvider.refresh(this);
                                 runOnUiThread(() -> updateUserNotificationCount(0));
                             }
                         });

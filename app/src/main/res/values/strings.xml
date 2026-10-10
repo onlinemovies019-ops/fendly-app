@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">Fendly</string>
+    <string name="widget_description">Your Lost and Found report counts and unread Fendly notifications</string>
     <string name="vault_title">Digital Bill Locker &amp; Warranty Vault</string>
     <string name="profile_title">My profile</string>
     <string name="profile_account_details">Your account details and preferences.</string>

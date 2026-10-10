@@ -65,11 +65,13 @@ def send_match_notifications(
         response = messaging.send_each_for_multicast(
             messaging.MulticastMessage(
                 tokens=tokens,
-                notification=messaging.Notification(
-                    title=title,
-                    body=body,
-                ),
-                data={"found_item_id": found_item_id, "score": f"{score:.4f}"},
+                data={
+                    "title": title,
+                    "body": body,
+                    "found_item_id": found_item_id,
+                    "score": f"{score:.4f}",
+                },
+                android=messaging.AndroidConfig(priority="high"),
             )
         )
     except Exception:

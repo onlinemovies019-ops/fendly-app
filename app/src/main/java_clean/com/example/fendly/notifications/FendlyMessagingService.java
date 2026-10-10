@@ -8,6 +8,7 @@ import android.content.pm.PackageManager;
 import android.os.Build;
 import androidx.core.app.NotificationCompat;
 import androidx.core.app.NotificationManagerCompat;
+import com.example.fendly.FendlyWidgetProvider;
 import com.example.fendly.MainActivity;
 import com.example.fendly.R;
 import com.google.firebase.messaging.FirebaseMessagingService;
@@ -33,6 +34,7 @@ public final class FendlyMessagingService extends FirebaseMessagingService {
         }
         showNotification(title == null ? "Possible Fendly match" : title,
                 body == null ? "A possible lost and found match needs review." : body);
+        FendlyWidgetProvider.refresh(this);
     }
 
     private void showNotification(String title, String body) {
