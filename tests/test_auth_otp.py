@@ -1393,11 +1393,27 @@ async def test_lifespan_migrates_profile_columns_for_existing_users():
                     ")"
                 )
             )
+            connection.execute(
+                text(
+                    "CREATE TABLE social_accounts ("
+                    "provider VARCHAR(16) PRIMARY KEY, "
+                    "account_id VARCHAR(128) NOT NULL, "
+                    "account_name VARCHAR(160) NOT NULL, "
+                    "access_token_encrypted TEXT NOT NULL, "
+                    "updated_at DATETIME"
+                    ")"
+                )
+            )
         async with main.lifespan(main.app):
             pass
         with engine.begin() as connection:
             columns = [row[1] for row in connection.execute(text("PRAGMA table_info(users)"))]
+            social_columns = [
+                row[1]
+                for row in connection.execute(text("PRAGMA table_info(social_accounts)"))
+            ]
         assert "state" in columns
         assert "city" in columns
+        assert "deletion_access_token_encrypted" in social_columns
     finally:
         main.engine = original_engine

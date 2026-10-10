@@ -222,6 +222,7 @@ class SocialAccount(Base):
     account_id: Mapped[str] = mapped_column(String(128))
     account_name: Mapped[str] = mapped_column(String(160))
     access_token_encrypted: Mapped[str] = mapped_column(Text)
+    deletion_access_token_encrypted: Mapped[str | None] = mapped_column(Text)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )

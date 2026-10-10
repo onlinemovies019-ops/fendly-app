@@ -508,9 +508,17 @@ def _delete_meta_post(
     provider: str,
     external_post_id: str,
 ) -> None:
+    encrypted_token = account.access_token_encrypted
+    if provider == "instagram":
+        encrypted_token = account.deletion_access_token_encrypted or ""
+        if not encrypted_token:
+            raise RuntimeError(
+                "Instagram deletion needs a Facebook User access token. Reconnect "
+                "the Meta account so Fendly can save the required deletion token."
+            )
     response = httpx.delete(
         _graph_url(quote(external_post_id, safe="")),
-        params={"access_token": _decrypt_token(account.access_token_encrypted)},
+        params={"access_token": _decrypt_token(encrypted_token)},
         timeout=15,
     )
     try:
@@ -530,8 +538,9 @@ def _delete_meta_post(
         ):
             raise RuntimeError(
                 f"{error_text}. Meta did not grant instagram_manage_contents. If "
-                "this permission is unavailable in the Meta Login for Business "
-                "configuration, remove the post directly in Instagram, then retry."
+                "the permission is missing from the saved login configuration or "
+                "has not been approved for this app, update the Meta configuration, "
+                "approve it if required, and reconnect."
             ) from error
         raise
     if result.get("success") is not True:
@@ -556,12 +565,18 @@ def _upsert_social_account(
     account_id: str,
     account_name: str,
     access_token: str,
+    deletion_access_token: str | None = None,
 ) -> None:
     account = session.get(SocialAccount, provider)
     values: dict[str, object] = {
         "account_id": account_id,
         "account_name": account_name[:160],
         "access_token_encrypted": _encrypt_token(access_token),
+        "deletion_access_token_encrypted": (
+            _encrypt_token(deletion_access_token)
+            if deletion_access_token is not None
+            else None
+        ),
         "updated_at": datetime.now(timezone.utc),
     }
     if account is None:
@@ -614,8 +629,8 @@ def _validate_meta_deletion_permissions(granted: set[str], has_instagram: bool) 
     if has_instagram and "instagram_manage_contents" not in granted:
         logger.warning(
             "Meta OAuth token is missing instagram_manage_contents; Instagram media "
-            "deletion is unavailable for this connection. Meta's documented Facebook "
-            "Login for Business permissions do not currently list this permission."
+            "deletion is unavailable for this connection. Check the Login for Business "
+            "configuration and required app approval."
         )
         return False
     return True
@@ -640,6 +655,23 @@ def _finish_meta_oauth(session: Session, code: str, state: str) -> bool:
     user_token = token_result.get("access_token")
     if not isinstance(user_token, str) or not user_token:
         raise RuntimeError("Meta did not return an access token")
+    long_lived_result = _provider_response(
+        httpx.get(
+            _graph_url("oauth/access_token"),
+            params={
+                "grant_type": "fb_exchange_token",
+                "client_id": app_id,
+                "client_secret": app_secret,
+                "fb_exchange_token": user_token,
+            },
+            timeout=20,
+        ),
+        "Long-lived OAuth token exchange",
+    )
+    long_lived_user_token = long_lived_result.get("access_token")
+    if not isinstance(long_lived_user_token, str) or not long_lived_user_token:
+        raise RuntimeError("Meta did not return a long-lived user access token")
+    user_token = long_lived_user_token
     granted_scopes = _debug_meta_token_scopes(user_token, app_id, app_secret)
     pages_result = _provider_response(
         httpx.get(
@@ -700,6 +732,7 @@ def _finish_meta_oauth(session: Session, code: str, state: str) -> bool:
             instagram_id,
             str(instagram.get("username") or "Fendly Instagram"),
             page_token,
+            deletion_access_token=user_token,
         )
     else:
         session.execute(delete(SocialAccount).where(SocialAccount.provider == "instagram"))
@@ -1101,9 +1134,10 @@ def social_oauth_callback(
         return HTMLResponse(
             "<!doctype html><title>Fendly social account connected</title>"
             "<p>Fendly connected successfully, but Meta did not grant "
-            "instagram_manage_contents. Instagram posts cannot be deleted by Fendly "
-            "with this authorization. Remove Instagram posts in Instagram before "
-            "retrying report removal. You may close this window.</p>"
+            "instagram_manage_contents. Check that this permission is enabled in "
+            "the Login for Business configuration and approved for the app, then "
+            "reconnect. Instagram post deletion will remain unavailable until Meta "
+            "grants it. You may close this window.</p>"
         )
     return HTMLResponse(
         "<!doctype html><title>Fendly social account connected</title>"

@@ -162,6 +162,11 @@ async def lifespan(_: FastAPI):
             add_column_if_missing("users", "mobile_verified", "boolean", not_null=True, default="false")
             add_column_if_missing("users", "annual_subscription_expires_at", "bigint")
             add_column_if_missing("users", "annual_subscription_payment_id", "varchar(128)")
+            add_column_if_missing(
+                "social_accounts",
+                "deletion_access_token_encrypted",
+                "text",
+            )
 
             # --- ITEM EMBEDDINGS & REPORT COLUMNS ---
             add_column_if_missing("lost_items", "image_embedding", "vector(512)")

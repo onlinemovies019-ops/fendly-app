@@ -78,7 +78,12 @@ def test_meta_oauth_callback_stores_selected_page_and_linked_instagram(monkeypat
 
     def fake_get(url, params, timeout):
         if url.endswith("/oauth/access_token"):
-            return FakeResponse({"access_token": "user-token"})
+            token = (
+                "long-lived-user-token"
+                if params.get("grant_type") == "fb_exchange_token"
+                else "user-token"
+            )
+            return FakeResponse({"access_token": token})
         if url.endswith("/debug_token"):
             return FakeResponse(
                 {
@@ -121,6 +126,10 @@ def test_meta_oauth_callback_stores_selected_page_and_linked_instagram(monkeypat
         assert instagram is not None
         assert instagram.account_id == "fendly-instagram-id"
         assert instagram.account_name == "fendly_community"
+        assert instagram.deletion_access_token_encrypted is not None
+        assert social_publishing._decrypt_token(
+            instagram.deletion_access_token_encrypted
+        ) == "long-lived-user-token"
 
 
 def test_meta_oauth_page_id_mismatch_reports_available_pages_without_tokens(monkeypatch):
@@ -144,7 +153,12 @@ def test_meta_oauth_page_id_mismatch_reports_available_pages_without_tokens(monk
 
     def fake_get(url, params, timeout):
         if url.endswith("/oauth/access_token"):
-            return FakeResponse({"access_token": "user-token"})
+            token = (
+                "long-lived-user-token"
+                if params.get("grant_type") == "fb_exchange_token"
+                else "user-token"
+            )
+            return FakeResponse({"access_token": token})
         if url.endswith("/debug_token"):
             return FakeResponse(
                 {"data": {"scopes": ["pages_manage_posts"]}}
@@ -1071,6 +1085,7 @@ def test_admin_report_removal_deletes_meta_posts_and_retains_failed_deletions(mo
                 account_id="instagram-id",
                 account_name="Fendly",
                 access_token_encrypted="encrypted-token",
+                deletion_access_token_encrypted="encrypted-user-token",
             ),
             SocialPublication(
                 id="facebook-publication",
@@ -1114,9 +1129,9 @@ def test_admin_report_removal_deletes_meta_posts_and_retains_failed_deletions(mo
         assert failures == [
             "instagram post could not be removed: Meta instagram post deletion failed "
             "(HTTP 403): code 200; Permission denied. Meta did not grant "
-            "instagram_manage_contents. If this permission is unavailable in the "
-            "Meta Login for Business configuration, remove the post directly in "
-            "Instagram, then retry."
+            "instagram_manage_contents. If the permission is missing from the "
+            "saved login configuration or has not been approved for this app, "
+            "update the Meta configuration, approve it if required, and reconnect."
         ]
         assert already_removed_failures == [
             "facebook post could not be removed: Meta facebook post deletion failed "
@@ -1160,7 +1175,11 @@ def test_meta_post_deletion_requires_explicit_success_confirmation(monkeypatch):
 
 def test_instagram_delete_permission_error_explains_missing_meta_grant(monkeypatch):
     monkeypatch.setenv("META_GRAPH_API_VERSION", "v23.0")
-    monkeypatch.setattr(social_publishing, "_decrypt_token", lambda _: "page-token")
+    monkeypatch.setattr(
+        social_publishing,
+        "_decrypt_token",
+        lambda _: "user-token",
+    )
 
     class FakeResponse:
         is_error = True
@@ -1185,6 +1204,7 @@ def test_instagram_delete_permission_error_explains_missing_meta_grant(monkeypat
         account_id="instagram-id",
         account_name="Fendly",
         access_token_encrypted="encrypted-token",
+        deletion_access_token_encrypted="encrypted-user-token",
     )
 
     with pytest.raises(RuntimeError) as error:
@@ -1192,7 +1212,58 @@ def test_instagram_delete_permission_error_explains_missing_meta_grant(monkeypat
 
     assert "instagram_manage_contents" in str(error.value)
     assert "Meta did not grant" in str(error.value)
-    assert "remove the post directly in Instagram" in str(error.value)
+    assert "approve it if required" in str(error.value)
+
+
+def test_instagram_delete_uses_saved_facebook_user_access_token(monkeypatch):
+    monkeypatch.setenv("META_GRAPH_API_VERSION", "v23.0")
+    decrypted_tokens = {
+        "encrypted-page-token": "page-token",
+        "encrypted-user-token": "facebook-user-token",
+    }
+    monkeypatch.setattr(
+        social_publishing,
+        "_decrypt_token",
+        lambda encrypted: decrypted_tokens[encrypted],
+    )
+    requested = {}
+
+    class FakeResponse:
+        is_error = False
+
+        @staticmethod
+        def json():
+            return {"success": True, "deleted_id": "instagram-post"}
+
+    def fake_delete(url, params, timeout):
+        requested.update(url=url, params=params, timeout=timeout)
+        return FakeResponse()
+
+    monkeypatch.setattr(social_publishing.httpx, "delete", fake_delete)
+    account = SocialAccount(
+        provider="instagram",
+        account_id="instagram-id",
+        account_name="Fendly Instagram",
+        access_token_encrypted="encrypted-page-token",
+        deletion_access_token_encrypted="encrypted-user-token",
+    )
+
+    social_publishing._delete_meta_post(account, "instagram", "instagram-post")
+
+    assert requested["url"].endswith("/instagram-post")
+    assert requested["params"] == {"access_token": "facebook-user-token"}
+
+
+def test_instagram_delete_requires_user_token_for_existing_connections(monkeypatch):
+    account = SocialAccount(
+        provider="instagram",
+        account_id="instagram-id",
+        account_name="Fendly Instagram",
+        access_token_encrypted="encrypted-page-token",
+    )
+
+    with pytest.raises(RuntimeError, match="Facebook User access token"):
+        social_publishing._delete_meta_post(account, "instagram", "instagram-post")
 
 
 def test_facebook_delete_subcode_33_explains_page_permissions_and_post_id(monkeypatch):
@@ -1256,11 +1327,16 @@ def test_meta_oauth_connects_but_warns_when_instagram_delete_permission_is_missi
 
     def fake_get(url, params, timeout):
         if url.endswith("/oauth/access_token"):
-            return FakeResponse({"access_token": "user-token"})
+            token = (
+                "long-lived-user-token"
+                if params.get("grant_type") == "fb_exchange_token"
+                else "user-token"
+            )
+            return FakeResponse({"access_token": token})
         if url.endswith("/debug_token"):
             assert url == "https://graph.facebook.com/v20.0/debug_token"
             assert params == {
-                "input_token": "user-token",
+                "input_token": "long-lived-user-token",
                 "access_token": "meta-app-id|meta-app-secret",
             }
             return FakeResponse(
@@ -1298,7 +1374,7 @@ def test_meta_oauth_connects_but_warns_when_instagram_delete_permission_is_missi
         assert session.get(SocialAccount, "facebook") is not None
         assert session.get(SocialAccount, "instagram") is not None
     assert "instagram_manage_contents" in caplog.text
-    assert "do not currently list this permission" in caplog.text
+    assert "required app approval" in caplog.text
 
 
 def test_meta_login_url_requests_required_scopes_as_comma_separated_values(monkeypatch):
