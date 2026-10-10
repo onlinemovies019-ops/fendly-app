@@ -1102,6 +1102,10 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             return;
         }
         if (currentPage == PAGE_ADMIN) {
+            if (adminSocialPageOpen) {
+                showAdminDashboard();
+                return;
+            }
             buildScreen();
             return;
         }
