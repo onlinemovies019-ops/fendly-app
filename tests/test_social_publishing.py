@@ -883,7 +883,21 @@ def test_incomplete_external_post_feed_is_not_treated_as_deleted(monkeypatch):
 def test_publication_list_excludes_legacy_x_and_removed_jobs():
     factory = _session_factory()
     with factory() as session:
+        report = LostItem(
+            id="report-facebook",
+            created_by="report-owner",
+            title="Blue bag",
+            description="Private detail",
+            category="bag",
+            lat=0,
+            lng=0,
+            social_poster_url="https://storage.example.test/poster.jpg",
+            image_url="https://storage.example.test/report-photo.jpg",
+            title_en="Blue bag",
+            category_en="Apparels and accessories",
+        )
         session.add_all([
+            report,
             SocialPublication(
                 id="facebook-publication",
                 report_id="report-facebook",
@@ -915,6 +929,49 @@ def test_publication_list_excludes_legacy_x_and_removed_jobs():
         )
 
     assert [item["provider"] for item in result] == ["facebook"]
+    assert result[0]["poster_url"] == "https://storage.example.test/poster.jpg"
+    assert result[0]["report_image_url"] == "https://storage.example.test/report-photo.jpg"
+    assert result[0]["report_title"] == "Blue bag"
+    assert result[0]["report_category"] == "Apparels and accessories"
+
+
+def test_published_image_url_uses_meta_post_media_when_poster_is_missing(monkeypatch):
+    monkeypatch.setenv("META_GRAPH_API_VERSION", "v23.0")
+    monkeypatch.setattr(social_publishing, "_decrypt_token", lambda _: "page-token")
+    requested = {}
+
+    class FakeResponse:
+        is_error = False
+
+        @staticmethod
+        def json():
+            return {"media_url": "https://storage.example.test/meta-published.jpg"}
+
+    def fake_get(url, params, timeout):
+        requested.update(url=url, params=params, timeout=timeout)
+        return FakeResponse()
+
+    monkeypatch.setattr(social_publishing.httpx, "get", fake_get)
+    account = SocialAccount(
+        provider="instagram",
+        account_id="instagram-id",
+        account_name="Fendly",
+        access_token_encrypted="encrypted-token",
+    )
+    publication = SocialPublication(
+        id="instagram-publication",
+        report_id="report-1",
+        report_type="lost",
+        provider="instagram",
+        status="published",
+        external_post_id="instagram-post-id",
+    )
+
+    image_url = social_publishing._published_post_image_url(account, publication)
+
+    assert image_url == "https://storage.example.test/meta-published.jpg"
+    assert requested["url"] == "https://graph.facebook.com/v23.0/instagram-post-id"
+    assert requested["params"]["fields"] == "media_url,thumbnail_url"
 
 
 def test_publication_worker_does_not_retry_ambiguous_provider_failure(monkeypatch):

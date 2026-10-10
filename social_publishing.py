@@ -531,6 +531,8 @@ def get_social_status(
 def _publication_summary(
     publication: SocialPublication,
     platform_status: str = "not_checked",
+    report: LostItem | FoundItem | None = None,
+    published_image_url: str | None = None,
 ) -> dict[str, str | int | None]:
     return {
         "report_id": publication.report_id,
@@ -541,7 +543,109 @@ def _publication_summary(
         "external_post_id": publication.external_post_id,
         "last_error": publication.last_error,
         "platform_status": platform_status,
+        "poster_url": report.social_poster_url if report is not None else None,
+        "published_image_url": published_image_url,
+        "report_image_url": report.image_url if report is not None else None,
+        "report_title": (
+            (report.title_en or report.title) if report is not None else None
+        ),
+        "report_category": (
+            (report.category_en or report.category) if report is not None else None
+        ),
     }
+
+
+def _publication_report(
+    session: Session,
+    publication: SocialPublication,
+) -> LostItem | FoundItem | None:
+    preferred_model = LostItem if publication.report_type.casefold() == "lost" else FoundItem
+    report = session.get(preferred_model, publication.report_id)
+    if report is not None:
+        return report
+    fallback_model = FoundItem if preferred_model is LostItem else LostItem
+    return session.get(fallback_model, publication.report_id)
+
+
+def _published_post_image_url(
+    account: SocialAccount | None,
+    publication: SocialPublication,
+    report: LostItem | FoundItem | None = None,
+) -> str | None:
+    if (
+        account is None
+        or not publication.external_post_id
+        or publication.status != "published"
+        or (report is not None and report.social_poster_url)
+    ):
+        return None
+
+    image_fields = (
+        "full_picture,picture"
+        if publication.provider == "facebook"
+        else "media_url,thumbnail_url"
+    )
+    try:
+        response = httpx.get(
+            _graph_url(quote(publication.external_post_id, safe="")),
+            params={
+                "fields": image_fields,
+                "access_token": _decrypt_token(account.access_token_encrypted),
+            },
+            timeout=15,
+        )
+        if response.is_error:
+            logger.warning(
+                "Could not retrieve image for published %s post (HTTP %s)",
+                publication.provider,
+                response.status_code,
+            )
+            return None
+        payload = _response_object(response.json())
+    except HTTPException as error:
+        logger.warning(
+            "Could not retrieve image for published %s post: %s",
+            publication.provider,
+            error.detail,
+        )
+        return None
+    except (httpx.HTTPError, RuntimeError, ValueError, TypeError) as error:
+        logger.warning(
+            "Could not retrieve image for published %s post: %s",
+            publication.provider,
+            type(error).__name__,
+        )
+        return None
+
+    field_names = (
+        ("full_picture", "picture")
+        if publication.provider == "facebook"
+        else ("media_url", "thumbnail_url")
+    )
+    for field_name in field_names:
+        image_url = payload.get(field_name)
+        if isinstance(image_url, str) and image_url.startswith("https://"):
+            return image_url
+    return None
+
+
+def _publication_response(
+    session: Session,
+    publication: SocialPublication,
+    accounts: dict[str, SocialAccount],
+    platform_status: str = "not_checked",
+) -> dict[str, str | int | None]:
+    report = _publication_report(session, publication)
+    return _publication_summary(
+        publication,
+        platform_status,
+        report,
+        _published_post_image_url(
+            accounts.get(publication.provider),
+            publication,
+            report,
+        ),
+    )
 
 
 def _list_external_post_ids(
@@ -658,7 +762,16 @@ def list_social_publications(
         .order_by(SocialPublication.created_at.desc())
         .limit(limit)
     ).all()
-    return [_publication_summary(publication) for publication in publications]
+    accounts = {
+        account.provider: account
+        for account in session.scalars(
+            select(SocialAccount).where(SocialAccount.provider.in_(PROVIDER_NAMES))
+        ).all()
+    }
+    return [
+        _publication_response(session, publication, accounts)
+        for publication in publications
+    ]
 
 
 @router.post("/publications/refresh")
@@ -729,7 +842,14 @@ def refresh_social_publications(
             publication.last_error = "Post is no longer available to the connected Meta account."
             has_removed_publications = True
             continue
-        refreshed.append(_publication_summary(publication, platform_status))
+        refreshed.append(
+            _publication_response(
+                session,
+                publication,
+                accounts,
+                platform_status,
+            )
+        )
     if has_removed_publications:
         session.commit()
     return refreshed

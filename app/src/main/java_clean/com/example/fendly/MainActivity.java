@@ -10892,7 +10892,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                 }
                 try {
                     JSONArray publications = new JSONArray(historyResponse.body);
-                    int visiblePublicationCount = 0;
+                    Map<String, ArrayList<JSONObject>> groupedPublications = new LinkedHashMap<>();
                     for (int index = 0; index < publications.length(); index++) {
                         JSONObject item = publications.getJSONObject(index);
                         String provider = item.optString("provider", "")
@@ -10900,26 +10900,25 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                         if (!"facebook".equals(provider) && !"instagram".equals(provider)) {
                             continue;
                         }
-                        visiblePublicationCount++;
-                        String platformStatus = item.optString("platform_status", "not_checked");
-                        String jobStatus = item.optString("status", "unknown");
-                        if ("available".equals(platformStatus)) {
-                            jobStatus += " (present in platform feed)";
-                        } else if ("unavailable".equals(platformStatus)) {
-                            jobStatus = "not found (deleted or inaccessible)";
-                        } else if ("check_failed".equals(platformStatus)) {
-                            jobStatus = "platform status unknown";
+                        String reportId = item.optString("report_id", "").trim();
+                        String groupKey = reportId.isEmpty() ? "unavailable-" + index : reportId;
+                        if (!groupedPublications.containsKey(groupKey)) {
+                            groupedPublications.put(groupKey, new ArrayList<>());
                         }
-                        String row = item.optString("report_type", "report").toUpperCase(Locale.ROOT)
-                                + " · " + provider
-                                + " · " + jobStatus
-                                + "\nReport ID: " + item.optString("report_id", "unavailable");
-                        String error = item.optString("last_error", "");
-                        if (!error.isEmpty()) row += "\n" + error;
-                        addSocialHistoryEntry(history, row);
+                        groupedPublications.get(groupKey).add(item);
                     }
-                    if (visiblePublicationCount == 0) {
+                    if (groupedPublications.isEmpty()) {
                         addSocialHistoryEntry(history, "No Facebook or Instagram publication jobs yet.");
+                    } else {
+                        final LinearLayout[] expandedPanel = {null};
+                        for (Map.Entry<String, ArrayList<JSONObject>> entry
+                                : groupedPublications.entrySet()) {
+                            addSocialPublicationGroup(
+                                    history,
+                                    entry.getValue(),
+                                    expandedPanel
+                            );
+                        }
                     }
                 } catch (Exception error) {
                     Log.e("SOCIAL_PUBLISHING", "Could not parse publication history", error);
@@ -10930,6 +10929,243 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             Log.e("SOCIAL_PUBLISHING", "Could not retrieve Firebase admin token", error);
             message.setText(translate("Could not verify your Fendly sign-in. Please try again."));
         }));
+    }
+
+    private void addSocialPublicationGroup(
+            LinearLayout parent,
+            List<JSONObject> publications,
+            LinearLayout[] expandedPanel
+    ) {
+        JSONObject firstPublication = publications.get(0);
+        String reportId = firstPublication.optString("report_id", "unavailable");
+        String reportType = firstPublication.optString("report_type", "report")
+                .toUpperCase(Locale.ROOT);
+        String reportTitle = firstPublication.optString("report_title", "").trim();
+        String reportCategory = firstPublication.optString("report_category", "").trim();
+        String subject = socialPublicationSubject(reportCategory, reportTitle);
+        String panelTitle = "found".equalsIgnoreCase(reportType)
+                ? "Found " + lowercaseSocialSubject(subject) + " report"
+                : subject + " lost report";
+
+        LinearLayout card = new LinearLayout(this);
+        card.setOrientation(LinearLayout.VERTICAL);
+        card.setPadding(dp(12), dp(10), dp(12), dp(10));
+        card.setBackground(roundWithStroke(surfaceColor(), 12, borderColor()));
+        LinearLayout.LayoutParams cardParams = new LinearLayout.LayoutParams(-1, -2);
+        cardParams.bottomMargin = dp(8);
+        parent.addView(card, cardParams);
+
+        LinearLayout header = new LinearLayout(this);
+        header.setGravity(Gravity.CENTER_VERTICAL);
+        card.addView(header, new LinearLayout.LayoutParams(-1, -2));
+        TextView title = text(
+                panelTitle,
+                13,
+                primaryTextColor(),
+                Typeface.BOLD
+        );
+        header.addView(title, new LinearLayout.LayoutParams(0, -2, 1));
+        TextView expandIcon = text("＋", 18, secondaryTextColor(), Typeface.NORMAL);
+        expandIcon.setGravity(Gravity.CENTER);
+        header.addView(expandIcon, new LinearLayout.LayoutParams(dp(28), dp(28)));
+
+        LinearLayout details = new LinearLayout(this);
+        details.setOrientation(LinearLayout.VERTICAL);
+        details.setVisibility(View.GONE);
+        LinearLayout.LayoutParams detailsParams = new LinearLayout.LayoutParams(-1, -2);
+        detailsParams.topMargin = dp(8);
+        card.addView(details, detailsParams);
+
+        TextView reportIdRow = text(
+                "Report ID: " + reportId,
+                11,
+                secondaryTextColor(),
+                Typeface.NORMAL
+        );
+        details.addView(reportIdRow, new LinearLayout.LayoutParams(-1, -2));
+
+        String posterUrl = "";
+        String reportImageUrl = "";
+        for (JSONObject publication : publications) {
+            String provider = publication.optString("provider", "").toLowerCase(Locale.ROOT);
+            String platformStatus = publication.optString("platform_status", "not_checked");
+            String jobStatus = publication.optString("status", "unknown");
+            if ("available".equals(platformStatus)) {
+                jobStatus += " (present in platform feed)";
+            } else if ("unavailable".equals(platformStatus)) {
+                jobStatus = "not found (deleted or inaccessible)";
+            } else if ("check_failed".equals(platformStatus)) {
+                jobStatus = "platform status unknown";
+            }
+            String rowText = provider + " · " + jobStatus;
+            String error = publication.optString("last_error", "");
+            if (!error.isEmpty()) rowText += "\n" + error;
+            TextView providerRow = text(rowText, 12, secondaryTextColor(), Typeface.NORMAL);
+            providerRow.setPadding(dp(8), dp(7), dp(8), dp(7));
+            providerRow.setBackground(roundWithStroke(backgroundColor(), 8, borderColor()));
+            LinearLayout.LayoutParams providerParams = new LinearLayout.LayoutParams(-1, -2);
+            providerParams.topMargin = dp(6);
+            details.addView(providerRow, providerParams);
+            if (posterUrl.isEmpty()) {
+                posterUrl = publication.optString("poster_url", "").trim();
+            }
+            if (posterUrl.isEmpty()) {
+                posterUrl = publication.optString("published_image_url", "").trim();
+            }
+            if (reportImageUrl.isEmpty()) {
+                reportImageUrl = publication.optString("report_image_url", "").trim();
+            }
+        }
+
+        final boolean isPublishedPosterAvailable = !posterUrl.isEmpty();
+        final String previewUrl = isPublishedPosterAvailable ? posterUrl : reportImageUrl;
+        if (!previewUrl.isEmpty()) {
+            TextView previewLabel = text(
+                    isPublishedPosterAvailable
+                            ? "Published post image · tap to enlarge"
+                            : "Report photo preview · tap to enlarge",
+                    11,
+                    secondaryTextColor(),
+                    Typeface.NORMAL
+            );
+            LinearLayout.LayoutParams labelParams = new LinearLayout.LayoutParams(-1, -2);
+            labelParams.topMargin = dp(10);
+            details.addView(previewLabel, labelParams);
+
+            ImageView thumbnail = new ImageView(this);
+            thumbnail.setScaleType(ImageView.ScaleType.CENTER_CROP);
+            thumbnail.setContentDescription(isPublishedPosterAvailable
+                    ? "Preview the published social post image"
+                    : "Preview the report photo");
+            thumbnail.setBackground(roundWithStroke(backgroundColor(), 8, borderColor()));
+            thumbnail.setClipToOutline(true);
+            LinearLayout.LayoutParams thumbnailParams =
+                    new LinearLayout.LayoutParams(dp(112), dp(144));
+            thumbnailParams.topMargin = dp(6);
+            details.addView(thumbnail, thumbnailParams);
+            Glide.with(this)
+                    .load(previewUrl)
+                    .placeholder(new ColorDrawable(Color.argb(100, 190, 190, 190)))
+                    .error(new ColorDrawable(Color.argb(100, 190, 190, 190)))
+                    .into(thumbnail);
+            thumbnail.setOnClickListener(view -> showSocialPosterPreview(previewUrl));
+        }
+
+        View.OnClickListener togglePanel = view -> {
+            if (expandedPanel[0] == details) {
+                details.setVisibility(View.GONE);
+                expandIcon.setText("＋");
+                expandedPanel[0] = null;
+                return;
+            }
+            if (expandedPanel[0] != null) {
+                expandedPanel[0].setVisibility(View.GONE);
+                View oldCard = (View) expandedPanel[0].getParent();
+                View oldHeader = oldCard instanceof LinearLayout
+                        ? ((LinearLayout) oldCard).getChildAt(0) : null;
+                if (oldHeader instanceof LinearLayout) {
+                    View oldIcon = ((LinearLayout) oldHeader).getChildAt(1);
+                    if (oldIcon instanceof TextView) ((TextView) oldIcon).setText("＋");
+                }
+            }
+            details.setVisibility(View.VISIBLE);
+            expandIcon.setText("−");
+            expandedPanel[0] = details;
+        };
+        header.setOnClickListener(togglePanel);
+    }
+
+    private String socialPublicationSubject(String category, String title) {
+        String normalizedTitle = title.toLowerCase(Locale.ROOT);
+        String[][] namedSubjects = {
+                {"cat", "cat"}, {"kitten", "cat"}, {"dog", "dog"}, {"puppy", "dog"},
+                {"cow", "cow"}, {"goat", "goat"}, {"horse", "horse"},
+                {"bird", "bird"}, {"parrot", "parrot"}, {"rabbit", "rabbit"},
+                {"fish", "fish"}, {"people", "People"}, {"person", "People"},
+                {"woman", "People"}, {"man", "People"}, {"child", "People"},
+                {"phone", "phone"}, {"wallet", "wallet"}, {"bag", "bag"},
+                {"bicycle", "bicycle"}, {"cycle", "bicycle"}, {"car", "car"},
+                {"laptop", "laptop"}
+        };
+        for (String[] subject : namedSubjects) {
+            if (containsSocialSubject(normalizedTitle, subject[0])) {
+                return "People".equals(subject[1])
+                        ? subject[1] : capitalizeSocialSubject(subject[1]);
+            }
+        }
+        String normalizedCategory = category.trim().toLowerCase(Locale.ROOT);
+        if (normalizedCategory.contains("people") || normalizedCategory.contains("person")) {
+            return "People";
+        }
+        if (normalizedCategory.contains("animal")) return "Animal";
+        if (!normalizedCategory.isEmpty() && !"other".equals(normalizedCategory)) {
+            String categorySubject = normalizedCategory.replaceAll("\\s+", " ").trim();
+            if (categorySubject.contains("accessories")) return "Item";
+            return capitalizeSocialSubject(categorySubject);
+        }
+        String cleanTitle = title.trim()
+                .replaceAll("(?i)\\b(lost|found|missing|report|item)\\b", " ")
+                .replaceAll("[^\\p{L}\\p{N} ]", " ")
+                .replaceAll("\\s+", " ")
+                .trim();
+        if (cleanTitle.isEmpty()) return "Item";
+        String[] words = cleanTitle.split(" ");
+        return capitalizeSocialSubject(words[0]);
+    }
+
+    private boolean containsSocialSubject(String value, String subject) {
+        return value.matches("(?s).*\\b" + java.util.regex.Pattern.quote(subject) + "\\b.*");
+    }
+
+    private String capitalizeSocialSubject(String subject) {
+        if (subject.isEmpty()) return subject;
+        return subject.substring(0, 1).toUpperCase(Locale.ROOT) + subject.substring(1);
+    }
+
+    private String lowercaseSocialSubject(String subject) {
+        if (subject.isEmpty()) return subject;
+        if ("People".equals(subject)) return "people";
+        return subject.substring(0, 1).toLowerCase(Locale.ROOT) + subject.substring(1);
+    }
+
+    private void showSocialPosterPreview(String posterUrl) {
+        Dialog dialog = new Dialog(this, android.R.style.Theme_Black_NoTitleBar_Fullscreen);
+        dialog.setCanceledOnTouchOutside(true);
+
+        FrameLayout container = new FrameLayout(this);
+        container.setBackgroundColor(Color.BLACK);
+        ImageView preview = new ImageView(this);
+        preview.setScaleType(ImageView.ScaleType.FIT_CENTER);
+        container.addView(preview, new FrameLayout.LayoutParams(-1, -1));
+        Glide.with(this)
+                .load(posterUrl)
+                .placeholder(new ColorDrawable(Color.BLACK))
+                .error(new ColorDrawable(Color.BLACK))
+                .into(preview);
+        preview.setOnClickListener(view -> dialog.dismiss());
+
+        ImageView close = new ImageView(this);
+        close.setImageResource(android.R.drawable.ic_menu_close_clear_cancel);
+        close.setColorFilter(Color.WHITE);
+        close.setBackground(roundWithStroke(Color.argb(180, 0, 0, 0), 18, Color.WHITE));
+        close.setPadding(dp(4), dp(4), dp(4), dp(4));
+        FrameLayout.LayoutParams closeParams =
+                new FrameLayout.LayoutParams(dp(32), dp(32), Gravity.TOP | Gravity.END);
+        closeParams.setMargins(dp(12), dp(12), dp(12), 0);
+        close.setOnClickListener(view -> dialog.dismiss());
+        container.addView(close, closeParams);
+
+        dialog.setContentView(container);
+        dialog.show();
+        Window window = dialog.getWindow();
+        if (window != null) {
+            window.setLayout(-1, -1);
+            window.setFlags(
+                    WindowManager.LayoutParams.FLAG_FULLSCREEN,
+                    WindowManager.LayoutParams.FLAG_FULLSCREEN
+            );
+            window.clearFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND);
+        }
     }
 
     private boolean socialProviderConnected(JSONObject status, String provider) {
@@ -10954,16 +11190,29 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         card.setPadding(dp(16), dp(14), dp(16), dp(14));
         card.setBackground(roundWithStroke(surfaceColor(), 16, borderColor()));
 
+        LinearLayout header = new LinearLayout(this);
+        header.setGravity(Gravity.CENTER_VERTICAL);
+        card.addView(header, new LinearLayout.LayoutParams(-1, -2));
         TextView title = text("Meta accounts", 15, primaryTextColor(), Typeface.BOLD);
         title.setGravity(Gravity.START | Gravity.CENTER_VERTICAL);
         title.setIncludeFontPadding(false);
-        card.addView(title, new LinearLayout.LayoutParams(-1, -2));
+        header.addView(title, new LinearLayout.LayoutParams(0, -2, 1));
+        TextView expandIcon = text("＋", 18, secondaryTextColor(), Typeface.NORMAL);
+        expandIcon.setGravity(Gravity.CENTER);
+        header.addView(expandIcon, new LinearLayout.LayoutParams(dp(28), dp(28)));
+
+        LinearLayout details = new LinearLayout(this);
+        details.setOrientation(LinearLayout.VERTICAL);
+        details.setVisibility(View.GONE);
+        LinearLayout.LayoutParams detailsParams = new LinearLayout.LayoutParams(-1, -2);
+        detailsParams.topMargin = dp(4);
+        card.addView(details, detailsParams);
 
         LinearLayout accounts = new LinearLayout(this);
         accounts.setOrientation(LinearLayout.VERTICAL);
         LinearLayout.LayoutParams accountsParams = new LinearLayout.LayoutParams(-1, -2);
         accountsParams.topMargin = dp(12);
-        card.addView(accounts, accountsParams);
+        details.addView(accounts, accountsParams);
 
         addSocialMetaAccountRow(
                 accounts,
@@ -11020,7 +11269,12 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
 
         LinearLayout.LayoutParams actionsParams = new LinearLayout.LayoutParams(-1, -2);
         actionsParams.topMargin = dp(16);
-        card.addView(actions, actionsParams);
+        details.addView(actions, actionsParams);
+        header.setOnClickListener(view -> {
+            boolean isExpanded = details.getVisibility() == View.VISIBLE;
+            details.setVisibility(isExpanded ? View.GONE : View.VISIBLE);
+            expandIcon.setText(isExpanded ? "＋" : "−");
+        });
         LinearLayout.LayoutParams cardParams = new LinearLayout.LayoutParams(-1, -2);
         cardParams.bottomMargin = dp(8);
         parent.addView(card, cardParams);
