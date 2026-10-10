@@ -78,6 +78,15 @@ def test_meta_oauth_callback_stores_selected_page_and_linked_instagram(monkeypat
     def fake_get(url, params, timeout):
         if url.endswith("/oauth/access_token"):
             return FakeResponse({"access_token": "user-token"})
+        if url.endswith("/me/permissions"):
+            return FakeResponse(
+                {
+                    "data": [
+                        {"permission": "pages_manage_posts", "status": "granted"},
+                        {"permission": "instagram_manage_contents", "status": "granted"},
+                    ]
+                }
+            )
         assert url.endswith("/me/accounts")
         return FakeResponse(
             {
@@ -505,7 +514,7 @@ def test_facebook_publishes_generated_poster_instead_of_report_photo(monkeypatch
 
         @staticmethod
         def json():
-            return {"post_id": "facebook-post-id"}
+            return {"id": "facebook-photo-id", "post_id": "facebook-post-id"}
 
     def fake_post(url, data, timeout):
         requested.update(url=url, data=data)
@@ -519,6 +528,38 @@ def test_facebook_publishes_generated_poster_instead_of_report_photo(monkeypatch
     assert post_id == "facebook-post-id"
     assert requested["data"]["url"] == "https://storage.example.test/poster.jpg"
     assert requested["data"]["url"] != report.image_url
+
+
+def test_facebook_publication_does_not_treat_photo_id_as_page_post_id(monkeypatch):
+    monkeypatch.setenv("META_GRAPH_API_VERSION", "v23.0")
+    monkeypatch.setattr(social_publishing, "_decrypt_token", lambda _: "page-token")
+
+    class FakeResponse:
+        is_error = False
+
+        @staticmethod
+        def json():
+            return {"id": "facebook-photo-id"}
+
+    monkeypatch.setattr(social_publishing.httpx, "post", lambda *_args, **_kwargs: FakeResponse())
+    report = LostItem(
+        created_by="report-owner",
+        title="White cat",
+        description="Private details",
+        category="animal",
+        lat=0,
+        lng=0,
+        social_poster_url="https://storage.example.test/poster.jpg",
+    )
+    account = SocialAccount(
+        provider="facebook",
+        account_id="page-id",
+        account_name="Fendly",
+        access_token_encrypted="encrypted-token",
+    )
+
+    with pytest.raises(RuntimeError, match="photo ID cannot be used"):
+        social_publishing._publish_facebook(account, report, "caption")
 
 
 def test_instagram_publishes_generated_poster(monkeypatch):
@@ -1144,6 +1185,102 @@ def test_instagram_delete_permission_error_explains_required_meta_permission(mon
 
     assert "instagram_manage_contents" in str(error.value)
     assert "reconnect the Instagram account" in str(error.value)
+
+
+def test_facebook_delete_subcode_33_explains_page_permissions_and_post_id(monkeypatch):
+    monkeypatch.setenv("META_GRAPH_API_VERSION", "v23.0")
+    monkeypatch.setattr(social_publishing, "_decrypt_token", lambda _: "page-token")
+
+    class FakeResponse:
+        is_error = True
+        status_code = 400
+
+        @staticmethod
+        def json():
+            return {
+                "error": {
+                    "code": 100,
+                    "error_subcode": 33,
+                    "message": "Unsupported delete request",
+                }
+            }
+
+    monkeypatch.setattr(
+        social_publishing.httpx,
+        "delete",
+        lambda *_args, **_kwargs: FakeResponse(),
+    )
+    account = SocialAccount(
+        provider="facebook",
+        account_id="page-id",
+        account_name="Fendly",
+        access_token_encrypted="encrypted-token",
+    )
+
+    with pytest.raises(RuntimeError) as error:
+        social_publishing._delete_meta_post(account, "facebook", "facebook-post")
+
+    assert "pages_manage_posts" in str(error.value)
+    assert "content-management task" in str(error.value)
+    assert "Page post ID (not a photo ID)" in str(error.value)
+
+
+def test_meta_oauth_rejects_missing_instagram_delete_permission(monkeypatch):
+    factory = _session_factory()
+    monkeypatch.setenv("APP_SECRET_KEY", "test-secret-key-that-is-long-enough")
+    monkeypatch.setenv("META_APP_ID", "meta-app-id")
+    monkeypatch.setenv("META_APP_SECRET", "meta-app-secret")
+    monkeypatch.setenv("META_GRAPH_API_VERSION", "v23.0")
+    monkeypatch.setenv("META_REDIRECT_URI", "https://api.example.test/api/social/callback/meta")
+    monkeypatch.setattr(social_publishing, "_consume_state", lambda *_: None)
+
+    class FakeResponse:
+        is_error = False
+
+        def __init__(self, value):
+            self.value = value
+
+        def json(self):
+            return self.value
+
+    def fake_get(url, params, timeout):
+        if url.endswith("/oauth/access_token"):
+            return FakeResponse({"access_token": "user-token"})
+        if url.endswith("/me/permissions"):
+            assert params == {"access_token": "user-token"}
+            return FakeResponse(
+                {
+                    "data": [
+                        {"permission": "pages_manage_posts", "status": "granted"},
+                    ]
+                }
+            )
+        assert url.endswith("/me/accounts")
+        return FakeResponse(
+            {
+                "data": [
+                    {
+                        "id": "fendly-page-id",
+                        "name": "Fendly Community",
+                        "access_token": "page-token",
+                        "instagram_business_account": {
+                            "id": "fendly-instagram-id",
+                            "username": "fendly_community",
+                        },
+                    }
+                ]
+            }
+        )
+
+    monkeypatch.setattr(social_publishing.httpx, "get", fake_get)
+
+    with factory() as session, pytest.raises(HTTPException) as error:
+        social_publishing._finish_meta_oauth(session, "auth-code", "state")
+
+    assert "instagram_manage_contents" in str(error.value.detail)
+    assert "reconnect" in str(error.value.detail)
+    assert session.get(SocialAccount, "facebook") is None
+    assert session.get(SocialAccount, "instagram") is None
 
 
 def test_admin_or_owner_removal_blocks_ambiguous_publication_without_post_id():

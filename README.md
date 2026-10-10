@@ -152,6 +152,13 @@ through Meta App Review. An Instagram professional account must be linked to
 the selected Page, and the Page must meet Meta's publishing authorization
 requirements. If the Page is assigned through Business Manager, Meta may also
 require `ads_read` and `ads_management` for Instagram publishing.
+When Meta authorization completes, Fendly verifies the deletion permissions
+were actually granted and does not replace the saved connection if they are
+missing. Facebook deletion also requires the authorized user to have a
+content-management task on the selected Page. A Facebook `code 100`, `subcode
+33` deletion error is not proof that the post is already deleted: verify the
+Page permissions/tasks, that the publication belongs to the selected Page, and
+that the saved identifier is the Page post ID rather than a photo ID.
 
 The admin publication refresh reconciles saved Facebook post IDs against the
 Page's `published_posts` feed and Instagram media IDs against the account's

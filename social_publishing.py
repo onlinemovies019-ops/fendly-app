@@ -218,9 +218,12 @@ def _publish_facebook(
         ),
         "Facebook photo upload",
     )
-    post_id = result.get("post_id") or result.get("id")
+    post_id = result.get("post_id")
     if not isinstance(post_id, str) or not post_id:
-        raise RuntimeError("Facebook did not return a post identifier")
+        raise RuntimeError(
+            "Facebook did not return a Page post ID; the photo ID cannot be used "
+            "to confirm or remove the published Page post."
+        )
     return post_id
 
 
@@ -505,6 +508,13 @@ def _delete_meta_post(
         result = _provider_response(response, f"{provider} post deletion")
     except RuntimeError as error:
         error_text = str(error)
+        if provider == "facebook" and "subcode 33" in error_text.casefold():
+            raise RuntimeError(
+                f"{error_text}. Check that the connected user has the "
+                "pages_manage_posts permission and a content-management task on "
+                "the selected Page. Also verify the saved ID is the Page post ID "
+                "(not a photo ID) and belongs to that Page."
+            ) from error
         if provider == "instagram" and (
             "code 200" in error_text.casefold()
             or "permission" in error_text.casefold()
@@ -552,6 +562,34 @@ def _upsert_social_account(
     else:
         for key, value in values.items():
             setattr(account, key, value)
+
+
+def _validate_meta_deletion_permissions(user_token: str, has_instagram: bool) -> None:
+    permissions_result = _provider_response(
+        httpx.get(
+            _graph_url("me/permissions"),
+            params={"access_token": user_token},
+            timeout=20,
+        ),
+        "Meta permission verification",
+    )
+    granted: set[str] = set()
+    for permission in _response_array(permissions_result.get("data")):
+        permission_name = permission.get("permission")
+        if permission.get("status") == "granted" and isinstance(permission_name, str):
+            granted.add(permission_name)
+    required = {"pages_manage_posts"}
+    if has_instagram:
+        required.add("instagram_manage_contents")
+    missing = sorted(required - granted)
+    if missing:
+        permissions = ", ".join(missing)
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            f"Meta authorization is missing required deletion permission(s): "
+            f"{permissions}. Add them to the Meta Login for Business configuration, "
+            "complete App Review/Advanced Access if Meta requires it, then reconnect.",
+        )
 
 
 def _finish_meta_oauth(session: Session, code: str, state: str) -> None:
@@ -614,13 +652,14 @@ def _finish_meta_oauth(session: Session, code: str, state: str) -> None:
     page_token = page.get("access_token")
     if not isinstance(page_id, str) or not isinstance(page_token, str):
         raise RuntimeError("Meta returned an invalid Fendly Page")
-    page_name = str(page.get("name") or "Fendly Facebook Page")
-    _upsert_social_account(session, "facebook", page_id, page_name, page_token)
     instagram_value = page.get("instagram_business_account")
     instagram: dict[str, object] | None = (
         _response_object(instagram_value) if instagram_value is not None else None
     )
     instagram_id = instagram.get("id") if instagram is not None else None
+    _validate_meta_deletion_permissions(user_token, isinstance(instagram_id, str))
+    page_name = str(page.get("name") or "Fendly Facebook Page")
+    _upsert_social_account(session, "facebook", page_id, page_name, page_token)
     if isinstance(instagram_id, str) and instagram is not None:
         _upsert_social_account(
             session,
