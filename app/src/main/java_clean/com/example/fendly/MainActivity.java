@@ -12173,6 +12173,22 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
 
         LinearLayout actions = new LinearLayout(this);
         actions.setGravity(Gravity.END | Gravity.CENTER_VERTICAL);
+        int authenticators = BiometricManager.Authenticators.BIOMETRIC_STRONG;
+        if (BiometricManager.from(this).canAuthenticate(authenticators)
+                == BiometricManager.BIOMETRIC_SUCCESS) {
+            ImageButton fingerprint = new ImageButton(this);
+            fingerprint.setImageResource(R.drawable.ic_fingerprint);
+            fingerprint.setContentDescription("Enter admin workspace with fingerprint");
+            fingerprint.setColorFilter(accentColor());
+            fingerprint.setBackground(roundWithStroke(surfaceColor(), 12, borderColor()));
+            fingerprint.setScaleType(ImageView.ScaleType.CENTER_INSIDE);
+            fingerprint.setPadding(dp(8), dp(8), dp(8), dp(8));
+            fingerprint.setOnClickListener(view -> authenticateAdminWithBiometric(dialog));
+            LinearLayout.LayoutParams fingerprintParams =
+                    new LinearLayout.LayoutParams(dp(44), dp(44));
+            fingerprintParams.setMargins(0, 0, dp(8), 0);
+            actions.addView(fingerprint, fingerprintParams);
+        }
         TextView cancel = text("Cancel", 12, secondaryTextColor(), Typeface.NORMAL);
         cancel.setGravity(Gravity.CENTER);
         cancel.setOnClickListener(view -> dialog.dismiss());
@@ -12209,6 +12225,59 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             window.setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
             window.setLayout(Math.min(getResources().getDisplayMetrics().widthPixels - dp(36), dp(360)), -2);
         }
+    }
+
+    private void authenticateAdminWithBiometric(Dialog dialog) {
+        int authenticators = BiometricManager.Authenticators.BIOMETRIC_STRONG;
+        BiometricManager biometricManager = BiometricManager.from(this);
+        if (biometricManager.canAuthenticate(authenticators)
+                != BiometricManager.BIOMETRIC_SUCCESS) {
+            Toast.makeText(
+                    this,
+                    "Fingerprint login is not available on this device.",
+                    Toast.LENGTH_LONG
+            ).show();
+            return;
+        }
+        BiometricPrompt prompt = new BiometricPrompt(
+                this,
+                ContextCompat.getMainExecutor(this),
+                new BiometricPrompt.AuthenticationCallback() {
+                    @Override
+                    public void onAuthenticationSucceeded(
+                            BiometricPrompt.AuthenticationResult result
+                    ) {
+                        dialog.dismiss();
+                        adminAlertsAutoShownThisVisit = false;
+                        adminReportFilter = "";
+                        adminReportCategory = "items";
+                        showAdminDashboard();
+                    }
+
+                    @Override
+                    public void onAuthenticationError(
+                            int errorCode,
+                            CharSequence errorString
+                    ) {
+                        if (errorCode != BiometricPrompt.ERROR_USER_CANCELED
+                                && errorCode != BiometricPrompt.ERROR_NEGATIVE_BUTTON
+                                && errorCode != BiometricPrompt.ERROR_CANCELED) {
+                            Toast.makeText(
+                                    MainActivity.this,
+                                    errorString,
+                                    Toast.LENGTH_SHORT
+                            ).show();
+                        }
+                    }
+                }
+        );
+        BiometricPrompt.PromptInfo promptInfo = new BiometricPrompt.PromptInfo.Builder()
+                .setTitle("Admin workspace")
+                .setSubtitle("Confirm your identity to continue")
+                .setAllowedAuthenticators(authenticators)
+                .setNegativeButtonText("Cancel")
+                .build();
+        prompt.authenticate(promptInfo);
     }
 
     private String fetchAdminItems(String idToken) {
