@@ -408,16 +408,24 @@ def remove_report_publications(
         if account is None:
             error_text = f"{publication.provider} post could not be removed: account is disconnected."
         else:
-            availability = _check_external_post(
+            external_post_ids, feed_complete = _list_external_post_ids(
                 account,
-                publication.external_post_id,
+                {publication.external_post_id},
             )
-            if availability == "unavailable":
+            if feed_complete and publication.external_post_id not in external_post_ids:
                 logger.info(
-                    "Meta %s post %s was already unavailable during report removal",
+                    "Meta %s feed confirms post %s is already unavailable",
                     publication.provider,
                     publication.external_post_id,
                 )
+                session.delete(publication)
+                continue
+            availability = (
+                "available"
+                if publication.external_post_id in external_post_ids
+                else _check_external_post(account, publication.external_post_id)
+            )
+            if availability == "unavailable":
                 session.delete(publication)
                 continue
             try:
@@ -1001,12 +1009,6 @@ def _check_external_post(account: SocialAccount, external_post_id: str) -> str:
 
     if not response.is_error and isinstance(payload.get("id"), str):
         return "available"
-
-    error_value = payload.get("error")
-    if isinstance(error_value, dict):
-        error_payload = _response_object(error_value)
-        if error_payload.get("code") == 100 and error_payload.get("error_subcode") == 33:
-            return "unavailable"
 
     logger.warning("Meta post lookup was inconclusive: HTTP %s", response.status_code)
     return "check_failed"

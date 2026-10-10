@@ -801,6 +801,7 @@ def test_external_post_lookup_reports_missing_posts_and_inconclusive_errors(monk
             return self.payload
 
     responses = iter([
+        FakeResponse(404, {"error": {"code": 100}}),
         FakeResponse(400, {"error": {"code": 100, "error_subcode": 33}}),
         FakeResponse(400, {"error": {"code": 190}}),
     ])
@@ -817,6 +818,7 @@ def test_external_post_lookup_reports_missing_posts_and_inconclusive_errors(monk
     )
 
     assert social_publishing._check_external_post(account, "deleted-post") == "unavailable"
+    assert social_publishing._check_external_post(account, "ambiguous-post") == "check_failed"
     assert social_publishing._check_external_post(account, "inaccessible-post") == "check_failed"
 
 
@@ -860,7 +862,7 @@ def test_instagram_post_lookup_uses_user_token_to_confirm_manual_deletion(monkey
         deletion_access_token_encrypted="encrypted-user-token",
     )
 
-    assert social_publishing._check_external_post(account, "deleted-instagram-post") == "unavailable"
+    assert social_publishing._check_external_post(account, "deleted-instagram-post") == "check_failed"
     assert requested["params"]["access_token"] == "facebook-user-token"
 
 
@@ -868,8 +870,13 @@ def test_removing_report_accepts_instagram_post_already_deleted_on_meta(monkeypa
     factory = _session_factory()
     monkeypatch.setattr(
         social_publishing,
+        "_list_external_post_ids",
+        lambda _account, _post_ids: (set(), True),
+    )
+    monkeypatch.setattr(
+        social_publishing,
         "_check_external_post",
-        lambda _account, _post_id: "unavailable",
+        lambda *_args: pytest.fail("Complete feed reconciliation should be sufficient"),
     )
 
     def unexpected_delete(*_args, **_kwargs):
@@ -905,6 +912,60 @@ def test_removing_report_accepts_instagram_post_already_deleted_on_meta(monkeypa
 
         assert failures == []
         assert session.get(SocialPublication, "manually-deleted-instagram-publication") is None
+
+
+def test_removing_report_accepts_facebook_post_missing_from_complete_page_feed(monkeypatch):
+    factory = _session_factory()
+    monkeypatch.setattr(
+        social_publishing,
+        "_list_external_post_ids",
+        lambda account, _post_ids: (
+            (set(), True) if account.provider == "facebook" else (set(), False)
+        ),
+    )
+    monkeypatch.setattr(
+        social_publishing,
+        "_check_external_post",
+        lambda *_args: pytest.fail("Complete Page feed reconciliation should be sufficient"),
+    )
+    monkeypatch.setattr(
+        social_publishing,
+        "_delete_meta_post",
+        lambda *_args: pytest.fail("Should not DELETE a post absent from a complete Page feed"),
+    )
+
+    with factory() as session:
+        session.add(
+            SocialAccount(
+                provider="facebook",
+                account_id="page-id",
+                account_name="Fendly Facebook",
+                access_token_encrypted="encrypted-page-token",
+            )
+        )
+        session.add(
+            SocialPublication(
+                id="manually-deleted-facebook-publication",
+                report_id="manually-deleted-facebook-report",
+                report_type="lost",
+                provider="facebook",
+                status="published",
+                external_post_id="page-id_post-id",
+            )
+        )
+        session.commit()
+
+        failures = social_publishing.remove_report_publications(
+            session,
+            "manually-deleted-facebook-report",
+            "lost",
+        )
+
+        assert failures == []
+        assert session.get(
+            SocialPublication,
+            "manually-deleted-facebook-publication",
+        ) is None
 
 
 def test_publication_refresh_reconciles_feed_and_preserves_inconclusive_checks(monkeypatch):
@@ -1136,6 +1197,11 @@ def test_admin_report_removal_deletes_meta_posts_and_retains_failed_deletions(mo
         social_publishing,
         "_check_external_post",
         lambda *_args: "available",
+    )
+    monkeypatch.setattr(
+        social_publishing,
+        "_list_external_post_ids",
+        lambda _account, expected_ids: (expected_ids, True),
     )
     requests = []
 

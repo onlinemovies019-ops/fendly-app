@@ -192,10 +192,12 @@ revoke Fendly from the provider's app settings.
 
 Admin removal of a fake report disables any queued sharing and requests
 deletion of each linked Facebook and Instagram post before deleting the report
-from Fendly. Fendly removes the report only after Meta explicitly confirms each
-deletion. If a post is still publishing, the account is disconnected, or Meta
-rejects or cannot confirm deletion, the report remains in Fendly and the admin
-must resolve the listed issue and retry. Keep the Meta account connected with
+from Fendly. Fendly treats a post as already deleted only when a complete,
+successful platform feed check confirms that its ID is absent; otherwise it
+requires Meta to confirm deletion. If a post is still publishing, the account
+is disconnected, or feed access and deletion are inconclusive, the report
+remains in Fendly and the admin must resolve the listed issue and retry. Keep
+the Meta account connected with
 the required Page and Instagram publishing permissions for this moderation
 workflow. Users may delete their own reports only during the first hour after
 posting; that endpoint uses the same social-post deletion and confirmation
