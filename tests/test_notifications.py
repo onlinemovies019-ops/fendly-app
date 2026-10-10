@@ -1,3 +1,5 @@
+from datetime import datetime, timezone
+
 import pytest
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
@@ -215,8 +217,17 @@ async def test_admin_alert_list_falls_back_to_database_when_supabase_is_unavaila
 
 
 def test_report_owner_can_delete_report_and_related_records(notification_session):
+    recently_created_at = datetime.now(timezone.utc)
     notification_session.add_all([
-        FoundItem(id="found-1", created_by="user-1", title="Found wallet", description="Wallet", lat=0, lng=0),
+        FoundItem(
+            id="found-1",
+            created_by="user-1",
+            title="Found wallet",
+            description="Wallet",
+            lat=0,
+            lng=0,
+            created_at=recently_created_at,
+        ),
         LostItem(id="lost-1", created_by="user-2", title="Lost wallet", description="Wallet", lat=0, lng=0),
         AdminMatchAlert(
             id="linked-alert",
@@ -265,6 +276,29 @@ def test_report_owner_can_delete_report_and_related_records(notification_session
     assert notification_session.get(AdminMatchAlert, "unrelated-alert") is not None
     assert notification_session.scalars(select(UserNotification)).all() == []
     assert notification_session.get(SocialPublication, "publication-1") is None
+
+
+def test_report_owner_cannot_delete_report_after_one_hour(notification_session):
+    old_report = FoundItem(
+        id="old-report",
+        created_by="user-1",
+        title="Found wallet",
+        description="Wallet",
+        lat=0,
+        lng=0,
+        created_at=datetime(2025, 1, 1, tzinfo=timezone.utc),
+    )
+    notification_session.add(old_report)
+    notification_session.commit()
+
+    with pytest.raises(admin_module.HTTPException) as error:
+        items_module.delete_item(
+            "found", "old-report", session=notification_session, uid="user-1"
+        )
+
+    assert error.value.status_code == 403
+    assert "within one hour" in error.value.detail
+    assert notification_session.get(FoundItem, "old-report") is not None
 
 
 def test_report_delete_rejects_unknown_report_type(notification_session):

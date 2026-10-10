@@ -26,8 +26,9 @@ from database import SessionLocal, get_db
 from image_matching import cosine_similarity, create_image_embedding
 from imei_security import imei_digest, validate_imei
 from moderation import moderate_content
-from models import AdminMatchAlert, ContentReport, FoundItem, LostItem, SocialPublication, UserNotification
+from models import AdminMatchAlert, FoundItem, LostItem
 from notifications import persist_admin_match_alert, send_admin_match_email, send_match_notifications
+from report_deletion import delete_report_from_app
 from routers.payments import require_lost_report_entitlement
 from schemas import ItemCreate, ItemResponse, ItemUpdate, MatchPreview, MatchRequest, MatchResponse
 from social_publishing import schedule_report_publications
@@ -682,6 +683,7 @@ async def list_my_items(
             "image_urls": item.image_urls or ([item.image_url] if item.image_url else []),
             "edit_count": item.edit_count,
             "created_at": item.created_at,
+            "can_delete": _within_user_report_deletion_window(item.created_at),
             "status": "Active" if item_type == "LOST" else "Published",
             "workflow_stage": (
                 4 if item.id in recovered_report_ids
@@ -691,6 +693,16 @@ async def list_my_items(
         }
         for item_type, item in items
     ]
+
+
+def _within_user_report_deletion_window(created_at: datetime | None) -> bool:
+    if created_at is None:
+        return False
+    created_at_utc = (
+        created_at if created_at.tzinfo else created_at.replace(tzinfo=timezone.utc)
+    )
+    now = datetime.now(timezone.utc)
+    return created_at_utc <= now and now - created_at_utc <= timedelta(hours=1)
 
 
 @router.put("/items/{item_type}/{item_id}", response_model=ItemResponse)
@@ -782,26 +794,32 @@ def delete_item(
     if report is None or report.created_by != uid:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Report not found")
 
+    if not _within_user_report_deletion_window(report.created_at):
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            "Reports can only be deleted within one hour of posting.",
+        )
+
+    report.social_share_consent = False
+    session.commit()
+
     try:
-        session.execute(
-            delete(ContentReport).where(
-                ContentReport.report_type == normalized_type,
-                ContentReport.report_id == item_id,
-            )
+        from social_publishing import remove_report_publications
+
+        platform_failures = remove_report_publications(
+            session, item_id, normalized_type
         )
-        session.execute(
-            delete(AdminMatchAlert).where(
-                or_(
-                    AdminMatchAlert.lost_item_id == item_id,
-                    AdminMatchAlert.found_item_id == item_id,
-                )
-            )
-        )
-        session.execute(delete(SocialPublication).where(SocialPublication.report_id == item_id))
-        if normalized_type == "found":
-            session.execute(delete(UserNotification).where(UserNotification.found_item_id == item_id))
-        session.delete(report)
         session.commit()
+        if platform_failures:
+            raise HTTPException(
+                status.HTTP_502_BAD_GATEWAY,
+                "The report was not deleted because Facebook or Instagram did not "
+                "confirm deletion of every linked post. Resolve the listed issue "
+                "and retry: " + " ".join(platform_failures),
+            )
+        delete_report_from_app(session, report, normalized_type)
+    except HTTPException:
+        raise
     except Exception as exc:
         session.rollback()
         logger.exception("Could not delete %s report %s", normalized_type, item_id)

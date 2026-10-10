@@ -1102,6 +1102,29 @@ def test_meta_post_deletion_requires_explicit_success_confirmation(monkeypatch):
         assert "Permission denied" in failed_publication.last_error
 
 
+def test_admin_or_owner_removal_blocks_ambiguous_publication_without_post_id():
+    factory = _session_factory()
+    with factory() as session:
+        publication = SocialPublication(
+            id="ambiguous-publication",
+            report_id="report-with-unknown-post",
+            report_type="lost",
+            provider="facebook",
+            status="failed",
+            last_error=social_publishing.UNEXPECTED_PUBLISHING_FAILURE,
+        )
+        session.add(publication)
+        session.commit()
+
+        failures = social_publishing.remove_report_publications(
+            session, "report-with-unknown-post", "lost"
+        )
+
+        assert len(failures) == 1
+        assert "may have been published without a saved post ID" in failures[0]
+        assert session.get(SocialPublication, "ambiguous-publication") is not None
+
+
 def test_publication_worker_does_not_retry_ambiguous_provider_failure(monkeypatch):
     factory = _session_factory()
     monkeypatch.setattr(social_publishing, "SessionLocal", factory)

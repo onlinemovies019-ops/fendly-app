@@ -9,7 +9,7 @@ import time
 import httpx
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
-from sqlalchemy import delete, desc, func, or_, select
+from sqlalchemy import desc, func, or_, select
 from sqlalchemy.orm import Session
 
 from ai_matching import create_embedding, item_text
@@ -18,13 +18,13 @@ from database import get_db
 from image_matching import cosine_similarity, create_image_embedding
 from models import (
     AdminMatchAlert,
-    ContentReport,
     FoundItem,
     LostItem,
     User,
     UserNotification,
 )
 from notifications import persist_admin_match_alert, send_match_notifications
+from report_deletion import delete_report_from_app
 from schemas import ItemResponse
 from translation import translate_report_fields, translate_report_fields_batch
 
@@ -380,54 +380,11 @@ def remove_admin_report(
         )
         raise HTTPException(502, detail)
 
-    match_alert_failures: list[str] = []
-    for column in ("lost_item_id", "found_item_id"):
-        try:
-            _supabase_admin_alert_request(
-                "DELETE",
-                "admin_match_alerts",
-                params={column: f"eq.{item_id}"},
-            )
-        except HTTPException as error:
-            logger.warning(
-                "Could not remove Supabase match alerts for deleted report %s (HTTP %s)",
-                item_id,
-                error.status_code,
-            )
-            match_alert_failures.append(
-                "Admin match alerts could not be removed from the notification store."
-            )
-    if match_alert_failures:
-        raise HTTPException(
-            503,
-            "The report was NOT removed from Fendly because its admin match alerts "
-            "could not be cleared. Retry after the notification store is available.",
-        )
-
-    session.execute(
-        delete(ContentReport).where(
-            ContentReport.report_type == normalized_type,
-            ContentReport.report_id == item_id,
-        )
-    )
-    session.execute(
-        delete(AdminMatchAlert).where(
-            or_(
-                AdminMatchAlert.lost_item_id == item_id,
-                AdminMatchAlert.found_item_id == item_id,
-            )
-        )
-    )
-    if normalized_type == "found":
-        session.execute(
-            delete(UserNotification).where(UserNotification.found_item_id == item_id)
-        )
-    session.delete(report)
-    session.commit()
+    delete_report_from_app(session, report, normalized_type)
     return {
         "status": "removed",
         "platform_failures": platform_failures,
-        "match_alert_failures": list(dict.fromkeys(match_alert_failures)),
+        "match_alert_failures": [],
     }
 
 

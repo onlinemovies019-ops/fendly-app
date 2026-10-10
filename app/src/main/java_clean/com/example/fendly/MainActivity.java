@@ -1233,6 +1233,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         user.getIdToken(false).addOnSuccessListener(tokenResult -> network.execute(() -> {
             HttpURLConnection connection = null;
             int responseCode = -1;
+            String responseBody = "";
             try {
                 connection = (HttpURLConnection) new URL(
                         API_BASE + "/api/items/" + reportType + "/" + Uri.encode(reportId)
@@ -1250,22 +1251,37 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                     });
                     return;
                 }
-                String errorBody = readStream(connection.getErrorStream());
-                Log.w("REPORT_DELETE", "Delete failed with HTTP " + responseCode + ": " + errorBody);
+                responseBody = readStream(connection.getErrorStream());
+                Log.w("REPORT_DELETE", "Delete failed with HTTP " + responseCode + ": " + responseBody);
             } catch (Exception error) {
                 Log.e("REPORT_DELETE", "Could not delete report " + reportId, error);
             } finally {
                 if (connection != null) connection.disconnect();
             }
+            String finalResponseBody = responseBody;
+            int finalResponseCode = responseCode;
             runOnUiThread(() -> Toast.makeText(
                     this,
-                    LanguageManager.profileText(this, "report_delete_failed"),
+                    reportDeleteErrorMessage(finalResponseCode, finalResponseBody),
                     Toast.LENGTH_LONG
             ).show());
         })).addOnFailureListener(error -> {
             Log.e("REPORT_DELETE", "Could not authenticate report deletion", error);
             Toast.makeText(this, LanguageManager.profileText(this, "report_delete_failed"), Toast.LENGTH_LONG).show();
         });
+    }
+
+    private String reportDeleteErrorMessage(int responseCode, String responseBody) {
+        try {
+            String detail = new JSONObject(responseBody).optString("detail", "").trim();
+            if (!detail.isEmpty()) return detail;
+        } catch (JSONException error) {
+            Log.w("REPORT_DELETE", "Delete endpoint returned a non-JSON error response", error);
+        }
+        if (responseCode < 0) {
+            return LanguageManager.profileText(this, "report_delete_failed");
+        }
+        return "Report could not be deleted (HTTP " + responseCode + ").";
     }
 
     private void showDeleteAccountDialog() {
@@ -11349,7 +11365,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         }
 
         if (adminView) {
-            TextView removeFakeReport = actionButton("Remove fake report", false);
+            TextView removeFakeReport = actionButton("Delete report", false);
             removeFakeReport.setTextColor(Color.rgb(190, 45, 55));
             addFieldToDialog(content, removeFakeReport);
             removeFakeReport.setOnClickListener(
@@ -11357,7 +11373,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             );
         }
 
-        if (allowDelete && !adminView) {
+        if (allowDelete && !adminView && report.optBoolean("can_delete", false)) {
             TextView delete = actionButton(LanguageManager.profileText(this, "delete_report"), false);
             delete.setTextColor(Color.rgb(190, 45, 55));
             addFieldToDialog(content, delete);
@@ -11376,14 +11392,14 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
 
     private void confirmAdminReportRemoval(JSONObject report, Dialog detailsDialog) {
         new AlertDialog.Builder(this)
-                .setTitle("Remove fake report?")
+                .setTitle("Delete report?")
                 .setMessage(
-                        "This permanently removes the report from Fendly and attempts to delete "
-                                + "its Facebook and Instagram posts. If a platform deletion fails, "
-                                + "you will be told which posts still need attention."
+                        "This permanently deletes the report from Fendly and removes its linked "
+                                + "Facebook and Instagram posts. The report will stay in Fendly "
+                                + "unless both platforms confirm deletion."
                 )
                 .setNegativeButton("Cancel", null)
-                .setPositiveButton("Remove report", (confirm, which) ->
+                .setPositiveButton("Delete report", (confirm, which) ->
                         removeAdminReport(report, detailsDialog)
                 )
                 .show();
@@ -11428,12 +11444,12 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                     if ((failures != null && failures.length() > 0)
                             || (alertFailures != null && alertFailures.length() > 0)) {
                         StringBuilder message = new StringBuilder(
-                                "Report removed from Fendly, but some cleanup failed."
+                                "Report was not fully deleted. Resolve the platform issue and retry."
                         );
                         appendRemovalFailures(message, failures);
                         appendRemovalFailures(message, alertFailures);
                         new AlertDialog.Builder(this)
-                                .setTitle("Report removed with warnings")
+                                .setTitle("Deletion incomplete")
                                 .setMessage(message.toString())
                                 .setPositiveButton("OK", null)
                                 .show();
@@ -11448,7 +11464,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                     Log.e("ADMIN_REPORT", "Could not read report removal response", error);
                     Toast.makeText(
                             this,
-                            "Report removed, but the cleanup result could not be read.",
+                            "Report deletion completed, but the cleanup result could not be read.",
                             Toast.LENGTH_LONG
                     ).show();
                 }

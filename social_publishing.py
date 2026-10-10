@@ -379,6 +379,16 @@ def remove_report_publications(
             )
             continue
         if not publication.external_post_id:
+            if publication.status == "failed" and (
+                publication.last_error == UNEXPECTED_PUBLISHING_FAILURE
+                or "Not retried automatically to avoid duplicate public posts."
+                in (publication.last_error or "")
+            ):
+                failures.append(
+                    f"{publication.provider} post may have been published without a saved "
+                    "post ID. Reconcile the Meta publication before retrying removal."
+                )
+                continue
             session.delete(publication)
             continue
 

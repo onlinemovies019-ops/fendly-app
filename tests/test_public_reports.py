@@ -1,4 +1,5 @@
 import asyncio
+from datetime import datetime, timezone
 
 import pytest
 from fastapi import HTTPException
@@ -172,6 +173,84 @@ def test_admin_report_remains_visible_until_all_social_posts_are_removed(
             assert report.social_share_consent is False
     finally:
         main.app.dependency_overrides.pop(admin_module.get_current_user, None)
+
+
+def test_owner_report_remains_visible_when_social_post_deletion_fails(
+    reports_client, monkeypatch
+):
+    client, session_factory = reports_client
+    main.app.dependency_overrides[items_module.get_current_user] = lambda: "report-owner"
+    monkeypatch.setattr(
+        "social_publishing.remove_report_publications",
+        lambda session, report_id, report_type: [
+            "facebook post could not be removed: permission denied"
+        ],
+    )
+    try:
+        with Session(session_factory.kw["bind"]) as session:
+            session.add(LostItem(
+                id="owner-social-report",
+                created_by="report-owner",
+                title="Lost cat",
+                description="Details",
+                lat=0,
+                lng=0,
+                social_share_consent=True,
+                created_at=datetime.now(timezone.utc),
+            ))
+            session.commit()
+
+        listed_reports = client.get("/api/items/mine")
+        assert listed_reports.status_code == 200
+        assert listed_reports.json()[0]["can_delete"] is True
+
+        response = client.delete("/api/items/lost/owner-social-report")
+
+        assert response.status_code == 502
+        assert "facebook post" in response.json()["detail"]
+        with Session(session_factory.kw["bind"]) as session:
+            report = session.get(LostItem, "owner-social-report")
+            assert report is not None
+            assert report.social_share_consent is False
+    finally:
+        main.app.dependency_overrides.pop(items_module.get_current_user, None)
+
+
+def test_my_reports_only_marks_recent_reports_as_deletable(reports_client, monkeypatch):
+    client, session_factory = reports_client
+    main.app.dependency_overrides[items_module.get_current_user] = lambda: "report-owner"
+    try:
+        with Session(session_factory.kw["bind"]) as session:
+            session.add_all([
+                LostItem(
+                    id="recent-report",
+                    created_by="report-owner",
+                    title="Lost cat",
+                    description="Recent",
+                    lat=0,
+                    lng=0,
+                    created_at=datetime.now(timezone.utc),
+                ),
+                LostItem(
+                    id="old-report",
+                    created_by="report-owner",
+                    title="Lost dog",
+                    description="Old",
+                    lat=0,
+                    lng=0,
+                    created_at=datetime(2025, 1, 1, tzinfo=timezone.utc),
+                ),
+            ])
+            session.commit()
+
+        response = client.get("/api/items/mine")
+
+        assert response.status_code == 200
+        reports = {report["id"]: report for report in response.json()}
+        assert reports["recent-report"]["can_delete"] is True
+        assert reports["old-report"]["can_delete"] is False
+    finally:
+        main.app.dependency_overrides.pop(items_module.get_current_user, None)
 
 
 def test_non_admin_cannot_remove_report(reports_client, monkeypatch):

@@ -176,7 +176,9 @@ deletion. If a post is still publishing, the account is disconnected, or Meta
 rejects or cannot confirm deletion, the report remains in Fendly and the admin
 must resolve the listed issue and retry. Keep the Meta account connected with
 the required Page and Instagram publishing permissions for this moderation
-workflow.
+workflow. Users may delete their own reports only during the first hour after
+posting; that endpoint uses the same social-post deletion and confirmation
+requirements as admin removal.
 
 Each report has an unchecked opt-in. A consented report publishes its type and
 title plus a link to that specific report (`FENDLY_APP_URL/item/{report_id}`;
