@@ -529,10 +529,9 @@ def _delete_meta_post(
             or "permission" in error_text.casefold()
         ):
             raise RuntimeError(
-                f"{error_text}. Instagram deletion requires the "
-                "instagram_manage_contents permission. Add it to the Meta Login "
-                "for Business configuration, obtain Meta approval if required, "
-                "then reconnect the Instagram account."
+                f"{error_text}. Meta did not grant instagram_manage_contents. If "
+                "this permission is unavailable in the Meta Login for Business "
+                "configuration, remove the post directly in Instagram, then retry."
             ) from error
         raise
     if result.get("success") is not True:
@@ -600,26 +599,29 @@ def _debug_meta_token_scopes(
     return granted
 
 
-def _validate_meta_deletion_permissions(granted: set[str], has_instagram: bool) -> None:
-    required = {"pages_manage_posts"}
-    if has_instagram:
-        required.add("instagram_manage_contents")
-    missing = sorted(required - granted)
-    if missing:
-        permissions = ", ".join(missing)
+def _validate_meta_deletion_permissions(granted: set[str], has_instagram: bool) -> bool:
+    if "pages_manage_posts" not in granted:
         logger.warning(
-            "Meta OAuth token is missing required deletion permission(s): %s",
-            permissions,
+            "Meta OAuth token is missing pages_manage_posts; Facebook post deletion "
+            "will not work."
         )
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST,
-            f"Meta authorization is missing required deletion permission(s): "
-            f"{permissions}. Add them to the Meta Login for Business configuration, "
+            "Meta authorization is missing pages_manage_posts. Add it to the "
+            "Meta Login for Business configuration, "
             "complete App Review/Advanced Access if Meta requires it, then reconnect.",
         )
+    if has_instagram and "instagram_manage_contents" not in granted:
+        logger.warning(
+            "Meta OAuth token is missing instagram_manage_contents; Instagram media "
+            "deletion is unavailable for this connection. Meta's documented Facebook "
+            "Login for Business permissions do not currently list this permission."
+        )
+        return False
+    return True
 
 
-def _finish_meta_oauth(session: Session, code: str, state: str) -> None:
+def _finish_meta_oauth(session: Session, code: str, state: str) -> bool:
     _consume_state(session, state)
     app_id = _required_env("META_APP_ID")
     app_secret = _required_env("META_APP_SECRET")
@@ -685,7 +687,10 @@ def _finish_meta_oauth(session: Session, code: str, state: str) -> None:
         _response_object(instagram_value) if instagram_value is not None else None
     )
     instagram_id = instagram.get("id") if instagram is not None else None
-    _validate_meta_deletion_permissions(granted_scopes, isinstance(instagram_id, str))
+    instagram_deletion_available = _validate_meta_deletion_permissions(
+        granted_scopes,
+        isinstance(instagram_id, str),
+    )
     page_name = str(page.get("name") or "Fendly Facebook Page")
     _upsert_social_account(session, "facebook", page_id, page_name, page_token)
     if isinstance(instagram_id, str) and instagram is not None:
@@ -699,6 +704,7 @@ def _finish_meta_oauth(session: Session, code: str, state: str) -> None:
     else:
         session.execute(delete(SocialAccount).where(SocialAccount.provider == "instagram"))
     session.commit()
+    return instagram_deletion_available
 
 
 @router.get("/status")
@@ -1081,7 +1087,7 @@ def social_oauth_callback(
     if not code or not state:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Authorization response is missing required values.")
     try:
-        _finish_meta_oauth(session, code, state)
+        instagram_deletion_available = _finish_meta_oauth(session, code, state)
     except HTTPException:
         raise
     except (httpx.HTTPError, RuntimeError, ValueError, TypeError) as exception:
@@ -1091,6 +1097,14 @@ def social_oauth_callback(
             status.HTTP_502_BAD_GATEWAY,
             "The social platform could not complete authorization. Check configuration and reconnect.",
         ) from exception
+    if not instagram_deletion_available:
+        return HTMLResponse(
+            "<!doctype html><title>Fendly social account connected</title>"
+            "<p>Fendly connected successfully, but Meta did not grant "
+            "instagram_manage_contents. Instagram posts cannot be deleted by Fendly "
+            "with this authorization. Remove Instagram posts in Instagram before "
+            "retrying report removal. You may close this window.</p>"
+        )
     return HTMLResponse(
         "<!doctype html><title>Fendly social account connected</title>"
         "<p>Fendly social account connected. You may close this window.</p>"

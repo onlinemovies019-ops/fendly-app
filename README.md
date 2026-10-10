@@ -139,12 +139,16 @@ Fendly Facebook Page and its connected Instagram professional account. Its
 Facebook Login for Business permissions need `pages_show_list`,
 `pages_read_engagement`, `pages_manage_posts`, `instagram_basic`, and
 `instagram_content_publish` (singular). To allow Fendly to delete published
-Instagram media during report removal, also include `instagram_manage_contents`.
+Instagram media during report removal, Meta's error message requests
+`instagram_manage_contents`; however, this permission is not in Meta's currently
+documented Facebook Login for Business supported-permissions list.
 Fendly includes these permissions in the Meta OAuth `scope` parameter as a
 comma-separated list and checks the exchanged token's granted scopes through
-Meta's `debug_token` endpoint before saving the connection. If the callback
-reports a missing deletion permission, update the Login for Business
-configuration and re-authorize.
+Meta's `debug_token` endpoint. A missing `pages_manage_posts` permission blocks
+the connection because Facebook deletion depends on it. If Meta does not grant
+`instagram_manage_contents`, Fendly connects but displays a warning; Instagram
+deletion remains unavailable, and report removal will fail closed until the
+Instagram post is removed manually.
 Set its configuration ID as
 `META_LOGIN_CONFIG_ID`, set the currently supported Graph API version in
 `META_GRAPH_API_VERSION`, and register the Meta callback URL above. If the
@@ -192,10 +196,10 @@ must resolve the listed issue and retry. Keep the Meta account connected with
 the required Page and Instagram publishing permissions for this moderation
 workflow. Users may delete their own reports only during the first hour after
 posting; that endpoint uses the same social-post deletion and confirmation
-requirements as admin removal. After adding `instagram_manage_contents` to the
-Meta configuration, reconnect the brand account so the stored token receives
-the new permission. Meta App Review/Advanced Access may be required before the
-permission is granted outside app roles.
+requirements as admin removal. If Meta makes `instagram_manage_contents` available for this integration, add
+it to the configuration and reconnect so the stored token receives the grant.
+Meta App Review/Advanced Access may be required before the permission is
+granted outside app roles.
 
 Each report has an unchecked opt-in. A consented report publishes its type and
 title plus a link to that specific report (`FENDLY_APP_URL/item/{report_id}`;

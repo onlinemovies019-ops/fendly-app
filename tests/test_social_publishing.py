@@ -1113,10 +1113,10 @@ def test_admin_report_removal_deletes_meta_posts_and_retains_failed_deletions(mo
         } == {"facebook-post", "instagram-post", "already-removed-post"}
         assert failures == [
             "instagram post could not be removed: Meta instagram post deletion failed "
-            "(HTTP 403): code 200; Permission denied. Instagram deletion requires "
-            "the instagram_manage_contents permission. Add it to the Meta Login for "
-            "Business configuration, obtain Meta approval if required, then reconnect "
-            "the Instagram account."
+            "(HTTP 403): code 200; Permission denied. Meta did not grant "
+            "instagram_manage_contents. If this permission is unavailable in the "
+            "Meta Login for Business configuration, remove the post directly in "
+            "Instagram, then retry."
         ]
         assert already_removed_failures == [
             "facebook post could not be removed: Meta facebook post deletion failed "
@@ -1158,7 +1158,7 @@ def test_meta_post_deletion_requires_explicit_success_confirmation(monkeypatch):
         social_publishing._delete_meta_post(account, "facebook", "facebook-post")
 
 
-def test_instagram_delete_permission_error_explains_required_meta_permission(monkeypatch):
+def test_instagram_delete_permission_error_explains_missing_meta_grant(monkeypatch):
     monkeypatch.setenv("META_GRAPH_API_VERSION", "v23.0")
     monkeypatch.setattr(social_publishing, "_decrypt_token", lambda _: "page-token")
 
@@ -1191,7 +1191,8 @@ def test_instagram_delete_permission_error_explains_required_meta_permission(mon
         social_publishing._delete_meta_post(account, "instagram", "instagram-post")
 
     assert "instagram_manage_contents" in str(error.value)
-    assert "reconnect the Instagram account" in str(error.value)
+    assert "Meta did not grant" in str(error.value)
+    assert "remove the post directly in Instagram" in str(error.value)
 
 
 def test_facebook_delete_subcode_33_explains_page_permissions_and_post_id(monkeypatch):
@@ -1232,7 +1233,10 @@ def test_facebook_delete_subcode_33_explains_page_permissions_and_post_id(monkey
     assert "Page post ID (not a photo ID)" in str(error.value)
 
 
-def test_meta_oauth_rejects_missing_instagram_delete_permission(monkeypatch):
+def test_meta_oauth_connects_but_warns_when_instagram_delete_permission_is_missing(
+    monkeypatch,
+    caplog,
+):
     factory = _session_factory()
     monkeypatch.setenv("APP_SECRET_KEY", "test-secret-key-that-is-long-enough")
     monkeypatch.setenv("META_APP_ID", "meta-app-id")
@@ -1283,13 +1287,18 @@ def test_meta_oauth_rejects_missing_instagram_delete_permission(monkeypatch):
 
     monkeypatch.setattr(social_publishing.httpx, "get", fake_get)
 
-    with factory() as session, pytest.raises(HTTPException) as error:
-        social_publishing._finish_meta_oauth(session, "auth-code", "state")
+    with factory() as session:
+        instagram_deletion_available = social_publishing._finish_meta_oauth(
+            session,
+            "auth-code",
+            "state",
+        )
 
-    assert "instagram_manage_contents" in str(error.value.detail)
-    assert "reconnect" in str(error.value.detail)
-    assert session.get(SocialAccount, "facebook") is None
-    assert session.get(SocialAccount, "instagram") is None
+        assert instagram_deletion_available is False
+        assert session.get(SocialAccount, "facebook") is not None
+        assert session.get(SocialAccount, "instagram") is not None
+    assert "instagram_manage_contents" in caplog.text
+    assert "do not currently list this permission" in caplog.text
 
 
 def test_meta_login_url_requests_required_scopes_as_comma_separated_values(monkeypatch):
