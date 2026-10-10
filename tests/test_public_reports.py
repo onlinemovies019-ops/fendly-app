@@ -12,7 +12,15 @@ import main
 from routers import admin as admin_module
 from routers import items as items_module
 from routers import users as users_module
-from models import AdminMatchAlert, Base, FoundItem, LostItem
+from models import (
+    AdminMatchAlert,
+    Base,
+    ContentReport,
+    FoundItem,
+    LostItem,
+    SocialPublication,
+    UserNotification,
+)
 from routers.items import list_my_items
 
 
@@ -39,137 +47,156 @@ def reports_client(monkeypatch):
     engine.dispose()
 
 
-def add_test_reports(session_factory):
-    with Session(session_factory.kw["bind"]) as session:
-        session.add_all([
-            LostItem(
-                created_by="reporter-private-id",
-                title="Lost blue bag",
-                description="Blue bag",
-                category="bags",
-                lat=21.1458,
-                lng=79.0882,
-                report_location="Nagpur, Maharashtra",
-                status="LOST",
-            ),
-            FoundItem(
-                created_by="another-private-id",
-                title="Found keys",
-                description="Keys found near the station",
-                category="keys",
-                lat=19.0760,
-                lng=72.8777,
-                report_location="Mumbai, Maharashtra",
-            ),
-            LostItem(
-                created_by="reporter-private-id",
-                title="Recovered phone",
-                description="Phone was recovered",
-                category="electronics",
-                lat=21.1458,
-                lng=79.0882,
-                report_location="Nagpur, Maharashtra",
-                status="RECOVERED",
-            ),
-        ])
-        session.commit()
+def test_user_report_listing_is_not_exposed(reports_client):
+    client, _ = reports_client
+    assert client.get("/api/reports").status_code == 404
 
 
-def test_public_reports_returns_only_active_lost_and_found_reports(reports_client):
-    client, session_factory = reports_client
-    add_test_reports(session_factory)
-
-    response = client.get("/api/reports")
-
-    assert response.status_code == 200
-    reports = response.json()
-    assert {report["title"] for report in reports} == {"Lost blue bag", "Found keys"}
-    assert all("created_by" not in report for report in reports)
-
-
-def test_content_reports_can_be_submitted_reviewed_and_hidden(reports_client, monkeypatch):
-    client, session_factory = reports_client
-    with Session(session_factory.kw["bind"]) as session:
-        item = FoundItem(
-            created_by="owner",
-            title="Found wallet",
-            description="Brown wallet near the library",
-            category="accessories",
-            report_location="Nagpur",
-            lat=21.1458,
-            lng=79.0882,
-        )
-        session.add(item)
-        session.commit()
-        item_id = item.id
-
-    monkeypatch.setitem(
-        main.app.dependency_overrides,
-        items_module.get_current_user,
-        lambda: "reporter",
-    )
-    body = {"reason": "personal_information", "details": "Contains a phone number"}
-    response = client.post(f"/api/items/found/{item_id}/reports", json=body)
-    assert response.status_code == 201
-    assert response.json() == {"status": "received"}
-    assert client.post(f"/api/items/found/{item_id}/reports", json=body).status_code == 409
-
-    monkeypatch.setitem(
-        main.app.dependency_overrides,
-        admin_module.require_admin,
-        lambda: "admin",
-    )
-    pending = client.get("/api/admin/content-reports")
-    assert pending.status_code == 200
-    assert len(pending.json()) == 1
-    content_report_id = pending.json()[0]["id"]
-
-    review = client.post(
-        f"/api/admin/content-reports/{content_report_id}/review",
-        json={"decision": "hide"},
-    )
-    assert review.status_code == 200
-    assert review.json() == {"status": "action_taken"}
-    public_reports = client.get("/api/reports")
-    assert public_reports.status_code == 200
-    assert public_reports.json() == []
-
-
-def test_users_cannot_report_their_own_content(reports_client, monkeypatch):
-    client, session_factory = reports_client
-    with Session(session_factory.kw["bind"]) as session:
-        item = FoundItem(
-            created_by="owner",
-            title="Found wallet",
-            description="Brown wallet",
-            category="accessories",
-            lat=21.1458,
-            lng=79.0882,
-        )
-        session.add(item)
-        session.commit()
-        item_id = item.id
-
-    monkeypatch.setitem(
-        main.app.dependency_overrides,
-        items_module.get_current_user,
-        lambda: "owner",
-    )
-    response = client.post(
-        f"/api/items/found/{item_id}/reports",
+def test_user_content_flagging_is_not_exposed(reports_client):
+    client, _ = reports_client
+    assert client.get("/api/admin/content-reports").status_code == 404
+    assert client.post(
+        "/api/items/found/report-id/reports",
         json={"reason": "spam"},
-    )
-    assert response.status_code == 400
+    ).status_code == 404
 
 
-def test_public_reports_filters_by_city_case_insensitively(reports_client):
+def test_admin_removal_deletes_report_and_linked_app_records(reports_client, monkeypatch):
     client, session_factory = reports_client
-    add_test_reports(session_factory)
+    monkeypatch.setenv("ADMIN_FIREBASE_UIDS", "admin-uid")
+    monkeypatch.delenv("SUPABASE_URL", raising=False)
+    monkeypatch.delenv("SUPABASE_SERVICE_ROLE_KEY", raising=False)
+    main.app.dependency_overrides[admin_module.get_current_user] = lambda: "admin-uid"
+    monkeypatch.setattr(
+        "social_publishing.remove_report_publications",
+        lambda session, report_id, report_type: [],
+    )
+    try:
+        with Session(session_factory.kw["bind"]) as session:
+            session.add_all([
+                LostItem(
+                    id="fake-report",
+                    created_by="report-owner",
+                    title="Fake lost cat",
+                    description="Fake",
+                    lat=0,
+                    lng=0,
+                ),
+                FoundItem(
+                    id="other-report",
+                    created_by="report-owner",
+                    title="Found dog",
+                    description="Real",
+                    lat=0,
+                    lng=0,
+                ),
+                AdminMatchAlert(
+                    found_item_id="other-report",
+                    lost_item_id="fake-report",
+                    found_title="Found dog",
+                    lost_title="Fake lost cat",
+                    confidence=0.9,
+                    reason="Potential match",
+                ),
+                ContentReport(
+                    reporter_uid="admin-uid",
+                    report_type="lost",
+                    report_id="fake-report",
+                    reason="fraud",
+                ),
+                UserNotification(
+                    firebase_uid="report-owner",
+                    found_item_id="other-report",
+                    title="Possible match",
+                    body="A possible match was found.",
+                    score=0.9,
+                ),
+            ])
+            session.commit()
 
-    response = client.get("/api/reports", params={"city": "nAgPuR"})
+        response = client.delete("/api/admin/items/lost/fake-report")
 
-    assert response.status_code == 200
-    assert [report["title"] for report in response.json()] == ["Lost blue bag"]
+        assert response.status_code == 200
+        assert response.json() == {
+            "status": "removed",
+            "platform_failures": [],
+            "match_alert_failures": [],
+        }
+        with Session(session_factory.kw["bind"]) as session:
+            assert session.get(LostItem, "fake-report") is None
+            assert session.get(FoundItem, "other-report") is not None
+            assert session.query(AdminMatchAlert).count() == 0
+            assert session.query(ContentReport).count() == 0
+            assert session.query(UserNotification).count() == 1
+    finally:
+        main.app.dependency_overrides.pop(admin_module.get_current_user, None)
+
+
+def test_admin_report_remains_visible_until_all_social_posts_are_removed(
+    reports_client, monkeypatch
+):
+    client, session_factory = reports_client
+    monkeypatch.setenv("ADMIN_FIREBASE_UIDS", "admin-uid")
+    monkeypatch.delenv("SUPABASE_URL", raising=False)
+    monkeypatch.delenv("SUPABASE_SERVICE_ROLE_KEY", raising=False)
+    main.app.dependency_overrides[admin_module.get_current_user] = lambda: "admin-uid"
+    monkeypatch.setattr(
+        "social_publishing.remove_report_publications",
+        lambda session, report_id, report_type: [
+            "instagram post could not be removed: permission denied"
+        ],
+    )
+    try:
+        with Session(session_factory.kw["bind"]) as session:
+            session.add(LostItem(
+                id="partially-published-report",
+                created_by="report-owner",
+                title="Lost cat",
+                description="Details",
+                lat=0,
+                lng=0,
+                social_share_consent=True,
+            ))
+            session.commit()
+
+        response = client.delete(
+            "/api/admin/items/lost/partially-published-report"
+        )
+
+        assert response.status_code == 502
+        assert "NOT removed from Fendly" in response.json()["detail"]
+        assert "instagram post" in response.json()["detail"]
+        with Session(session_factory.kw["bind"]) as session:
+            report = session.get(LostItem, "partially-published-report")
+            assert report is not None
+            assert report.social_share_consent is False
+    finally:
+        main.app.dependency_overrides.pop(admin_module.get_current_user, None)
+
+
+def test_non_admin_cannot_remove_report(reports_client, monkeypatch):
+    client, session_factory = reports_client
+    monkeypatch.setenv("ADMIN_FIREBASE_UIDS", "admin-uid")
+    main.app.dependency_overrides[admin_module.get_current_user] = lambda: "user-uid"
+    try:
+        with Session(session_factory.kw["bind"]) as session:
+            session.add(LostItem(
+                id="protected-report",
+                created_by="report-owner",
+                title="Lost item",
+                description="Details",
+                lat=0,
+                lng=0,
+            ))
+            session.commit()
+
+        response = client.delete("/api/admin/items/lost/protected-report")
+
+        assert response.status_code == 403
+        with Session(session_factory.kw["bind"]) as session:
+            assert session.get(LostItem, "protected-report") is not None
+    finally:
+        main.app.dependency_overrides.pop(admin_module.get_current_user, None)
 
 
 def test_local_report_image_urls_are_only_allowed_for_loopback_in_development(monkeypatch):
@@ -200,64 +227,6 @@ def test_block_account_endpoints_are_not_exposed(reports_client):
 
     assert client.get("/api/users/blocked-users").status_code == 404
     assert client.post("/api/users/blocked-users/found/report-id").status_code == 404
-
-
-def test_public_reports_city_filter_excludes_coordinates_outside_india(reports_client):
-    client, session_factory = reports_client
-    with Session(session_factory.kw["bind"]) as session:
-        session.add_all([
-            FoundItem(
-                created_by="reporter-in-india",
-                title="Found item in Delhi",
-                description="Found in Delhi",
-                category="other",
-                lat=28.6139,
-                lng=77.2090,
-                report_location="Delhi, India",
-            ),
-            FoundItem(
-                created_by="reporter-outside-india",
-                title="Found item outside India",
-                description="Found outside India",
-                category="other",
-                lat=27.7172,
-                lng=85.3240,
-                report_location="Delhi, Nepal",
-            ),
-            FoundItem(
-                created_by="reporter-without-location",
-                title="Found item without Indian coordinates",
-                description="Found without Indian coordinates",
-                category="other",
-                lat=0,
-                lng=0,
-                report_location="Delhi",
-            ),
-        ])
-        session.commit()
-
-    response = client.get("/api/reports", params={"city": "Delhi"})
-
-    assert response.status_code == 200
-    assert [report["title"] for report in response.json()] == ["Found item in Delhi"]
-
-
-def test_public_reports_escapes_like_wildcards_in_city_filter(reports_client):
-    client, session_factory = reports_client
-    add_test_reports(session_factory)
-
-    response = client.get("/api/reports", params={"city": "%"})
-
-    assert response.status_code == 200
-    assert response.json() == []
-
-
-def test_public_reports_rejects_city_filter_over_max_length(reports_client):
-    client, _ = reports_client
-
-    response = client.get("/api/reports", params={"city": "x" * 121})
-
-    assert response.status_code == 422
 
 
 def test_my_reports_exposes_match_and_reunited_workflow_stages(reports_client):

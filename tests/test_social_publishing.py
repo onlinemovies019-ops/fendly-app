@@ -974,6 +974,134 @@ def test_published_image_url_uses_meta_post_media_when_poster_is_missing(monkeyp
     assert requested["params"]["fields"] == "media_url,thumbnail_url"
 
 
+def test_admin_report_removal_deletes_meta_posts_and_retains_failed_deletions(monkeypatch):
+    factory = _session_factory()
+    monkeypatch.setenv("META_GRAPH_API_VERSION", "v23.0")
+    monkeypatch.setattr(social_publishing, "_decrypt_token", lambda _: "page-token")
+    requests = []
+
+    class FakeResponse:
+        def __init__(self, payload, is_error=False, status_code=None):
+            self.payload = payload
+            self.is_error = is_error
+            self.status_code = status_code or (403 if is_error else 200)
+
+        def json(self):
+            return self.payload
+
+    def fake_delete(url, params, timeout):
+        requests.append((url, params, timeout))
+        if url.endswith("already-removed-post"):
+            return FakeResponse(
+                {"error": {"message": "Post not found", "code": 100}},
+                is_error=True,
+                status_code=404,
+            )
+        if url.endswith("instagram-post"):
+            return FakeResponse(
+                {"error": {"message": "Permission denied", "code": 200}},
+                is_error=True,
+            )
+        return FakeResponse({"success": True})
+
+    monkeypatch.setattr(social_publishing.httpx, "delete", fake_delete)
+    with factory() as session:
+        session.add_all([
+            SocialAccount(
+                provider="facebook",
+                account_id="page-id",
+                account_name="Fendly",
+                access_token_encrypted="encrypted-token",
+            ),
+            SocialAccount(
+                provider="instagram",
+                account_id="instagram-id",
+                account_name="Fendly",
+                access_token_encrypted="encrypted-token",
+            ),
+            SocialPublication(
+                id="facebook-publication",
+                report_id="fake-report",
+                report_type="lost",
+                provider="facebook",
+                status="published",
+                external_post_id="facebook-post",
+            ),
+            SocialPublication(
+                id="instagram-publication",
+                report_id="fake-report",
+                report_type="lost",
+                provider="instagram",
+                status="published",
+                external_post_id="instagram-post",
+            ),
+            SocialPublication(
+                id="already-removed-publication",
+                report_id="already-removed-report",
+                report_type="lost",
+                provider="facebook",
+                status="published",
+                external_post_id="already-removed-post",
+            ),
+        ])
+        session.commit()
+
+        failures = social_publishing.remove_report_publications(
+            session, "fake-report", "lost"
+        )
+        already_removed_failures = social_publishing.remove_report_publications(
+            session, "already-removed-report", "lost"
+        )
+
+        assert len(requests) == 3
+        assert {
+            request[0].rsplit("/", 1)[-1]
+            for request in requests
+        } == {"facebook-post", "instagram-post", "already-removed-post"}
+        assert failures == [
+            "instagram post could not be removed: Meta instagram post deletion failed "
+            "(HTTP 403): code 200; Permission denied"
+        ]
+        assert already_removed_failures == [
+            "facebook post could not be removed: Meta facebook post deletion failed "
+            "(HTTP 404): code 100; Post not found"
+        ]
+        assert session.get(SocialPublication, "facebook-publication") is None
+        already_removed_publication = session.get(
+            SocialPublication, "already-removed-publication"
+        )
+        assert already_removed_publication is not None
+        assert already_removed_publication.status == "failed"
+
+
+def test_meta_post_deletion_requires_explicit_success_confirmation(monkeypatch):
+    monkeypatch.setenv("META_GRAPH_API_VERSION", "v23.0")
+    monkeypatch.setattr(social_publishing, "_decrypt_token", lambda _: "page-token")
+
+    class FakeResponse:
+        is_error = False
+        status_code = 200
+
+        @staticmethod
+        def json():
+            return {"success": False}
+
+    monkeypatch.setattr(social_publishing.httpx, "delete", lambda *_args, **_kwargs: FakeResponse())
+    account = SocialAccount(
+        provider="facebook",
+        account_id="page-id",
+        account_name="Fendly",
+        access_token_encrypted="encrypted-token",
+    )
+
+    with pytest.raises(RuntimeError, match="did not confirm deletion"):
+        social_publishing._delete_meta_post(account, "facebook", "facebook-post")
+        failed_publication = session.get(SocialPublication, "instagram-publication")
+        assert failed_publication is not None
+        assert failed_publication.status == "failed"
+        assert "Permission denied" in failed_publication.last_error
+
+
 def test_publication_worker_does_not_retry_ambiguous_provider_failure(monkeypatch):
     factory = _session_factory()
     monkeypatch.setattr(social_publishing, "SessionLocal", factory)

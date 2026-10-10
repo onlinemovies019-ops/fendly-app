@@ -303,6 +303,25 @@ def publish_publication(publication_id: str) -> None:
                 post_id = _publish_instagram(account, report, caption)
             else:
                 raise RuntimeError("Unsupported social platform")
+            session.refresh(report)
+            if not report.social_share_consent:
+                try:
+                    _delete_meta_post(account, publication.provider, post_id)
+                except (httpx.HTTPError, RuntimeError, ValueError, TypeError, HTTPException) as error:
+                    publication.status = "failed"
+                    publication.external_post_id = post_id
+                    publication.last_error = (
+                        "Admin moderation stopped sharing, but the post could not be removed: "
+                        f"{str(error)[:350]}"
+                    )[:500]
+                    publication.next_attempt_at = 0
+                    session.commit()
+                    return
+                publication.status = "skipped"
+                publication.external_post_id = None
+                publication.last_error = "Sharing was disabled during publication; the post was removed."
+                session.commit()
+                return
             publication.status = "published"
             publication.external_post_id = post_id
             publication.last_error = None
@@ -338,6 +357,72 @@ def publish_publication(publication_id: str) -> None:
                 publication.last_error = UNEXPECTED_PUBLISHING_FAILURE
                 publication.next_attempt_at = 0
                 session.commit()
+
+
+def remove_report_publications(
+    session: Session,
+    report_id: str,
+    report_type: str,
+) -> list[str]:
+    publications = session.scalars(
+        select(SocialPublication).where(
+            SocialPublication.report_id == report_id,
+            SocialPublication.report_type == report_type,
+            SocialPublication.provider.in_(PROVIDER_NAMES),
+        )
+    ).all()
+    failures: list[str] = []
+    for publication in publications:
+        if publication.status == "processing" and not publication.external_post_id:
+            failures.append(
+                f"{publication.provider} publication is still in progress; retry removal shortly."
+            )
+            continue
+        if not publication.external_post_id:
+            session.delete(publication)
+            continue
+
+        account = session.get(SocialAccount, publication.provider)
+        if account is None:
+            error_text = f"{publication.provider} post could not be removed: account is disconnected."
+        else:
+            try:
+                _delete_meta_post(account, publication.provider, publication.external_post_id)
+                session.delete(publication)
+                continue
+            except HTTPException as error:
+                error_text = (
+                    f"{publication.provider} post could not be removed: "
+                    f"{str(error.detail)[:300]}"
+                )
+            except httpx.HTTPError as error:
+                logger.warning(
+                    "Meta request for %s post deletion failed with %s",
+                    publication.provider,
+                    type(error).__name__,
+                )
+                error_text = (
+                    f"{publication.provider} post could not be removed: "
+                    "Meta API network request failed."
+                )
+            except (RuntimeError, ValueError, TypeError) as error:
+                error_text = (
+                    f"{publication.provider} post could not be removed: {str(error)[:300]}"
+                )
+
+        publication.status = "failed"
+        publication.next_attempt_at = 0
+        publication.last_error = error_text[:500]
+        failures.append(error_text)
+        logger.error(
+            "Admin removed report %s but could not remove its %s post %s: %s",
+            report_id,
+            publication.provider,
+            publication.external_post_id,
+            error_text,
+        )
+    session.flush()
+    return failures
 
 
 def process_due_publications() -> None:
@@ -394,6 +479,21 @@ def process_due_publications() -> None:
         ).all()
     for publication_id in due_ids:
         publish_publication(publication_id)
+
+
+def _delete_meta_post(
+    account: SocialAccount,
+    provider: str,
+    external_post_id: str,
+) -> None:
+    response = httpx.delete(
+        _graph_url(quote(external_post_id, safe="")),
+        params={"access_token": _decrypt_token(account.access_token_encrypted)},
+        timeout=15,
+    )
+    result = _provider_response(response, f"{provider} post deletion")
+    if result.get("success") is not True:
+        raise RuntimeError(f"Meta did not confirm deletion of the {provider} post")
 
 
 def _consume_state(session: Session, state: str) -> None:

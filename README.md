@@ -169,6 +169,15 @@ distinguish deletion from changed access permissions. Deleting
 or disconnecting an authorization in Fendly does not revoke it in Meta; also
 revoke Fendly from the provider's app settings.
 
+Admin removal of a fake report disables any queued sharing and requests
+deletion of each linked Facebook and Instagram post before deleting the report
+from Fendly. Fendly removes the report only after Meta explicitly confirms each
+deletion. If a post is still publishing, the account is disconnected, or Meta
+rejects or cannot confirm deletion, the report remains in Fendly and the admin
+must resolve the listed issue and retry. Keep the Meta account connected with
+the required Page and Instagram publishing permissions for this moderation
+workflow.
+
 Each report has an unchecked opt-in. A consented report publishes its type and
 title plus a link to that specific report (`FENDLY_APP_URL/item/{report_id}`;
 the base defaults to `https://fendly.app`). Facebook and Instagram receive a generated JPEG

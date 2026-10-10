@@ -1,5 +1,4 @@
 import asyncio
-import gzip
 import json
 import io
 import logging
@@ -7,20 +6,18 @@ import math
 import os
 import re
 from datetime import datetime, timedelta, timezone
-from functools import lru_cache
 from pathlib import Path
-from typing import Literal, Optional
+from typing import Literal
 from urllib.parse import urlsplit
 from uuid import uuid4
 
 import firebase_admin
-from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Query, UploadFile, status
+from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, UploadFile, status
 from firebase_admin import firestore
 import httpx
 from pydantic import BaseModel, Field
 from PIL import Image, UnidentifiedImageError
-from sqlalchemy import delete, func, or_, select
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy import delete, or_, select
 from sqlalchemy.orm import Session
 
 from ai_matching import create_embedding, item_text
@@ -196,11 +193,6 @@ class ItemSubmission(BaseModel):
     community_guidelines_accepted: bool = False
     payment_id: str | None = Field(default=None, max_length=128)
     imei_number: str | None = Field(default=None, exclude=True)
-
-
-class ContentReportRequest(BaseModel):
-    reason: Literal["inappropriate", "spam", "personal_information", "fraud", "other"]
-    details: str | None = Field(default=None, max_length=1000)
 
 
 def _require_db_session(session: Session | None) -> Session:
@@ -701,103 +693,6 @@ async def list_my_items(
     ]
 
 
-@router.get("/reports")
-def list_public_reports(
-    city: str | None = Query(default=None, max_length=120),
-    session: Session | None = Depends(get_db),
-) -> list[dict[str, object]]:
-    session = _require_db_session(session)
-    normalized_city = city.strip().casefold() if city else ""
-    escaped_city = normalized_city.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-
-    reports: list[tuple[str, LostItem | FoundItem]] = []
-    for item_type, model in (("LOST", LostItem), ("FOUND", FoundItem)):
-        query = select(model).where(model.hidden_from_public.is_(False))
-        if model is LostItem:
-            query = query.where(LostItem.status == "LOST")
-        if escaped_city:
-            query = query.where(
-                func.lower(model.report_location).like(f"%{escaped_city}%", escape="\\")
-            )
-        matching_items = session.scalars(query).all()
-        if escaped_city:
-            matching_items = [
-                item for item in matching_items
-                if _is_indian_coordinate(item.lat, item.lng)
-            ]
-        reports.extend((item_type, item) for item in matching_items)
-
-    reports.sort(
-        key=lambda pair: pair[1].created_at.timestamp() if pair[1].created_at else 0,
-        reverse=True,
-    )
-    return [
-        {
-            "id": item.id,
-            "type": item_type,
-            "title": item.title,
-            "category": item.category,
-            "report_date": item.report_date or _stored_report_field(item.description, "Date"),
-            "report_location": item.report_location or _stored_report_field(item.description, "Location"),
-            "image_url": item.image_url,
-            "image_urls": item.image_urls or ([item.image_url] if item.image_url else []),
-            "created_at": item.created_at,
-            "status": "Active" if item_type == "LOST" else "Published",
-        }
-        for item_type, item in reports
-    ]
-
-
-@lru_cache(maxsize=1)
-def _india_boundary() -> list[list[list[list[float]]]]:
-    # Natural Earth 1:10m India boundary (public domain), stored locally for offline checks.
-    boundary_path = Path(__file__).with_name("india_boundary.geojson.gz")
-    with gzip.open(boundary_path, "rt", encoding="utf-8") as boundary_file:
-        geometry = json.load(boundary_file)
-    if geometry.get("type") != "MultiPolygon":
-        raise ValueError(f"Unexpected India boundary geometry: {geometry.get('type')!r}")
-    return geometry["coordinates"]
-
-
-def _point_in_ring(longitude: float, latitude: float, ring: list[list[float]]) -> bool:
-    inside = False
-    previous_longitude, previous_latitude = ring[-1]
-    for current_longitude, current_latitude in ring:
-        cross_product = (
-            (longitude - previous_longitude) * (current_latitude - previous_latitude)
-            - (latitude - previous_latitude) * (current_longitude - previous_longitude)
-        )
-        if (
-            abs(cross_product) <= 1e-9
-            and min(previous_longitude, current_longitude) - 1e-9 <= longitude
-            <= max(previous_longitude, current_longitude) + 1e-9
-            and min(previous_latitude, current_latitude) - 1e-9 <= latitude
-            <= max(previous_latitude, current_latitude) + 1e-9
-        ):
-            return True
-
-        if (current_latitude > latitude) != (previous_latitude > latitude):
-            crossing_longitude = (
-                (previous_longitude - current_longitude)
-                * (latitude - current_latitude)
-                / (previous_latitude - current_latitude)
-                + current_longitude
-            )
-            if longitude < crossing_longitude:
-                inside = not inside
-        previous_longitude, previous_latitude = current_longitude, current_latitude
-    return inside
-
-
-def _is_indian_coordinate(latitude: float, longitude: float) -> bool:
-    for polygon in _india_boundary():
-        if not polygon or not _point_in_ring(longitude, latitude, polygon[0]):
-            continue
-        if not any(_point_in_ring(longitude, latitude, hole) for hole in polygon[1:]):
-            return True
-    return False
-
-
 @router.put("/items/{item_type}/{item_id}", response_model=ItemResponse)
 async def update_item(
     item_type: str,
@@ -869,50 +764,6 @@ async def update_item(
     session.commit()
     session.refresh(record)
     return record
-
-
-@router.post("/items/{item_type}/{item_id}/reports", status_code=status.HTTP_201_CREATED)
-def submit_content_report(
-    item_type: str,
-    item_id: str,
-    payload: ContentReportRequest,
-    session: Session = Depends(get_db),
-    uid: str = Depends(get_current_user),
-) -> dict[str, str]:
-    normalized_type = item_type.strip().lower()
-    if normalized_type not in {"lost", "found"}:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Report type must be lost or found")
-
-    model = LostItem if normalized_type == "lost" else FoundItem
-    target = session.get(model, item_id)
-    if target is None or target.hidden_from_public:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Report not found")
-    if target.created_by == uid:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "You cannot report your own content")
-    existing = session.scalar(
-        select(ContentReport).where(
-            ContentReport.reporter_uid == uid,
-            ContentReport.report_type == normalized_type,
-            ContentReport.report_id == item_id,
-        )
-    )
-    if existing is not None:
-        raise HTTPException(status.HTTP_409_CONFLICT, "You have already reported this content")
-
-    report = ContentReport(
-        reporter_uid=uid,
-        report_type=normalized_type,
-        report_id=item_id,
-        reason=payload.reason,
-        details=payload.details.strip() if payload.details else None,
-    )
-    session.add(report)
-    try:
-        session.commit()
-    except IntegrityError as exc:
-        session.rollback()
-        raise HTTPException(status.HTTP_409_CONFLICT, "You have already reported this content") from exc
-    return {"status": "received"}
 
 
 @router.delete("/items/{item_type}/{item_id}", status_code=status.HTTP_204_NO_CONTENT)

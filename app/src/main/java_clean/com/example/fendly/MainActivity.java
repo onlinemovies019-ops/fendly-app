@@ -165,6 +165,7 @@ import android.location.Location;
 import android.location.LocationListener;
 import android.location.LocationManager;
 import org.json.JSONArray;
+import org.json.JSONException;
 import org.json.JSONObject;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
@@ -317,17 +318,12 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
     private static final int PAGE_ADMIN_SUBSCRIPTIONS = 8;
     private boolean adminAlertsAutoShownThisVisit;
     private boolean adminSocialPageOpen;
-    private boolean adminContentReportsPageOpen;
     private boolean socialAuthorizationPending;
     private int pendingNotificationCount = 0;
     private TextView pendingNotificationBadge;
     private String adminReportFilter = "";
     private String adminReportCategory = "items";
-    private String discoveryCity = "";
-    private int discoveryRequestGeneration;
     private String myReportsCategory = "items";
-    private boolean discoveryReportsLoaded;
-    private final List<JSONObject> discoveryReports = new ArrayList<>();
     private int unreadUserNotificationCount = 0;
     private TextView userNotificationBadge;
     private boolean accountCreated;
@@ -925,7 +921,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
 
     private String translateMyReportsText() {
         String[] texts = {
-                "1. Browse reports:\n• Choose Valuables & Items, Pets & Animals, or Missing Persons / Loved Ones to filter both sections.\n• Discover active reports by city (all Indian cities by default), then scroll to Your reports for your submissions.\n\n2. Open a report:\n• Tap a report card for details. Your reports also show a live status tracker from review through publication and verification to reunion.\n\n3. Manage your reports:\n• Use Edit once within 5 hours of creating a report.",
+                "1. Create a report:\n• Submit a LOST or FOUND report for your own item or person.\n\n2. Track your reports:\n• My Reports shows only reports you submitted and their status. Admins privately review and match reports; other users cannot browse your reports.\n\n3. Manage your reports:\n• Use Edit once within 5 hours of creating a report.",
                 "1. जमा की गई रिपोर्ट देखें:\n• अपनी सभी सक्रिय खोई और मिली हुई रिपोर्ट एक ही सूची में देखें।\n\n2. स्थिति और AI मिलान ट्रैक करें:\n• रिपोर्ट की स्थिति पर नज़र रखें और किसी भी संभावित AI मिलान की जांच करें।\n\n3. रिपोर्ट संपादित करें:\n• आपकी अपलोड की गई रिपोर्ट निर्माण के 5 घंटे के भीतर केवल एक बार संपादित की जा सकती है; उसके बाद इसे संपादित नहीं किया जा सकता।",
                 "1. सादर केलेले अहवाल पाहा:\n• तुमचे सर्व सक्रिय हरवलेले आणि सापडलेले अहवाल एकाच यादीत पाहा.\n\n2. स्थिती आणि जुळणी ट्रॅक करा:\n• अहवाल स्थितीवर लक्ष ठेवा आणि संभाव्य जुळण्या तपासा.\n\n3. अहवाल संपादित करा:\n• तुमचा अपलोड केलेला अहवाल तयार केल्यापासून ५ तासांच्या आत फक्त एकदाच संपादित केला जाऊ शकतो; त्यानंतर तो संपादित केला जाऊ शकत नाही.",
                 "1. સબમિટ કરેલા રિપોર્ટ જુઓ:\n• તમારા બધા સક્રિય ખોવાયેલ અને મળેલ રિપોર્ટ એક જ યાદીમાં જુઓ.\n\n2. સ્ટેટસ અને AI મેચ ટ્રેક કરો:\n• રિપોર્ટ સ્ટેટસ પર નજર રાખો અને સંભવિત AI મેચ તપાસો.\n\n3. રિપોર્ટ એડિટ કરો:\n• તમારો અપલોડ કરેલો રિપોર્ટ બનાવ્યાના 5 કલાકની અંદર માત્ર એક જ વાર એડિટ કરી શકાય છે; ત્યારબાદ તેને એડિટ કરી શકાશે નહીં.",
@@ -3891,70 +3887,6 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         addField(root, signedInText);
     }
 
-    private void loadDiscoveryReports(
-            String city,
-            LinearLayout resultsContainer,
-            TextView statusView,
-            List<JSONObject> ownerReports,
-            int requestGeneration
-    ) {
-        network.execute(() -> {
-            List<JSONObject> reports = new ArrayList<>();
-            String loadError = null;
-            HttpURLConnection connection = null;
-            try {
-                String endpoint = API_BASE + "/api/reports";
-                if (city != null && !city.trim().isEmpty()) {
-                    endpoint += "?city=" + URLEncoder.encode(city.trim(), StandardCharsets.UTF_8.name());
-                }
-                connection = (HttpURLConnection) new URL(endpoint).openConnection();
-                connection.setRequestMethod("GET");
-                connection.setConnectTimeout(8000);
-                connection.setReadTimeout(10000);
-                FirebaseUser currentUser = FirebaseAuth.getInstance().getCurrentUser();
-                if (currentUser != null) {
-                    String idToken = Tasks.await(currentUser.getIdToken(false)).getToken();
-                    if (idToken == null || idToken.trim().isEmpty()) {
-                        throw new java.io.IOException("Could not authenticate blocked-user filtering");
-                    }
-                    connection.setRequestProperty("Authorization", "Bearer " + idToken);
-                }
-                int responseCode = connection.getResponseCode();
-                if (responseCode < 200 || responseCode >= 300) {
-                    throw new java.io.IOException("Public reports returned HTTP " + responseCode);
-                }
-                JSONArray response = new JSONArray(readStream(connection.getInputStream()));
-                for (int index = 0; index < response.length(); index++) {
-                    JSONObject report = response.optJSONObject(index);
-                    if (report != null) reports.add(report);
-                }
-            } catch (Exception error) {
-                Log.w("DISCOVERY_REPORTS", "Could not load discovery reports", error);
-                loadError = "Could not load reports. Try again.";
-            } finally {
-                if (connection != null) connection.disconnect();
-            }
-
-            List<JSONObject> loadedReports = reports;
-            String errorMessage = loadError;
-            runOnUiThread(() -> {
-                if (isFinishing() || isDestroyed() || requestGeneration != discoveryRequestGeneration) return;
-                resultsContainer.removeAllViews();
-                if (errorMessage != null) {
-                    discoveryReports.clear();
-                    discoveryReportsLoaded = false;
-                    statusView.setText(localizeReportsText(errorMessage));
-                    statusView.setVisibility(View.VISIBLE);
-                    return;
-                }
-                discoveryReports.clear();
-                discoveryReports.addAll(loadedReports);
-                discoveryReportsLoaded = true;
-                renderDiscoveryReports(resultsContainer, statusView, ownerReports);
-            });
-        });
-    }
-
     private void populateReportCategoryTabs(
             LinearLayout tabs,
             String selectedCategory,
@@ -4043,49 +3975,6 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         return tab;
     }
 
-    private void renderDiscoveryReports(
-            LinearLayout resultsContainer,
-            TextView statusView,
-            List<JSONObject> ownerReports
-    ) {
-        resultsContainer.removeAllViews();
-        if (!discoveryReportsLoaded) return;
-        List<JSONObject> visibleReports = new ArrayList<>();
-        for (JSONObject report : discoveryReports) {
-            if (discoveryReportMatchesCategory(report, myReportsCategory)) {
-                visibleReports.add(report);
-            }
-        }
-        if (visibleReports.isEmpty()) {
-            statusView.setText(localizeReportsText(
-                    discoveryReports.isEmpty()
-                            ? "No active reports found."
-                            : "No reports in this category."
-            ));
-            statusView.setVisibility(View.VISIBLE);
-            return;
-        }
-        statusView.setVisibility(View.GONE);
-        for (JSONObject report : visibleReports) {
-            JSONObject ownerReport = findOwnedReport(report, ownerReports);
-            resultsContainer.addView(createDiscoveryReportCard(
-                    report,
-                    ownerReport == null ? report : ownerReport
-            ));
-        }
-    }
-
-    private JSONObject findOwnedReport(JSONObject publicReport, List<JSONObject> ownerReports) {
-        if (publicReport == null || ownerReports == null || ownerReports.isEmpty()) return null;
-        String publicId = publicReport.optString("id", publicReport.optString("_id", "")).trim();
-        if (publicId.isEmpty()) return null;
-        for (JSONObject ownerReport : ownerReports) {
-            String ownerId = ownerReport.optString("id", ownerReport.optString("_id", "")).trim();
-            if (publicId.equals(ownerId)) return ownerReport;
-        }
-        return null;
-    }
-
     private boolean discoveryReportMatchesCategory(JSONObject report, String category) {
         String reportCategory = report.optString("category", "").trim().toLowerCase(Locale.US);
         if ("people".equals(category)) {
@@ -4115,77 +4004,6 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             if (text.contains(term)) return true;
         }
         return false;
-    }
-
-    private View createDiscoveryReportCard(JSONObject report, JSONObject detailsReport) {
-        LinearLayout card = new LinearLayout(this);
-        card.setOrientation(LinearLayout.VERTICAL);
-        card.setPadding(dp(16), dp(12), dp(16), dp(12));
-        boolean emergency = discoveryReportMatchesCategory(report, "people");
-        int emergencyColor = Color.rgb(190, 45, 55);
-        card.setBackground(roundWithStroke(
-                emergency ? Color.argb(24, 220, 50, 60) : surfaceColor(),
-                16,
-                emergency ? emergencyColor : borderColor()
-        ));
-        card.setElevation(dp(2));
-        card.setTag("reportRow");
-
-        String type = report.optString("type", "FOUND").toUpperCase(Locale.US);
-        if (emergency) {
-            TextView urgentBadge = text(
-                    localizeReportsText("URGENT"),
-                    9,
-                    Color.WHITE,
-                    Typeface.BOLD
-            );
-            urgentBadge.setGravity(Gravity.CENTER);
-            urgentBadge.setPadding(dp(7), dp(2), dp(7), dp(2));
-            urgentBadge.setBackground(round(emergencyColor, 8));
-            LinearLayout.LayoutParams badgeParams = new LinearLayout.LayoutParams(-2, -2);
-            badgeParams.setMargins(0, 0, 0, dp(5));
-            card.addView(urgentBadge, badgeParams);
-        }
-        TextView typeLabel = text(
-                "LOST".equals(type) ? translate("LOST") : translate("FOUND"),
-                11,
-                "LOST".equals(type) ? Color.rgb(110, 205, 161) : accentColor(),
-                Typeface.BOLD
-        );
-        card.addView(typeLabel, new LinearLayout.LayoutParams(-1, -2));
-
-        TextView title = text(report.optString("title", ""), 16, primaryTextColor(), Typeface.BOLD);
-        title.setPadding(0, dp(3), 0, dp(4));
-        card.addView(title, new LinearLayout.LayoutParams(-1, -2));
-
-        String location = report.optString("report_location", "").trim();
-        String category = report.optString("category", "").trim();
-        String detail = location;
-        if (!category.isEmpty()) {
-            detail = detail.isEmpty() ? category : category + " · " + detail;
-        }
-        if (!detail.isEmpty()) {
-            TextView details = text(detail, 13, secondaryTextColor(), Typeface.NORMAL);
-            card.addView(details, new LinearLayout.LayoutParams(-1, -2));
-        }
-
-        String reportDate = report.optString("report_date", "").trim();
-        if (!reportDate.isEmpty()) {
-            TextView date = text(reportDate, 12, secondaryTextColor(), Typeface.NORMAL);
-            date.setPadding(0, dp(4), 0, 0);
-            card.addView(date, new LinearLayout.LayoutParams(-1, -2));
-        }
-
-        if ("LOST".equals(type) && isActiveCommunityReport(report)) {
-            addCommunityPosterAction(card, detailsReport, 0, dp(10));
-        }
-
-        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(-1, -2);
-        params.setMargins(0, 0, 0, dp(10));
-        card.setLayoutParams(params);
-        card.setOnClickListener(view -> showReportDetailsDialog(detailsReport, false));
-        card.setFocusable(true);
-        return card;
     }
 
     private void showReport(String type) {
@@ -6659,7 +6477,10 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         currentPage = PAGE_REPORTS;
         screenRenderer = this::showReports;
         LinearLayout root = screenBase(translate("My reports"));
-        addHeading(translate("Your reports"), translate("Keep track of items you are helping to reunite."));
+        addHeading(
+                translate("Your reports"),
+                translate("Only you and Fendly administrators can see the reports you submit.")
+        );
         TextView loading = text(localizeReportsText("Loading reports..."), 16, secondaryTextColor(), Typeface.NORMAL);
         addField(root, loading);
 
@@ -6717,7 +6538,10 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         currentPage = PAGE_REPORTS;
         screenRenderer = this::showReports;
         LinearLayout root = screenBase(translate("My reports"));
-        addHeading(translate("Your reports"), translate("Keep track of items you are helping to reunite."));
+        addHeading(
+                translate("Your reports"),
+                translate("Only you and Fendly administrators can see the reports you submit.")
+        );
         addField(activeContent, fieldLabel(localizeReportsText("Browse by category")));
         LinearLayout categoryTabs = new LinearLayout(this);
         categoryTabs.setOrientation(LinearLayout.HORIZONTAL);
@@ -6730,96 +6554,6 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                 }
         );
         activeContent.addView(categoryTabs, contentParams(-1, dp(112), dp(12)));
-
-        TextView discoveryLabel = text(
-                localizeReportsText("Discover active reports"),
-                15,
-                primaryTextColor(),
-                Typeface.BOLD
-        );
-        addField(activeContent, discoveryLabel);
-
-        Map<String, String[]> stateCities = indiaStateCityMap();
-        LinkedHashSet<String> uniqueCities = new LinkedHashSet<>();
-        for (String[] cities : stateCities.values()) {
-            uniqueCities.addAll(Arrays.asList(cities));
-        }
-        List<String> discoveryCities = new ArrayList<>(uniqueCities);
-        Collections.sort(discoveryCities, String.CASE_INSENSITIVE_ORDER);
-        String[] localizedCities = localizedCityChoices(discoveryCities.toArray(new String[0]));
-        String[] cityOptions = new String[localizedCities.length + 1];
-        cityOptions[0] = localizeReportsText("All cities");
-        System.arraycopy(localizedCities, 0, cityOptions, 1, localizedCities.length);
-
-        LinearLayout cityFilterLabel = fieldLabel(localizeReportsText("Filter reports by city"));
-        addField(activeContent, cityFilterLabel);
-        AutoCompleteTextView cityFilter = new AutoCompleteTextView(this);
-        cityFilter.setHint(localizeReportsText("Search any city or town in India"));
-        cityFilter.setThreshold(0);
-        cityFilter.setSingleLine(true);
-        cityFilter.setAdapter(localizedLocationAdapter(cityOptions));
-        applyLocationFieldStyle(cityFilter);
-        cityFilter.setText(
-                discoveryCity.isEmpty()
-                        ? cityOptions[0]
-                        : localizeProfileDisplayValue("city", discoveryCity),
-                false
-        );
-        cityFilter.setOnClickListener(view -> cityFilter.showDropDown());
-        cityFilter.setOnItemClickListener((parent, view, position, id) -> {
-            String selectedOption = String.valueOf(parent.getItemAtPosition(position));
-            if (cityOptions[0].equals(selectedOption)) {
-                discoveryCity = "";
-            } else {
-                for (int index = 0; index < localizedCities.length; index++) {
-                    if (selectedOption.equals(localizedCities[index])) {
-                        discoveryCity = discoveryCities.get(index);
-                        break;
-                    }
-                }
-            }
-            renderMergedReports(backendReports, firestoreReports);
-        });
-        addField(activeContent, cityFilter);
-        TextView searchCity = actionButton(localizeReportsText("Search city"), false);
-        searchCity.setOnClickListener(view -> {
-            String cityQuery = cityFilter.getText().toString().trim();
-            if (cityQuery.equalsIgnoreCase(cityOptions[0])) {
-                discoveryCity = "";
-            } else {
-                discoveryCity = cityQuery;
-                for (int index = 0; index < localizedCities.length; index++) {
-                    if (cityQuery.equalsIgnoreCase(localizedCities[index])) {
-                        discoveryCity = discoveryCities.get(index);
-                        break;
-                    }
-                }
-            }
-            renderMergedReports(backendReports, firestoreReports);
-        });
-        addField(activeContent, searchCity);
-
-        TextView discoveryStatus = text(
-                localizeReportsText("Loading reports..."),
-                14,
-                secondaryTextColor(),
-                Typeface.NORMAL
-        );
-        discoveryStatus.setGravity(Gravity.CENTER);
-        LinearLayout discoveryResults = new LinearLayout(this);
-        discoveryResults.setOrientation(LinearLayout.VERTICAL);
-        activeContent.addView(discoveryStatus, contentParams(-1, -2, dp(8)));
-        activeContent.addView(discoveryResults, new LinearLayout.LayoutParams(-1, -2));
-        discoveryReportsLoaded = false;
-        discoveryStatus.setOnClickListener(view -> {
-            int retryGeneration = ++discoveryRequestGeneration;
-            discoveryReportsLoaded = false;
-            discoveryStatus.setText(localizeReportsText("Loading reports..."));
-            discoveryStatus.setVisibility(View.VISIBLE);
-            loadDiscoveryReports(discoveryCity, discoveryResults, discoveryStatus, backendReports, retryGeneration);
-        });
-        int requestGeneration = ++discoveryRequestGeneration;
-        loadDiscoveryReports(discoveryCity, discoveryResults, discoveryStatus, backendReports, requestGeneration);
 
         TextView userReportsLabel = text(
                 localizeReportsText("Your reports"),
@@ -10564,7 +10298,6 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
     private void showAdminDashboard() {
         currentPage = PAGE_ADMIN;
         adminSocialPageOpen = false;
-        adminContentReportsPageOpen = false;
         adminEnglishUi = true;
         screenRenderer = this::showAdminDashboard;
         LinearLayout root = screenBase("");
@@ -10578,10 +10311,6 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         TextView socialPublishingButton = actionButton("Manage social accounts and posts", false);
         socialPublishingButton.setOnClickListener(view -> showAdminSocialPublishingPage());
         root.addView(socialPublishingButton, contentParams(-1, dp(44), dp(10)));
-
-        TextView contentReportsButton = actionButton("Review user content reports", false);
-        contentReportsButton.setOnClickListener(view -> showAdminContentReportsPage());
-        root.addView(contentReportsButton, contentParams(-1, dp(44), dp(8)));
 
         LinearLayout overview = new LinearLayout(this);
         overview.setOrientation(LinearLayout.HORIZONTAL);
@@ -10672,137 +10401,9 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         });
     }
 
-    private void showAdminContentReportsPage() {
-        currentPage = PAGE_ADMIN;
-        adminSocialPageOpen = false;
-        adminContentReportsPageOpen = true;
-        adminEnglishUi = true;
-        screenRenderer = this::showAdminContentReportsPage;
-        LinearLayout root = screenBase("");
-        TextView back = actionButton("Back to admin workspace", false);
-        back.setOnClickListener(view -> showAdminDashboard());
-        addField(root, back);
-        addHeading("User content reports", "Review reports from the Fendly community");
-        TextView loading = text("Loading reports...", 13, secondaryTextColor(), Typeface.NORMAL);
-        addField(root, loading);
-
-        FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
-        if (user == null) {
-            loading.setText(translate("Sign in as an administrator to review content reports."));
-            return;
-        }
-        user.getIdToken(false).addOnSuccessListener(token -> network.execute(() -> {
-            String response = getAuthorized("/api/admin/content-reports", token.getToken());
-            runOnUiThread(() -> {
-                if (currentPage != PAGE_ADMIN || !adminContentReportsPageOpen) {
-                    return;
-                }
-                root.removeView(loading);
-                if (response == null) {
-                    addField(root, text(
-                            "Could not load reports. Check admin access and try again.",
-                            13,
-                            secondaryTextColor(),
-                            Typeface.NORMAL
-                    ));
-                    return;
-                }
-                try {
-                    JSONArray reports = new JSONArray(response);
-                    if (reports.length() == 0) {
-                        addField(root, text("No pending content reports.", 13, secondaryTextColor(), Typeface.NORMAL));
-                        return;
-                    }
-                    for (int index = 0; index < reports.length(); index++) {
-                        JSONObject report = reports.getJSONObject(index);
-                        LinearLayout card = new LinearLayout(this);
-                        card.setOrientation(LinearLayout.VERTICAL);
-                        card.setPadding(dp(12), dp(10), dp(12), dp(10));
-                        card.setBackground(roundWithStroke(surfaceColor(), 12, borderColor()));
-                        card.addView(text(
-                                report.optString("report_type", "REPORT") + " · " +
-                                        report.optString("title", "Untitled"),
-                                14,
-                                primaryTextColor(),
-                                Typeface.BOLD
-                        ));
-                        card.addView(text(
-                                "Reason: " + report.optString("reason", "other") +
-                                        (report.optString("details", "").isEmpty()
-                                                ? ""
-                                                : "\nDetails: " + report.optString("details")),
-                                12,
-                                secondaryTextColor(),
-                                Typeface.NORMAL
-                        ));
-                        card.addView(text(
-                                report.optString("description", ""),
-                                12,
-                                primaryTextColor(),
-                                Typeface.NORMAL
-                        ));
-                        LinearLayout actions = new LinearLayout(this);
-                        actions.setOrientation(LinearLayout.HORIZONTAL);
-                        addContentReportDecisionButton(actions, "Dismiss", "dismiss", report, token.getToken());
-                        addContentReportDecisionButton(actions, "Reviewed", "reviewed", report, token.getToken());
-                        addContentReportDecisionButton(actions, "Hide", "hide", report, token.getToken());
-                        card.addView(actions);
-                        LinearLayout.LayoutParams cardParams = new LinearLayout.LayoutParams(-1, -2);
-                        cardParams.setMargins(0, 0, 0, dp(8));
-                        root.addView(card, cardParams);
-                    }
-                } catch (Exception error) {
-                    Log.e("CONTENT_REPORTS", "Could not parse administrator content reports", error);
-                    addField(root, text(
-                            "The content report response could not be read.",
-                            13,
-                            secondaryTextColor(),
-                            Typeface.NORMAL
-                    ));
-                }
-            });
-        })).addOnFailureListener(error -> runOnUiThread(() ->
-                loading.setText(translate("Could not authenticate administrator access."))));
-    }
-
-    private void addContentReportDecisionButton(
-            LinearLayout actions,
-            String label,
-            String decision,
-            JSONObject report,
-            String idToken
-    ) {
-        TextView button = actionButton(label, "hide".equals(decision));
-        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(0, dp(40), 1f);
-        if (actions.getChildCount() > 0) params.setMargins(dp(5), 0, 0, 0);
-        actions.addView(button, params);
-        button.setOnClickListener(view -> {
-            button.setEnabled(false);
-            String reportId = Uri.encode(report.optString("id", ""));
-            String body = "{\"decision\":\"" + decision + "\"}";
-            network.execute(() -> {
-                boolean saved = postAuthorized(
-                        "/api/admin/content-reports/" + reportId + "/review",
-                        idToken,
-                        body
-                );
-                runOnUiThread(() -> {
-                    if (saved) {
-                        Toast.makeText(this, "Content report reviewed.", Toast.LENGTH_SHORT).show();
-                        showAdminContentReportsPage();
-                    } else {
-                        button.setEnabled(true);
-                        Toast.makeText(this, "Could not save the review decision.", Toast.LENGTH_LONG).show();
-                    }
-                });
-            });
-        });
-    }
-
     private void showAdminSocialPublishingPage() {
         currentPage = PAGE_ADMIN;
         adminSocialPageOpen = true;
-        adminContentReportsPageOpen = false;
         adminEnglishUi = true;
         screenRenderer = this::showAdminSocialPublishingPage;
         LinearLayout root = screenBase("");
@@ -11747,22 +11348,20 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             addCommunityPosterAction(content, report, 0, dp(8));
         }
 
+        if (adminView) {
+            TextView removeFakeReport = actionButton("Remove fake report", false);
+            removeFakeReport.setTextColor(Color.rgb(190, 45, 55));
+            addFieldToDialog(content, removeFakeReport);
+            removeFakeReport.setOnClickListener(
+                    view -> confirmAdminReportRemoval(report, dialog)
+            );
+        }
+
         if (allowDelete && !adminView) {
             TextView delete = actionButton(LanguageManager.profileText(this, "delete_report"), false);
             delete.setTextColor(Color.rgb(190, 45, 55));
             addFieldToDialog(content, delete);
             delete.setOnClickListener(view -> confirmDeleteReport(report, dialog));
-        }
-
-        String contentId = report.optString("id", "").trim();
-        FirebaseUser signedInUser = FirebaseAuth.getInstance().getCurrentUser();
-        String authorId = report.optString("created_by", "").trim();
-        if (!adminView && !contentId.isEmpty()
-                && (authorId.isEmpty() || signedInUser == null
-                || !authorId.equals(signedInUser.getUid()))) {
-            TextView reportContent = actionButton("Report this content", false);
-            addFieldToDialog(content, reportContent);
-            reportContent.setOnClickListener(view -> promptReportContent(report));
         }
 
         TextView close = actionButton("Close", true);
@@ -11775,71 +11374,97 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         sizeThemedDialog(dialog);
     }
 
-    private void promptReportContent(JSONObject report) {
-        FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
-        if (user == null) {
-            Toast.makeText(this, "Sign in to report content.", Toast.LENGTH_LONG).show();
+    private void confirmAdminReportRemoval(JSONObject report, Dialog detailsDialog) {
+        new AlertDialog.Builder(this)
+                .setTitle("Remove fake report?")
+                .setMessage(
+                        "This permanently removes the report from Fendly and attempts to delete "
+                                + "its Facebook and Instagram posts. If a platform deletion fails, "
+                                + "you will be told which posts still need attention."
+                )
+                .setNegativeButton("Cancel", null)
+                .setPositiveButton("Remove report", (confirm, which) ->
+                        removeAdminReport(report, detailsDialog)
+                )
+                .show();
+    }
+
+    private void removeAdminReport(JSONObject report, Dialog detailsDialog) {
+        String reportId = report.optString("id", "").trim();
+        String reportType = report.optString("type", "").trim().toLowerCase(Locale.ROOT);
+        if (reportId.isEmpty() || !(reportType.equals("lost") || reportType.equals("found"))) {
+            Toast.makeText(this, "This report cannot be removed.", Toast.LENGTH_LONG).show();
             return;
         }
-        String[] reasons = {
-                "Inappropriate content",
-                "Spam or misleading",
-                "Personal information",
-                "Fraud or unsafe activity",
-                "Other concern"
-        };
-        String[] reasonCodes = {
-                "inappropriate",
-                "spam",
-                "personal_information",
-                "fraud",
-                "other"
-        };
-        Dialog dialog = new Dialog(this);
-        LinearLayout content = themedDialogContent(
-                0,
-                "Report this content",
-                "Choose the reason that best describes your concern."
-        );
-        for (int index = 0; index < reasons.length; index++) {
-            final int selected = index;
-            TextView reason = actionButton(reasons[index], false);
-            reason.setOnClickListener(view -> {
-                dialog.dismiss();
-                user.getIdToken(false)
-                        .addOnSuccessListener(token -> network.execute(() -> {
-                            String reportType = report.optString("type", "").toLowerCase(Locale.US);
-                            String reportId = report.optString("id", "");
-                            String body = "{\"reason\":\"" + reasonCodes[selected] + "\"}";
-                            boolean submitted = postAuthorized(
-                                    "/api/items/" + reportType + "/" + Uri.encode(reportId) + "/reports",
-                                    token.getToken(),
-                                    body
-                            );
-                            runOnUiThread(() -> Toast.makeText(
-                                    this,
-                                    submitted
-                                            ? "Thanks. Your report was sent for review."
-                                            : "Could not send your report. Please try again.",
-                                    Toast.LENGTH_LONG
-                            ).show());
-                        }))
-                        .addOnFailureListener(error -> Toast.makeText(
-                                this,
-                                "Could not authenticate your content report.",
-                                Toast.LENGTH_LONG
-                        ).show());
-            });
-            addFieldToDialog(content, reason);
-        }
-        TextView cancel = actionButton("Cancel", true);
-        cancel.setOnClickListener(view -> dialog.dismiss());
-        addFieldToDialog(content, cancel);
 
-        dialog.setContentView(content);
-        dialog.setCanceledOnTouchOutside(true);
-        dialog.show();
-        sizeThemedDialog(dialog);
+        FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
+        if (user == null) {
+            Toast.makeText(this, "Sign in as an administrator to remove reports.", Toast.LENGTH_LONG).show();
+            return;
+        }
+
+        user.getIdToken(false).addOnSuccessListener(tokenResult -> network.execute(() -> {
+            AuthorizedResponse response = socialAuthorizedRequest(
+                    "DELETE",
+                    "/api/admin/items/" + reportType + "/" + Uri.encode(reportId),
+                    tokenResult.getToken()
+            );
+            runOnUiThread(() -> {
+                if (response.statusCode < 200 || response.statusCode >= 300) {
+                    Toast.makeText(
+                            this,
+                            "Report removal failed: " + socialPublishingRequestError(response),
+                            Toast.LENGTH_LONG
+                    ).show();
+                    return;
+                }
+
+                detailsDialog.dismiss();
+                showAdminDashboard();
+                try {
+                    JSONObject result = new JSONObject(response.body);
+                    JSONArray failures = result.optJSONArray("platform_failures");
+                    JSONArray alertFailures = result.optJSONArray("match_alert_failures");
+                    if ((failures != null && failures.length() > 0)
+                            || (alertFailures != null && alertFailures.length() > 0)) {
+                        StringBuilder message = new StringBuilder(
+                                "Report removed from Fendly, but some cleanup failed."
+                        );
+                        appendRemovalFailures(message, failures);
+                        appendRemovalFailures(message, alertFailures);
+                        new AlertDialog.Builder(this)
+                                .setTitle("Report removed with warnings")
+                                .setMessage(message.toString())
+                                .setPositiveButton("OK", null)
+                                .show();
+                    } else {
+                        Toast.makeText(
+                                this,
+                                "Report and its published posts were removed.",
+                                Toast.LENGTH_LONG
+                        ).show();
+                    }
+                } catch (JSONException error) {
+                    Log.e("ADMIN_REPORT", "Could not read report removal response", error);
+                    Toast.makeText(
+                            this,
+                            "Report removed, but the cleanup result could not be read.",
+                            Toast.LENGTH_LONG
+                    ).show();
+                }
+            });
+        })).addOnFailureListener(error -> {
+            Log.e("ADMIN_REPORT", "Could not retrieve Firebase admin token", error);
+            Toast.makeText(this, "Could not authenticate admin action.", Toast.LENGTH_LONG).show();
+        });
+    }
+
+    private void appendRemovalFailures(StringBuilder message, JSONArray failures) {
+        if (failures == null) return;
+        for (int i = 0; i < failures.length(); i++) {
+            String failure = failures.optString(i, "").trim();
+            if (!failure.isEmpty()) message.append("\n• ").append(failure);
+        }
     }
 
     private boolean isActiveCommunityReport(JSONObject report) {
