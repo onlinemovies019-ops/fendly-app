@@ -408,6 +408,18 @@ def remove_report_publications(
         if account is None:
             error_text = f"{publication.provider} post could not be removed: account is disconnected."
         else:
+            availability = _check_external_post(
+                account,
+                publication.external_post_id,
+            )
+            if availability == "unavailable":
+                logger.info(
+                    "Meta %s post %s was already unavailable during report removal",
+                    publication.provider,
+                    publication.external_post_id,
+                )
+                session.delete(publication)
+                continue
             try:
                 _delete_meta_post(account, publication.provider, publication.external_post_id)
                 session.delete(publication)
@@ -548,6 +560,15 @@ def _delete_meta_post(
         raise RuntimeError(f"Meta did not confirm deletion of the {provider} post")
 
 
+def _publication_access_token(account: SocialAccount) -> str | None:
+    if account.provider == "instagram":
+        encrypted_token = account.deletion_access_token_encrypted
+        if not encrypted_token:
+            return None
+        return _decrypt_token(encrypted_token)
+    return _decrypt_token(account.access_token_encrypted)
+
+
 def _consume_state(session: Session, state: str) -> None:
     digest = hashlib.sha256(state.encode("utf-8")).hexdigest()
     record = session.get(SocialOAuthState, digest)
@@ -632,6 +653,12 @@ def _validate_meta_deletion_permissions(granted: set[str], has_instagram: bool) 
             "Meta OAuth token is missing instagram_manage_contents; Instagram media "
             "deletion is unavailable for this connection. Check the Login for Business "
             "configuration and required app approval."
+        )
+        return False
+    if has_instagram and "instagram_basic" not in granted:
+        logger.warning(
+            "Meta OAuth token is missing instagram_basic; Instagram media lookup "
+            "and deletion cannot be confirmed."
         )
         return False
     return True
@@ -944,11 +971,18 @@ def _list_external_post_ids(
 
 def _check_external_post(account: SocialAccount, external_post_id: str) -> str:
     try:
+        access_token = _publication_access_token(account)
+        if access_token is None:
+            logger.warning(
+                "Meta %s post lookup skipped because its access token is missing",
+                account.provider,
+            )
+            return "check_failed"
         response = httpx.get(
             _graph_url(quote(external_post_id, safe="")),
             params={
                 "fields": "id",
-                "access_token": _decrypt_token(account.access_token_encrypted),
+                "access_token": access_token,
             },
             timeout=15,
         )

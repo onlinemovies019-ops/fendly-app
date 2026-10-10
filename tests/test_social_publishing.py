@@ -820,6 +820,93 @@ def test_external_post_lookup_reports_missing_posts_and_inconclusive_errors(monk
     assert social_publishing._check_external_post(account, "inaccessible-post") == "check_failed"
 
 
+def test_instagram_post_lookup_uses_user_token_to_confirm_manual_deletion(monkeypatch):
+    monkeypatch.setenv("META_GRAPH_API_VERSION", "v23.0")
+    decrypted_tokens = {
+        "encrypted-page-token": "page-token",
+        "encrypted-user-token": "facebook-user-token",
+    }
+    monkeypatch.setattr(
+        social_publishing,
+        "_decrypt_token",
+        lambda encrypted: decrypted_tokens[encrypted],
+    )
+    requested = {}
+
+    class FakeResponse:
+        status_code = 400
+        is_error = True
+
+        @staticmethod
+        def json():
+            return {
+                "error": {
+                    "code": 100,
+                    "error_subcode": 33,
+                    "message": "Unsupported get request",
+                }
+            }
+
+    def fake_get(url, params, timeout):
+        requested.update(url=url, params=params, timeout=timeout)
+        return FakeResponse()
+
+    monkeypatch.setattr(social_publishing.httpx, "get", fake_get)
+    account = SocialAccount(
+        provider="instagram",
+        account_id="instagram-id",
+        account_name="Fendly Instagram",
+        access_token_encrypted="encrypted-page-token",
+        deletion_access_token_encrypted="encrypted-user-token",
+    )
+
+    assert social_publishing._check_external_post(account, "deleted-instagram-post") == "unavailable"
+    assert requested["params"]["access_token"] == "facebook-user-token"
+
+
+def test_removing_report_accepts_instagram_post_already_deleted_on_meta(monkeypatch):
+    factory = _session_factory()
+    monkeypatch.setattr(
+        social_publishing,
+        "_check_external_post",
+        lambda _account, _post_id: "unavailable",
+    )
+
+    def unexpected_delete(*_args, **_kwargs):
+        pytest.fail("Should not call Meta DELETE for an already unavailable post")
+
+    monkeypatch.setattr(social_publishing, "_delete_meta_post", unexpected_delete)
+    with factory() as session:
+        publication = SocialPublication(
+            id="manually-deleted-instagram-publication",
+            report_id="manually-deleted-report",
+            report_type="lost",
+            provider="instagram",
+            status="published",
+            external_post_id="deleted-instagram-post",
+        )
+        session.add(
+            SocialAccount(
+                provider="instagram",
+                account_id="instagram-id",
+                account_name="Fendly Instagram",
+                access_token_encrypted="encrypted-page-token",
+                deletion_access_token_encrypted="encrypted-user-token",
+            )
+        )
+        session.add(publication)
+        session.commit()
+
+        failures = social_publishing.remove_report_publications(
+            session,
+            "manually-deleted-report",
+            "lost",
+        )
+
+        assert failures == []
+        assert session.get(SocialPublication, "manually-deleted-instagram-publication") is None
+
+
 def test_publication_refresh_reconciles_feed_and_preserves_inconclusive_checks(monkeypatch):
     factory = _session_factory()
     monkeypatch.setattr(
@@ -1045,6 +1132,11 @@ def test_admin_report_removal_deletes_meta_posts_and_retains_failed_deletions(mo
     factory = _session_factory()
     monkeypatch.setenv("META_GRAPH_API_VERSION", "v23.0")
     monkeypatch.setattr(social_publishing, "_decrypt_token", lambda _: "page-token")
+    monkeypatch.setattr(
+        social_publishing,
+        "_check_external_post",
+        lambda *_args: "available",
+    )
     requests = []
 
     class FakeResponse:
