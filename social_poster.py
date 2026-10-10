@@ -109,7 +109,7 @@ def _rounded_photo(
 
 def render_community_poster(
     title: str, report_type: str, category: str,
-    report_url: str, photo: Image.Image | None,
+    report_url: str, photo: Image.Image | None, date: str = "",
 ) -> bytes:
     poster = Image.new("RGB", (POSTER_WIDTH, POSTER_HEIGHT), BACKGROUND)
     draw = ImageDraw.Draw(poster)
@@ -142,6 +142,8 @@ def render_community_poster(
         720,
         _font(34, bold=True),
     )
+    date_text = date.strip() or "Date not provided"
+    draw.text((78, 1315), date_text, fill=MUTED, font=_font(24))
     scan_text = "SCAN FOR FENDLY"
     scan_font = _font(18)
     scan_width = draw.textbbox((0, 0), scan_text, font=scan_font)[2]
@@ -201,4 +203,5 @@ async def render_report_poster(report: LostItem | FoundItem, report_type: str) -
         report.category or "",
         report_url,
         photo,
+        report.report_date or "",
     )

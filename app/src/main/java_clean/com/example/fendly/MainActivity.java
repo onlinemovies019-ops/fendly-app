@@ -157,8 +157,6 @@ import com.cloudinary.android.MediaManager;
 import com.cloudinary.android.callback.ErrorInfo;
 import com.cloudinary.android.callback.UploadCallback;
 import com.bumptech.glide.Glide;
-import com.bumptech.glide.request.target.CustomTarget;
-import com.bumptech.glide.request.transition.Transition;
 import android.net.Uri;
 import android.provider.MediaStore;
 import android.provider.Settings;
@@ -11713,15 +11711,10 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
 
     private void generateAndShareCommunityPoster(JSONObject report) {
         String title = report.optString("original_title", report.optString("title", "Lost item")).trim();
-        String location = report.optString(
-                "original_report_location",
-                report.optString("report_location", report.optString("location", ""))
-        ).trim();
-        String date = report.optString("report_date", "").trim();
-        String category = report.optString("original_category", report.optString("category", "")).trim();
         String type = report.optString("type", "");
+        String reportId = report.optString("id", report.optString("_id", "")).trim();
         String itemToken = report.optString("share_token", report.optString("token", report.optString("id", ""))).trim();
-        if (itemToken.isEmpty()) {
+        if (itemToken.isEmpty() || reportId.isEmpty()) {
             Toast.makeText(this, "This report cannot be shared because its item link is unavailable.", Toast.LENGTH_LONG).show();
             return;
         }
@@ -11744,14 +11737,19 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                         Map<String, String> links = new LinkedHashMap<>();
                         addNonBlankSocialLink(links, "Instagram", profile.optString("instagram_url", ""));
                         addNonBlankSocialLink(links, "Facebook", profile.optString("facebook_url", ""));
-                        runOnUiThread(() -> loadPosterPhotoAndShare(
-                                reportImageUrls(report), title, location, date, type, category, itemUrl, links
+                        Bitmap poster = loadCanonicalCommunityPoster(
+                                type,
+                                reportId,
+                                tokenResult.getToken()
+                        );
+                        runOnUiThread(() -> shareCanonicalCommunityPoster(
+                                poster, title, itemUrl, links
                         ));
                     } catch (Exception error) {
                         Log.e("COMMUNITY_POSTER", "Could not load profile links for poster sharing", error);
                         runOnUiThread(() -> Toast.makeText(
                                 this,
-                                "Could not prepare sharing details. Please try again.",
+                                "Could not prepare the community poster. Please try again.",
                                 Toast.LENGTH_LONG
                         ).show());
                     }
@@ -11762,88 +11760,64 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                 });
     }
 
-    private void addNonBlankSocialLink(Map<String, String> links, String label, String url) {
-        String normalized = url == null ? "" : url.trim();
-        if (!normalized.isEmpty()) links.put(label, normalized);
+    private Bitmap loadCanonicalCommunityPoster(String reportType, String reportId, String idToken)
+            throws Exception {
+        String normalizedType = "FOUND".equalsIgnoreCase(reportType) ? "found" : "lost";
+        String endpoint = API_BASE + "/api/items/" + normalizedType + "/"
+                + Uri.encode(reportId) + "/community-poster";
+        HttpURLConnection connection = null;
+        try {
+            connection = (HttpURLConnection) new URL(endpoint).openConnection();
+            connection.setRequestMethod("GET");
+            connection.setConnectTimeout(15000);
+            connection.setReadTimeout(60000);
+            connection.setRequestProperty("Authorization", "Bearer " + idToken);
+            int responseCode = connection.getResponseCode();
+            if (responseCode < 200 || responseCode >= 300) {
+                throw new java.io.IOException(
+                        "Community poster request failed with HTTP " + responseCode
+                );
+            }
+            try (InputStream input = connection.getInputStream()) {
+                Bitmap poster = BitmapFactory.decodeStream(input);
+                if (poster == null) {
+                    throw new java.io.IOException("Community poster response was not a valid image");
+                }
+                return poster;
+            }
+        } finally {
+            if (connection != null) connection.disconnect();
+        }
     }
 
-    private void loadPosterPhotoAndShare(
-            List<String> imageUrls,
+    private void shareCanonicalCommunityPoster(
+            Bitmap poster,
             String title,
-            String location,
-            String date,
-            String itemType,
-            String category,
             String itemUrl,
             Map<String, String> profileLinks
     ) {
-        if (imageUrls.isEmpty()) {
-            renderAndShareCommunityPoster(null, title, location, date, itemType, category, itemUrl, profileLinks);
+        if (poster == null) {
+            Toast.makeText(this, "Could not prepare the community poster. Please try again.", Toast.LENGTH_LONG).show();
             return;
         }
-
-        Glide.with(this)
-                .asBitmap()
-                .load(imageUrls.get(0))
-                .into(new CustomTarget<Bitmap>() {
-                    @Override
-                    public void onResourceReady(Bitmap resource, Transition<? super Bitmap> transition) {
-                        renderAndShareCommunityPoster(resource, title, location, date, itemType, category, itemUrl, profileLinks);
-                    }
-
-                    @Override
-                    public void onLoadCleared(android.graphics.drawable.Drawable placeholder) {
-                    }
-
-                    @Override
-                    public void onLoadFailed(android.graphics.drawable.Drawable errorDrawable) {
-                        Log.w("COMMUNITY_POSTER", "Could not load the item photo; generating a poster without it");
-                        renderAndShareCommunityPoster(null, title, location, date, itemType, category, itemUrl, profileLinks);
-                    }
-                });
-    }
-
-    private void renderAndShareCommunityPoster(
-            Bitmap photo,
-            String title,
-            String location,
-            String date,
-            String itemType,
-            String category,
-            String itemUrl,
-            Map<String, String> profileLinks
-    ) {
-        renderCommunityPoster(photo, title, location, date, itemType, category, itemUrl, profileLinks);
-    }
-
-    private void renderCommunityPoster(
-            Bitmap photo,
-            String title,
-            String location,
-            String date,
-            String itemType,
-            String category,
-            String itemUrl,
-            Map<String, String> profileLinks
-    ) {
-        Bitmap poster = null;
         try {
-            poster = CommunityPoster.render(title, location, date, itemType, category, itemUrl, photo);
-            String subject = CommunityPosterSubject.homeSubject(title, category);
-            String homeMessage = "Help bring this "
-                    + ("Item".equals(subject) ? "item" : subject) + " home";
             SharePosterUtil.sharePoster(
                     this,
                     poster,
-                    homeMessage + ": " + title + "\n" + itemUrl,
+                    "Help bring this home: " + title + "\n" + itemUrl,
                     profileLinks
             );
         } catch (Exception error) {
-            Log.e("COMMUNITY_POSTER", "Could not generate or share the community poster", error);
-            Toast.makeText(this, "Could not generate the poster. Please try again.", Toast.LENGTH_LONG).show();
+            Log.e("COMMUNITY_POSTER", "Could not share the canonical community poster", error);
+            Toast.makeText(this, "Could not share the poster. Please try again.", Toast.LENGTH_LONG).show();
         } finally {
-            if (poster != null && !poster.isRecycled()) poster.recycle();
+            if (!poster.isRecycled()) poster.recycle();
         }
+    }
+
+    private void addNonBlankSocialLink(Map<String, String> links, String label, String url) {
+        String normalized = url == null ? "" : url.trim();
+        if (!normalized.isEmpty()) links.put(label, normalized);
     }
 
     private List<String> reportImageUrls(JSONObject report) {

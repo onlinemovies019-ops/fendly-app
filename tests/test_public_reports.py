@@ -53,6 +53,67 @@ def test_user_report_listing_is_not_exposed(reports_client):
     assert client.get("/api/reports").status_code == 404
 
 
+def test_owned_report_community_poster_uses_the_shared_poster_renderer(
+    reports_client,
+    monkeypatch,
+):
+    client, session_factory = reports_client
+
+    generated = []
+
+    async def render_poster(report, report_type):
+        generated.append((report.id, report_type))
+        return b"canonical-poster"
+
+    monkeypatch.setattr("social_poster.render_report_poster", render_poster)
+    main.app.dependency_overrides[items_module.get_current_user] = lambda: "report-owner"
+    try:
+        with Session(session_factory.kw["bind"]) as session:
+            session.add(
+                LostItem(
+                    id="poster-report",
+                    created_by="report-owner",
+                    title="Lost squirrel",
+                    description="Brown squirrel",
+                    report_date="10/10/2026",
+                    lat=0,
+                    lng=0,
+                )
+            )
+            session.commit()
+
+        response = client.get("/api/items/lost/poster-report/community-poster")
+        assert response.status_code == 200
+        assert response.content == b"canonical-poster"
+        assert response.headers["content-type"] == "image/jpeg"
+        assert response.headers["cache-control"] == "no-store"
+        assert generated == [("poster-report", "lost")]
+    finally:
+        main.app.dependency_overrides.pop(items_module.get_current_user, None)
+
+
+def test_community_poster_endpoint_does_not_expose_another_users_report(reports_client):
+    client, session_factory = reports_client
+    main.app.dependency_overrides[items_module.get_current_user] = lambda: "different-user"
+    try:
+        with Session(session_factory.kw["bind"]) as session:
+            session.add(
+                LostItem(
+                    id="private-poster-report",
+                    created_by="report-owner",
+                    title="Lost bag",
+                    description="Blue bag",
+                    lat=0,
+                    lng=0,
+                )
+            )
+            session.commit()
+        response = client.get("/api/items/lost/private-poster-report/community-poster")
+        assert response.status_code == 404
+    finally:
+        main.app.dependency_overrides.pop(items_module.get_current_user, None)
+
+
 def test_user_content_flagging_is_not_exposed(reports_client):
     client, _ = reports_client
     assert client.get("/api/admin/content-reports").status_code == 404

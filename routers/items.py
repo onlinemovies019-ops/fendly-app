@@ -12,7 +12,7 @@ from urllib.parse import urlsplit
 from uuid import uuid4
 
 import firebase_admin
-from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, UploadFile, status
+from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Response, UploadFile, status
 from firebase_admin import firestore
 import httpx
 from pydantic import BaseModel, Field
@@ -623,6 +623,38 @@ async def create_item_compat(
         raise
     except Exception as exc:
         raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, "Unable to create report") from exc
+
+
+@router.get("/items/{item_type}/{item_id}/community-poster")
+async def get_community_poster(
+    item_type: str,
+    item_id: str,
+    session: Session | None = Depends(get_db),
+    uid: str = Depends(get_current_user),
+) -> Response:
+    session = _require_db_session(session)
+    model = (
+        LostItem
+        if item_type.strip().casefold() == "lost"
+        else FoundItem
+        if item_type.strip().casefold() == "found"
+        else None
+    )
+    if model is None:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Invalid report type")
+    report = session.scalar(
+        select(model).where(model.id == item_id, model.created_by == uid)
+    )
+    if report is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Report not found")
+    from social_poster import render_report_poster
+
+    poster = await render_report_poster(report, item_type.strip().casefold())
+    return Response(
+        content=poster,
+        media_type="image/jpeg",
+        headers={"Cache-Control": "no-store"},
+    )
 
 
 @router.get("/items/mine")

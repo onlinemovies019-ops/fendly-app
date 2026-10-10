@@ -228,10 +228,11 @@ def test_generated_community_poster_uses_the_report_link(monkeypatch):
     poster_args = {}
     original_renderer = social_poster.render_community_poster
 
-    def render_poster(title, report_type, category, report_url, photo):
+    def render_poster(title, report_type, category, report_url, photo, date):
         poster_args["report_url"] = report_url
+        poster_args["date"] = date
         return original_renderer(
-            title, report_type, category, report_url, photo
+            title, report_type, category, report_url, photo, date
         )
 
     monkeypatch.setattr(social_poster, "render_community_poster", render_poster)
@@ -242,6 +243,7 @@ def test_generated_community_poster_uses_the_report_link(monkeypatch):
     assert poster_args["report_url"] == (
         "https://download.fendly.example/item/7e5e744d-1be9-4c47-b1d1-95a9d817d980"
     )
+    assert poster_args["date"] == "Private date"
 
 
 def test_social_poster_uses_person_in_home_message():
@@ -279,8 +281,9 @@ def test_social_poster_does_not_call_gemini(monkeypatch):
     def reject_external_request(*_args, **_kwargs):
         raise AssertionError("Social poster generation must not call Gemini")
 
-    def capture_renderer(title, report_type, category, report_url, photo):
+    def capture_renderer(title, report_type, category, report_url, photo, date):
         renderer_args["photo"] = photo
+        renderer_args["date"] = date
         return b"poster"
 
     monkeypatch.setattr(social_poster.httpx, "AsyncClient", reject_external_request)
@@ -294,6 +297,7 @@ def test_social_poster_does_not_call_gemini(monkeypatch):
 
     assert poster_bytes == b"poster"
     assert renderer_args["photo"] is not None
+    assert renderer_args["date"] == ""
 
 
 def test_social_poster_still_renders_when_report_photo_cannot_be_loaded(monkeypatch):
@@ -312,7 +316,7 @@ def test_social_poster_still_renders_when_report_photo_cannot_be_loaded(monkeypa
     async def unavailable_photo(_image_url):
         raise RuntimeError("photo download failed")
 
-    def render_poster(title, report_type, category, report_url, photo):
+    def render_poster(title, report_type, category, report_url, photo, date):
         renderer_args["photo"] = photo
         return b"poster"
 
