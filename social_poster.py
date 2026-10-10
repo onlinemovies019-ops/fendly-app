@@ -92,21 +92,16 @@ def _rounded_photo(
     photo: Image.Image,
     size: tuple[int, int],
 ) -> Image.Image:
-    background = Image.new("RGB", size, (231, 229, 218))
-    fitted = ImageOps.contain(
+    fitted = ImageOps.fit(
         photo.convert("RGB"),
         size,
         method=Image.Resampling.LANCZOS,
+        centering=(0.5, 0.5),
     )
-    background.paste(
-        fitted,
-        ((size[0] - fitted.width) // 2, (size[1] - fitted.height) // 2),
-    )
-    image = background
     mask = Image.new("L", size, 0)
     ImageDraw.Draw(mask).rounded_rectangle((0, 0, size[0] - 1, size[1] - 1), radius=28, fill=255)
-    image.putalpha(mask)
-    return image
+    fitted.putalpha(mask)
+    return fitted
 
 
 def render_community_poster(

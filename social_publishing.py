@@ -46,6 +46,8 @@ UNEXPECTED_PUBLISHING_FAILURE = (
     "Unexpected publishing error. Check the platform before retrying "
     "to avoid a duplicate public post."
 )
+INSTAGRAM_CONTAINER_TIMEOUT_SECONDS = 60
+INSTAGRAM_CONTAINER_POLL_INTERVAL_SECONDS = 2
 
 
 def _secret_box() -> Fernet:
@@ -244,7 +246,7 @@ def _publish_instagram(
     if not report.social_poster_url:
         raise RuntimeError("Fendly community poster is not available; Instagram requires a generated poster.")
     token = _decrypt_token(account.access_token_encrypted)
-    created = _provider_response(
+    created = _instagram_publish_response(
         httpx.post(
             _graph_url(f"{account.account_id}/media"),
             data={"image_url": report.social_poster_url, "caption": caption, "access_token": token},
@@ -255,7 +257,8 @@ def _publish_instagram(
     creation_id = created.get("id")
     if not isinstance(creation_id, str) or not creation_id:
         raise RuntimeError("Instagram did not return a media identifier")
-    published = _provider_response(
+    _wait_for_instagram_container(token, creation_id)
+    published = _instagram_publish_response(
         httpx.post(
             _graph_url(f"{account.account_id}/media_publish"),
             data={"creation_id": creation_id, "access_token": token},
@@ -267,6 +270,62 @@ def _publish_instagram(
     if not isinstance(post_id, str) or not post_id:
         raise RuntimeError("Instagram did not return a published media identifier")
     return post_id
+
+
+def _instagram_publish_response(
+    response: httpx.Response,
+    operation: str,
+) -> dict[str, object]:
+    try:
+        return _provider_response(response, operation)
+    except RuntimeError as error:
+        error_text = str(error)
+        if "permission" in error_text.casefold() or "code 10" in error_text.casefold():
+            raise RuntimeError(
+                f"{error_text}. Instagram publishing requires Meta's "
+                "instagram_content_publish permission. Verify it is enabled in "
+                "the Meta Login for Business configuration and approved for the app, "
+                "then reconnect Meta."
+            ) from error
+        raise
+
+
+def _wait_for_instagram_container(
+    token: str,
+    creation_id: str,
+) -> None:
+    deadline = time.monotonic() + INSTAGRAM_CONTAINER_TIMEOUT_SECONDS
+    while True:
+        result = _instagram_publish_response(
+            httpx.get(
+                _graph_url(quote(creation_id, safe="")),
+                params={
+                    "fields": "status_code,status",
+                    "access_token": token,
+                },
+                timeout=30,
+            ),
+            "Instagram media processing status",
+        )
+        status_code = result.get("status_code")
+        if status_code == "FINISHED":
+            return
+        if status_code == "ERROR":
+            status_message = result.get("status")
+            detail = f": {status_message}" if isinstance(status_message, str) and status_message else ""
+            raise RuntimeError(f"Instagram could not process the poster{detail}")
+        if status_code != "IN_PROGRESS":
+            raise RuntimeError(
+                f"Instagram returned an unexpected media processing status: {status_code!r}"
+            )
+
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise RuntimeError(
+                "Instagram is still processing the poster after "
+                f"{INSTAGRAM_CONTAINER_TIMEOUT_SECONDS} seconds"
+            )
+        time.sleep(min(INSTAGRAM_CONTAINER_POLL_INTERVAL_SECONDS, remaining))
 
 
 def publish_publication(publication_id: str) -> None:
@@ -303,11 +362,10 @@ def publish_publication(publication_id: str) -> None:
                 publication.last_error = "The report no longer exists or social-sharing consent was withdrawn."
                 session.commit()
                 return
-            if not report.social_poster_url:
-                report.social_poster_url = asyncio.run(
-                    _generate_and_store_poster(report, publication.report_type)
-                )
-                session.commit()
+            report.social_poster_url = asyncio.run(
+                _generate_and_store_poster(report, publication.report_type)
+            )
+            session.commit()
             caption = _safe_caption(report, publication.report_type)
             if publication.provider == "facebook":
                 post_id = _publish_facebook(account, report, caption)
@@ -452,6 +510,19 @@ def remove_report_publications(
                     f"{publication.provider} post could not be removed: {str(error)[:300]}"
                 )
 
+            if account is not None and _meta_post_is_unavailable(
+                account,
+                publication.external_post_id,
+            ):
+                logger.info(
+                    "Meta %s post %s became unavailable during deletion; "
+                    "treating removal as complete",
+                    publication.provider,
+                    publication.external_post_id,
+                )
+                session.delete(publication)
+                continue
+
         publication.status = "failed"
         publication.next_attempt_at = 0
         publication.last_error = error_text[:500]
@@ -465,6 +536,13 @@ def remove_report_publications(
         )
     session.flush()
     return failures
+
+
+def _meta_post_is_unavailable(account: SocialAccount, external_post_id: str) -> bool:
+    post_ids, feed_complete = _list_external_post_ids(account, {external_post_id})
+    if feed_complete:
+        return external_post_id not in post_ids
+    return _check_external_post(account, external_post_id) == "unavailable"
 
 
 def process_due_publications() -> None:
@@ -667,6 +745,12 @@ def _validate_meta_deletion_permissions(granted: set[str], has_instagram: bool) 
         logger.warning(
             "Meta OAuth token is missing instagram_basic; Instagram media lookup "
             "and deletion cannot be confirmed."
+        )
+        return False
+    if has_instagram and "instagram_content_publish" not in granted:
+        logger.warning(
+            "Meta OAuth token is missing instagram_content_publish; Instagram "
+            "publishing is unavailable for this connection."
         )
         return False
     return True
@@ -1171,10 +1255,11 @@ def social_oauth_callback(
         return HTMLResponse(
             "<!doctype html><title>Fendly social account connected</title>"
             "<p>Fendly connected successfully, but Meta did not grant "
-            "instagram_manage_contents. Check that this permission is enabled in "
-            "the Login for Business configuration and approved for the app, then "
-            "reconnect. Instagram post deletion will remain unavailable until Meta "
-            "grants it. You may close this window.</p>"
+            "all required Instagram permissions, including instagram_content_publish, "
+            "instagram_basic, and instagram_manage_contents. Check the Login for "
+            "Business configuration and app approval, then reconnect. Instagram "
+            "publishing or post deletion may remain unavailable until Meta grants "
+            "the missing permissions. You may close this window.</p>"
         )
     return HTMLResponse(
         "<!doctype html><title>Fendly social account connected</title>"

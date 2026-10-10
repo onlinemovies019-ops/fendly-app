@@ -249,7 +249,7 @@ def test_social_poster_uses_person_in_home_message():
     assert social_poster._home_subject("Missing person", "other") == "Person"
 
 
-def test_social_poster_fits_entire_photo_in_square_frame():
+def test_social_poster_crops_photo_to_fill_square_frame():
     photo = Image.new("RGB", (200, 100), "green")
     ImageDraw.Draw(photo).rectangle((0, 0, 49, 99), fill="red")
     ImageDraw.Draw(photo).rectangle((150, 0, 199, 99), fill="blue")
@@ -257,9 +257,8 @@ def test_social_poster_fits_entire_photo_in_square_frame():
     fitted = social_poster._rounded_photo(photo, (100, 100))
 
     assert fitted.size == (100, 100)
-    assert fitted.getpixel((10, 50))[0] > fitted.getpixel((10, 50))[2]
-    assert fitted.getpixel((90, 50))[2] > fitted.getpixel((90, 50))[0]
-    assert fitted.getpixel((50, 10))[:3] == (231, 229, 218)
+    assert fitted.getpixel((50, 10))[:3] == (0, 128, 0)
+    assert fitted.getpixel((50, 50))[:3] == (0, 128, 0)
 
 
 def test_social_poster_does_not_call_gemini(monkeypatch):
@@ -583,7 +582,7 @@ def test_facebook_publication_does_not_treat_photo_id_as_page_post_id(monkeypatc
         social_publishing._publish_facebook(account, report, "caption")
 
 
-def test_instagram_publishes_generated_poster(monkeypatch):
+def test_instagram_publishes_stored_poster_url(monkeypatch):
     monkeypatch.setenv("META_GRAPH_API_VERSION", "v23.0")
     account = SocialAccount(
         provider="instagram",
@@ -599,9 +598,10 @@ def test_instagram_publishes_generated_poster(monkeypatch):
         lat=0,
         lng=0,
         image_url="https://storage.example.test/original.jpg",
-        social_poster_url="https://storage.example.test/poster.jpg",
+        social_poster_url="https://storage.example.test/old-poster.jpg",
     )
     requests = []
+    status_requests = []
 
     class FakeResponse:
         is_error = False
@@ -618,14 +618,79 @@ def test_instagram_publishes_generated_poster(monkeypatch):
             return FakeResponse({"id": "creation-id"})
         return FakeResponse({"id": "instagram-post-id"})
 
+    def fake_get(url, params, timeout):
+        status_requests.append((url, params))
+        return FakeResponse({"status_code": "FINISHED", "status": "Finished"})
+
     monkeypatch.setattr(social_publishing, "_decrypt_token", lambda _: "page-token")
     monkeypatch.setattr(social_publishing.httpx, "post", fake_post)
+    monkeypatch.setattr(social_publishing.httpx, "get", fake_get)
 
     post_id = social_publishing._publish_instagram(account, report, "caption")
 
     assert post_id == "instagram-post-id"
-    assert requests[0][1]["image_url"] == "https://storage.example.test/poster.jpg"
+    assert requests[0][1]["image_url"] == "https://storage.example.test/old-poster.jpg"
     assert requests[0][1]["image_url"] != report.image_url
+    assert status_requests == [
+        (
+            "https://graph.facebook.com/v23.0/creation-id",
+            {"fields": "status_code,status", "access_token": "page-token"},
+        )
+    ]
+    assert requests[1][0].endswith("/media_publish")
+
+
+def test_instagram_waits_for_container_processing_before_publishing(monkeypatch):
+    monkeypatch.setenv("META_GRAPH_API_VERSION", "v23.0")
+    account = SocialAccount(
+        provider="instagram",
+        account_id="instagram-id",
+        account_name="fendly",
+        access_token_encrypted="encrypted-token",
+    )
+    report = FoundItem(
+        created_by="report-owner",
+        title="White cat",
+        description="Private details",
+        category="animal",
+        lat=0,
+        lng=0,
+        social_poster_url="https://storage.example.test/poster.jpg",
+    )
+    status_values = iter(("IN_PROGRESS", "FINISHED"))
+    requests = []
+
+    class FakeResponse:
+        is_error = False
+
+        def __init__(self, value):
+            self.value = value
+
+        def json(self):
+            return self.value
+
+    def fake_post(url, data, timeout):
+        requests.append(url)
+        if url.endswith("/media"):
+            return FakeResponse({"id": "creation-id"})
+        return FakeResponse({"id": "instagram-post-id"})
+
+    def fake_get(_url, params, timeout):
+        return FakeResponse({
+            "status_code": next(status_values),
+            "status": "Processing",
+        })
+
+    monkeypatch.setattr(social_publishing, "_decrypt_token", lambda _: "page-token")
+    monkeypatch.setattr(social_publishing.httpx, "post", fake_post)
+    monkeypatch.setattr(social_publishing.httpx, "get", fake_get)
+    monkeypatch.setattr(social_publishing.time, "sleep", lambda _seconds: None)
+
+    assert social_publishing._publish_instagram(account, report, "caption") == "instagram-post-id"
+    assert requests == [
+        "https://graph.facebook.com/v23.0/instagram-id/media",
+        "https://graph.facebook.com/v23.0/instagram-id/media_publish",
+    ]
 
 
 def test_meta_http_error_includes_operation_and_provider_diagnostics():
@@ -675,6 +740,7 @@ def test_publication_worker_records_success(monkeypatch):
             lat=0,
             lng=0,
             social_share_consent=True,
+            social_poster_url="https://storage.example.test/old-poster.jpg",
         )
         account = SocialAccount(
             provider="facebook",
@@ -687,8 +753,7 @@ def test_publication_worker_records_success(monkeypatch):
             report_id=report.id,
             report_type="lost",
             provider="facebook",
-            status="failed",
-            last_error=social_publishing.UNEXPECTED_PUBLISHING_FAILURE,
+            status="pending",
             next_attempt_at=0,
         )
         session.add_all([report, account, publication])
@@ -912,6 +977,54 @@ def test_removing_report_accepts_instagram_post_already_deleted_on_meta(monkeypa
 
         assert failures == []
         assert session.get(SocialPublication, "manually-deleted-instagram-publication") is None
+
+
+def test_removing_report_accepts_post_deleted_during_meta_delete(monkeypatch):
+    factory = _session_factory()
+    feed_results = iter([
+        ({"facebook-post"}, True),
+        (set(), True),
+    ])
+    monkeypatch.setattr(
+        social_publishing,
+        "_list_external_post_ids",
+        lambda _account, _post_ids: next(feed_results),
+    )
+    monkeypatch.setattr(
+        social_publishing,
+        "_check_external_post",
+        lambda *_args: "available",
+    )
+
+    def delete_post(*_args, **_kwargs):
+        raise RuntimeError("Meta returned an ambiguous delete response")
+
+    monkeypatch.setattr(social_publishing, "_delete_meta_post", delete_post)
+    with factory() as session:
+        session.add(SocialAccount(
+            provider="facebook",
+            account_id="page-id",
+            account_name="Fendly",
+            access_token_encrypted="encrypted-token",
+        ))
+        session.add(SocialPublication(
+            id="deleted-during-request",
+            report_id="deleted-during-request-report",
+            report_type="lost",
+            provider="facebook",
+            status="published",
+            external_post_id="facebook-post",
+        ))
+        session.commit()
+
+        failures = social_publishing.remove_report_publications(
+            session,
+            "deleted-during-request-report",
+            "lost",
+        )
+
+        assert failures == []
+        assert session.get(SocialPublication, "deleted-during-request") is None
 
 
 def test_removing_report_accepts_facebook_post_missing_from_complete_page_feed(monkeypatch):

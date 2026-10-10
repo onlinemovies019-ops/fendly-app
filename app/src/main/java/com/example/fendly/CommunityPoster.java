@@ -67,7 +67,7 @@ final class CommunityPoster {
             android.graphics.Path clip = new android.graphics.Path();
             clip.addRoundRect(imageBounds, 28, 28, android.graphics.Path.Direction.CW);
             canvas.clipPath(clip);
-            canvas.drawBitmap(photo, null, fitRect(photo, imageBounds), paint);
+            canvas.drawBitmap(photo, null, fillRect(photo, imageBounds), paint);
             canvas.restore();
         } else {
             paint.setColor(MUTED);
@@ -96,8 +96,8 @@ final class CommunityPoster {
         return poster;
     }
 
-    private static RectF fitRect(Bitmap bitmap, RectF bounds) {
-        float scale = Math.min(
+    private static RectF fillRect(Bitmap bitmap, RectF bounds) {
+        float scale = Math.max(
                 bounds.width() / bitmap.getWidth(),
                 bounds.height() / bitmap.getHeight()
         );

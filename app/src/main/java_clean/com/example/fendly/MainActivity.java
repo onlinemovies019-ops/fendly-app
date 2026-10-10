@@ -1246,16 +1246,11 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                 ).openConnection();
                 connection.setRequestMethod("DELETE");
                 connection.setConnectTimeout(8000);
-                connection.setReadTimeout(10000);
+                connection.setReadTimeout(60000);
                 connection.setRequestProperty("Authorization", "Bearer " + tokenResult.getToken());
                 responseCode = connection.getResponseCode();
                 if (responseCode >= 200 && responseCode < 300) {
-                    runOnUiThread(() -> {
-                        FendlyWidgetProvider.refresh(this);
-                        detailsDialog.dismiss();
-                        Toast.makeText(this, LanguageManager.profileText(this, "report_deleted"), Toast.LENGTH_LONG).show();
-                        showReports();
-                    });
+                    finishReportDeletion(detailsDialog);
                     return;
                 }
                 responseBody = readStream(connection.getErrorStream());
@@ -1265,6 +1260,18 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             } finally {
                 if (connection != null) connection.disconnect();
             }
+
+            try {
+                if (!isReportPresent(reportId, tokenResult.getToken())) {
+                    Log.i("REPORT_DELETE", "Report " + reportId
+                            + " is absent after an ambiguous delete response; treating deletion as complete");
+                    finishReportDeletion(detailsDialog);
+                    return;
+                }
+            } catch (Exception error) {
+                Log.w("REPORT_DELETE", "Could not verify report deletion " + reportId, error);
+            }
+
             String finalResponseBody = responseBody;
             int finalResponseCode = responseCode;
             runOnUiThread(() -> Toast.makeText(
@@ -1276,6 +1283,44 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             Log.e("REPORT_DELETE", "Could not authenticate report deletion", error);
             Toast.makeText(this, LanguageManager.profileText(this, "report_delete_failed"), Toast.LENGTH_LONG).show();
         });
+    }
+
+    private void finishReportDeletion(Dialog detailsDialog) {
+        runOnUiThread(() -> {
+            FendlyWidgetProvider.refresh(this);
+            detailsDialog.dismiss();
+            Toast.makeText(this, LanguageManager.profileText(this, "report_deleted"), Toast.LENGTH_LONG).show();
+            showReports();
+        });
+    }
+
+    private boolean isReportPresent(String reportId, String idToken) throws Exception {
+        HttpURLConnection connection = null;
+        try {
+            connection = (HttpURLConnection) new URL(API_BASE + "/api/items/mine").openConnection();
+            connection.setRequestMethod("GET");
+            connection.setConnectTimeout(8000);
+            connection.setReadTimeout(15000);
+            connection.setUseCaches(false);
+            connection.setRequestProperty("Authorization", "Bearer " + idToken);
+            connection.setRequestProperty("Cache-Control", "no-cache, no-store");
+            connection.setRequestProperty("Pragma", "no-cache");
+            int responseCode = connection.getResponseCode();
+            if (responseCode < 200 || responseCode >= 300) {
+                throw new java.io.IOException("Report verification returned HTTP " + responseCode);
+            }
+            String response = readStream(connection.getInputStream());
+            JSONArray reports = new JSONArray(response);
+            for (int index = 0; index < reports.length(); index++) {
+                JSONObject item = reports.optJSONObject(index);
+                if (item != null && reportId.equals(item.optString("id", ""))) {
+                    return true;
+                }
+            }
+            return false;
+        } finally {
+            if (connection != null) connection.disconnect();
+        }
     }
 
     private String reportDeleteErrorMessage(int responseCode, String responseBody) {
