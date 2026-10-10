@@ -13,6 +13,15 @@ final class CommunityPosterSubject {
 
     static String homeSubject(String title, String category) {
         String normalizedTitle = title == null ? "" : title.toLowerCase(Locale.ROOT);
+        String normalizedCategory = category == null ? "" : category.trim().toLowerCase(Locale.ROOT);
+        if (normalizedCategory.contains("people") || normalizedCategory.contains("person")) {
+            return "Person";
+        }
+        if (Pattern.compile(
+                "\\b(missing person|missing people|missing child|missing children|person|people)\\b"
+        ).matcher(normalizedTitle).find()) {
+            return "Person";
+        }
         String matchedAnimal = null;
         int firstAnimalIndex = Integer.MAX_VALUE;
         int matchedLength = 0;
@@ -28,7 +37,6 @@ final class CommunityPosterSubject {
             }
         }
         if (matchedAnimal != null) return matchedAnimal;
-        String normalizedCategory = category == null ? "" : category.trim().toLowerCase(Locale.ROOT);
         if (normalizedCategory.equals("animal") || normalizedCategory.equals("animals")
                 || normalizedCategory.equals("pet") || normalizedCategory.equals("pets")) {
             return "Animal";

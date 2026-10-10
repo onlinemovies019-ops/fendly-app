@@ -138,7 +138,9 @@ For Meta, create a Login for Business configuration that grants access to the
 Fendly Facebook Page and its connected Instagram professional account. Its
 Facebook Login for Business permissions need `pages_show_list`,
 `pages_read_engagement`, `pages_manage_posts`, `instagram_basic`, and
-`instagram_content_publish` (singular). Set its configuration ID as
+`instagram_content_publish` (singular). To allow Fendly to delete published
+Instagram media during report removal, also include `instagram_manage_contents`.
+Set its configuration ID as
 `META_LOGIN_CONFIG_ID`, set the currently supported Graph API version in
 `META_GRAPH_API_VERSION`, and register the Meta callback URL above. If the
 authorized Meta user manages multiple Pages, set `META_PAGE_ID` to the Fendly
@@ -178,7 +180,10 @@ must resolve the listed issue and retry. Keep the Meta account connected with
 the required Page and Instagram publishing permissions for this moderation
 workflow. Users may delete their own reports only during the first hour after
 posting; that endpoint uses the same social-post deletion and confirmation
-requirements as admin removal.
+requirements as admin removal. After adding `instagram_manage_contents` to the
+Meta configuration, reconnect the brand account so the stored token receives
+the new permission. Meta App Review/Advanced Access may be required before the
+permission is granted outside app roles.
 
 Each report has an unchecked opt-in. A consented report publishes its type and
 title plus a link to that specific report (`FENDLY_APP_URL/item/{report_id}`;

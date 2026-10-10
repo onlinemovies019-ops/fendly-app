@@ -214,6 +214,11 @@ def test_generated_community_poster_uses_the_report_link(monkeypatch):
     )
 
 
+def test_social_poster_uses_person_in_home_message():
+    assert social_poster._home_subject("Missing John", "People") == "Person"
+    assert social_poster._home_subject("Missing person", "other") == "Person"
+
+
 def test_social_poster_fits_entire_photo_in_square_frame():
     photo = Image.new("RGB", (200, 100), "green")
     ImageDraw.Draw(photo).rectangle((0, 0, 49, 99), fill="red")
@@ -1060,13 +1065,20 @@ def test_admin_report_removal_deletes_meta_posts_and_retains_failed_deletions(mo
         } == {"facebook-post", "instagram-post", "already-removed-post"}
         assert failures == [
             "instagram post could not be removed: Meta instagram post deletion failed "
-            "(HTTP 403): code 200; Permission denied"
+            "(HTTP 403): code 200; Permission denied. Instagram deletion requires "
+            "the instagram_manage_contents permission. Add it to the Meta Login for "
+            "Business configuration, obtain Meta approval if required, then reconnect "
+            "the Instagram account."
         ]
         assert already_removed_failures == [
             "facebook post could not be removed: Meta facebook post deletion failed "
             "(HTTP 404): code 100; Post not found"
         ]
         assert session.get(SocialPublication, "facebook-publication") is None
+        failed_publication = session.get(SocialPublication, "instagram-publication")
+        assert failed_publication is not None
+        assert failed_publication.status == "failed"
+        assert "Permission denied" in failed_publication.last_error
         already_removed_publication = session.get(
             SocialPublication, "already-removed-publication"
         )
@@ -1096,10 +1108,42 @@ def test_meta_post_deletion_requires_explicit_success_confirmation(monkeypatch):
 
     with pytest.raises(RuntimeError, match="did not confirm deletion"):
         social_publishing._delete_meta_post(account, "facebook", "facebook-post")
-        failed_publication = session.get(SocialPublication, "instagram-publication")
-        assert failed_publication is not None
-        assert failed_publication.status == "failed"
-        assert "Permission denied" in failed_publication.last_error
+
+
+def test_instagram_delete_permission_error_explains_required_meta_permission(monkeypatch):
+    monkeypatch.setenv("META_GRAPH_API_VERSION", "v23.0")
+    monkeypatch.setattr(social_publishing, "_decrypt_token", lambda _: "page-token")
+
+    class FakeResponse:
+        is_error = True
+        status_code = 400
+
+        @staticmethod
+        def json():
+            return {
+                "error": {
+                    "code": 200,
+                    "message": "Permissions error",
+                }
+            }
+
+    monkeypatch.setattr(
+        social_publishing.httpx,
+        "delete",
+        lambda *_args, **_kwargs: FakeResponse(),
+    )
+    account = SocialAccount(
+        provider="instagram",
+        account_id="instagram-id",
+        account_name="Fendly",
+        access_token_encrypted="encrypted-token",
+    )
+
+    with pytest.raises(RuntimeError) as error:
+        social_publishing._delete_meta_post(account, "instagram", "instagram-post")
+
+    assert "instagram_manage_contents" in str(error.value)
+    assert "reconnect the Instagram account" in str(error.value)
 
 
 def test_admin_or_owner_removal_blocks_ambiguous_publication_without_post_id():

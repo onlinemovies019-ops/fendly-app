@@ -501,7 +501,21 @@ def _delete_meta_post(
         params={"access_token": _decrypt_token(account.access_token_encrypted)},
         timeout=15,
     )
-    result = _provider_response(response, f"{provider} post deletion")
+    try:
+        result = _provider_response(response, f"{provider} post deletion")
+    except RuntimeError as error:
+        error_text = str(error)
+        if provider == "instagram" and (
+            "code 200" in error_text.casefold()
+            or "permission" in error_text.casefold()
+        ):
+            raise RuntimeError(
+                f"{error_text}. Instagram deletion requires the "
+                "instagram_manage_contents permission. Add it to the Meta Login "
+                "for Business configuration, obtain Meta approval if required, "
+                "then reconnect the Instagram account."
+            ) from error
+        raise
     if result.get("success") is not True:
         raise RuntimeError(f"Meta did not confirm deletion of the {provider} post")
 

@@ -11391,18 +11391,41 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
     }
 
     private void confirmAdminReportRemoval(JSONObject report, Dialog detailsDialog) {
-        new AlertDialog.Builder(this)
-                .setTitle("Delete report?")
-                .setMessage(
-                        "This permanently deletes the report from Fendly and removes its linked "
-                                + "Facebook and Instagram posts. The report will stay in Fendly "
-                                + "unless both platforms confirm deletion."
-                )
-                .setNegativeButton("Cancel", null)
-                .setPositiveButton("Delete report", (confirm, which) ->
-                        removeAdminReport(report, detailsDialog)
-                )
-                .show();
+        Dialog confirmDialog = new Dialog(this);
+        confirmDialog.requestWindowFeature(Window.FEATURE_NO_TITLE);
+        LinearLayout content = themedDialogContent(
+                R.drawable.ic_field_lock,
+                "Delete report?",
+                "This permanently deletes the report from Fendly and removes its linked "
+                        + "Facebook and Instagram posts. The report stays in Fendly unless "
+                        + "both platforms confirm deletion."
+        );
+        LinearLayout actions = new LinearLayout(this);
+        actions.setOrientation(LinearLayout.HORIZONTAL);
+        actions.setGravity(Gravity.CENTER);
+
+        TextView cancel = filledButton("Cancel", LOST_GREEN, LOST_GREEN_ON);
+        cancel.setOnClickListener(view -> confirmDialog.dismiss());
+        actions.addView(cancel, new LinearLayout.LayoutParams(0, dp(44), 1f));
+
+        TextView delete = filledButton(
+                "Delete report",
+                Color.rgb(180, 45, 45),
+                Color.WHITE
+        );
+        LinearLayout.LayoutParams deleteParams = new LinearLayout.LayoutParams(0, dp(44), 1f);
+        deleteParams.setMargins(dp(12), 0, 0, 0);
+        actions.addView(delete, deleteParams);
+        delete.setOnClickListener(view -> {
+            confirmDialog.dismiss();
+            removeAdminReport(report, detailsDialog);
+        });
+
+        content.addView(actions, new LinearLayout.LayoutParams(-1, dp(44)));
+        confirmDialog.setContentView(content);
+        confirmDialog.setCanceledOnTouchOutside(false);
+        confirmDialog.show();
+        sizeThemedDialog(confirmDialog);
     }
 
     private void removeAdminReport(JSONObject report, Dialog detailsDialog) {
@@ -11427,11 +11450,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             );
             runOnUiThread(() -> {
                 if (response.statusCode < 200 || response.statusCode >= 300) {
-                    Toast.makeText(
-                            this,
-                            "Report removal failed: " + socialPublishingRequestError(response),
-                            Toast.LENGTH_LONG
-                    ).show();
+                    showAdminReportRemovalError(response);
                     return;
                 }
 
@@ -11473,6 +11492,25 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             Log.e("ADMIN_REPORT", "Could not retrieve Firebase admin token", error);
             Toast.makeText(this, "Could not authenticate admin action.", Toast.LENGTH_LONG).show();
         });
+    }
+
+    private void showAdminReportRemovalError(AuthorizedResponse response) {
+        Dialog errorDialog = new Dialog(this);
+        errorDialog.requestWindowFeature(Window.FEATURE_NO_TITLE);
+        LinearLayout content = themedDialogContent(
+                R.drawable.ic_field_lock,
+                "Report not deleted",
+                socialPublishingRequestError(response)
+        );
+        TextView close = filledButton("OK", GOLD, GOLD_ON);
+        LinearLayout.LayoutParams closeParams = new LinearLayout.LayoutParams(-1, dp(44));
+        closeParams.setMargins(0, dp(10), 0, 0);
+        content.addView(close, closeParams);
+        close.setOnClickListener(view -> errorDialog.dismiss());
+        errorDialog.setContentView(content);
+        errorDialog.setCanceledOnTouchOutside(true);
+        errorDialog.show();
+        sizeThemedDialog(errorDialog);
     }
 
     private void appendRemovalFailures(StringBuilder message, JSONArray failures) {

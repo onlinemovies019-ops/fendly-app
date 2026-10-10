@@ -31,4 +31,12 @@ public class CommunityPosterTest {
     public void homeSubjectKeepsItemWordingForOrdinaryItems() {
         assertEquals("Item", CommunityPosterSubject.homeSubject("Blue backpack", "Electronics"));
     }
+
+    @Test
+    public void homeSubjectUsesPersonForMissingPersonReports() {
+        assertEquals("Person", CommunityPosterSubject.homeSubject("Missing John", "People"));
+        assertEquals("Person", CommunityPosterSubject.homeSubject("Missing person", "other"));
+        assertEquals("Lost Person", CommunityPosterSubject.reportType("LOST", "Missing John", "People"));
+        assertEquals("Found Person", CommunityPosterSubject.reportType("FOUND", "Found child", "People"));
+    }
 }

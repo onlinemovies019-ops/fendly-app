@@ -48,6 +48,11 @@ def _font(size: int, bold: bool = False) -> ImageFont.FreeTypeFont | ImageFont.I
 
 def _home_subject(title: str, category: str) -> str:
     normalized_title = title.casefold()
+    normalized_category = category.strip().casefold()
+    if "people" in normalized_category or "person" in normalized_category:
+        return "Person"
+    if re.search(r"\b(missing person|missing people|missing child|missing children|person|people)\b", normalized_title):
+        return "Person"
     matches: list[tuple[int, int, str]] = []
     for species in ANIMAL_NAMES:
         pattern = re.compile(r"(?<![a-z])" + re.escape(species) + r"(?![a-z])")
@@ -56,7 +61,7 @@ def _home_subject(title: str, category: str) -> str:
             matches.append((match.start(), -len(match.group()), species))
     if matches:
         return min(matches)[2].capitalize()
-    if re.search(r"\b(animal|animals|pet|pets)\b", category.strip().casefold()):
+    if re.search(r"\b(animal|animals|pet|pets)\b", normalized_category):
         return "Animal"
     return "Item"
 
