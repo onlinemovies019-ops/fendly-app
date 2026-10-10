@@ -30,6 +30,9 @@ ANIMAL_NAMES = (
     "sparrow", "chicken", "duck", "goose", "horse", "pony", "cow", "calf",
     "buffalo", "goat", "sheep", "lamb", "piglet", "pig", "donkey", "snake",
     "lizard", "gecko", "iguana", "budgie", "peacock", "owl", "eagle", "crow",
+    "squirrel", "chipmunk", "fox", "deer", "monkey", "macaque", "otter",
+    "hedgehog", "ferret", "rat", "mouse", "mice", "bat", "raccoon", "falcon",
+    "hawk", "heron", "kingfisher", "woodpecker", "seagull", "swallow", "crane",
     "bird", "fish", "cat", "dog",
 )
 

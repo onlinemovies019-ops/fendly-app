@@ -21,10 +21,15 @@ public class CommunityPosterTest {
     }
 
     @Test
-    public void reportTypeUsesSpeciesInsteadOfItemForLostAndFoundAnimals() {
-        assertEquals("Lost Squirrel", CommunityPosterSubject.reportType("LOST", "Squirrel", "Animals"));
-        assertEquals("Found Cat", CommunityPosterSubject.reportType("FOUND", "Black cat", "Animals"));
-        assertEquals("Lost Animal", CommunityPosterSubject.reportType("LOST", "Axolotl", "Animals"));
+    public void reportTypeUsesMetaCallToActionForLostAndFoundReports() {
+        assertEquals(
+                "Lost report · View details in Fendly",
+                CommunityPosterSubject.reportType("LOST", "Squirrel", "Animals")
+        );
+        assertEquals(
+                "Found report · View details in Fendly",
+                CommunityPosterSubject.reportType("FOUND", "Black cat", "Animals")
+        );
     }
 
     @Test
@@ -36,7 +41,13 @@ public class CommunityPosterTest {
     public void homeSubjectUsesPersonForMissingPersonReports() {
         assertEquals("Person", CommunityPosterSubject.homeSubject("Missing John", "People"));
         assertEquals("Person", CommunityPosterSubject.homeSubject("Missing person", "other"));
-        assertEquals("Lost Person", CommunityPosterSubject.reportType("LOST", "Missing John", "People"));
-        assertEquals("Found Person", CommunityPosterSubject.reportType("FOUND", "Found child", "People"));
+        assertEquals(
+                "Lost report · View details in Fendly",
+                CommunityPosterSubject.reportType("LOST", "Missing John", "People")
+        );
+        assertEquals(
+                "Found report · View details in Fendly",
+                CommunityPosterSubject.reportType("FOUND", "Found child", "People")
+        );
     }
 }

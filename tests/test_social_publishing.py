@@ -247,6 +247,7 @@ def test_generated_community_poster_uses_the_report_link(monkeypatch):
 def test_social_poster_uses_person_in_home_message():
     assert social_poster._home_subject("Missing John", "People") == "Person"
     assert social_poster._home_subject("Missing person", "other") == "Person"
+    assert social_poster._home_subject("Squirrel", "Animals") == "Squirrel"
 
 
 def test_social_poster_crops_photo_to_fill_square_frame():

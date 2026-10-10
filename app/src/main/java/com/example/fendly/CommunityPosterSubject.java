@@ -46,8 +46,7 @@ final class CommunityPosterSubject {
 
     static String reportType(String reportType, String title, String category) {
         String status = "FOUND".equalsIgnoreCase(reportType) ? "Found" : "Lost";
-        String subject = homeSubject(title, category);
-        return "Item".equals(subject) ? status + " item" : status + " " + subject;
+        return status + " report · View details in Fendly";
     }
 
     private static Map<String, String> createAnimalNames() {
