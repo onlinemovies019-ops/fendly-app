@@ -29,6 +29,15 @@ from image_storage import store_image
 router = APIRouter(prefix="/api/social", tags=["social publishing"])
 logger = logging.getLogger(__name__)
 PROVIDER_NAMES = ("facebook", "instagram")
+META_OAUTH_SCOPES = (
+    "public_profile",
+    "pages_show_list",
+    "pages_read_engagement",
+    "pages_manage_posts",
+    "instagram_basic",
+    "instagram_content_publish",
+    "instagram_manage_contents",
+)
 LEGACY_POSTER_FAILURE = (
     "Fendly community poster could not be generated; "
     "the original report photo was not published."
@@ -564,26 +573,44 @@ def _upsert_social_account(
             setattr(account, key, value)
 
 
-def _validate_meta_deletion_permissions(user_token: str, has_instagram: bool) -> None:
-    permissions_result = _provider_response(
+def _debug_meta_token_scopes(
+    user_token: str,
+    app_id: str,
+    app_secret: str,
+) -> set[str]:
+    debug_result = _provider_response(
         httpx.get(
-            _graph_url("me/permissions"),
-            params={"access_token": user_token},
+            "https://graph.facebook.com/v20.0/debug_token",
+            params={
+                "input_token": user_token,
+                "access_token": f"{app_id}|{app_secret}",
+            },
             timeout=20,
         ),
-        "Meta permission verification",
+        "Meta token permission verification",
     )
-    granted: set[str] = set()
-    for permission in _response_array(permissions_result.get("data")):
-        permission_name = permission.get("permission")
-        if permission.get("status") == "granted" and isinstance(permission_name, str):
-            granted.add(permission_name)
+    token_data = _response_object(debug_result.get("data"))
+    raw_scopes = token_data.get("scopes")
+    granted = (
+        {scope for scope in raw_scopes if isinstance(scope, str)}
+        if isinstance(raw_scopes, list)
+        else set()
+    )
+    logger.info("Meta OAuth token granted scopes: %s", ", ".join(sorted(granted)))
+    return granted
+
+
+def _validate_meta_deletion_permissions(granted: set[str], has_instagram: bool) -> None:
     required = {"pages_manage_posts"}
     if has_instagram:
         required.add("instagram_manage_contents")
     missing = sorted(required - granted)
     if missing:
         permissions = ", ".join(missing)
+        logger.warning(
+            "Meta OAuth token is missing required deletion permission(s): %s",
+            permissions,
+        )
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST,
             f"Meta authorization is missing required deletion permission(s): "
@@ -611,6 +638,7 @@ def _finish_meta_oauth(session: Session, code: str, state: str) -> None:
     user_token = token_result.get("access_token")
     if not isinstance(user_token, str) or not user_token:
         raise RuntimeError("Meta did not return an access token")
+    granted_scopes = _debug_meta_token_scopes(user_token, app_id, app_secret)
     pages_result = _provider_response(
         httpx.get(
             _graph_url("me/accounts"),
@@ -657,7 +685,7 @@ def _finish_meta_oauth(session: Session, code: str, state: str) -> None:
         _response_object(instagram_value) if instagram_value is not None else None
     )
     instagram_id = instagram.get("id") if instagram is not None else None
-    _validate_meta_deletion_permissions(user_token, isinstance(instagram_id, str))
+    _validate_meta_deletion_permissions(granted_scopes, isinstance(instagram_id, str))
     page_name = str(page.get("name") or "Fendly Facebook Page")
     _upsert_social_account(session, "facebook", page_id, page_name, page_token)
     if isinstance(instagram_id, str) and instagram is not None:
@@ -1036,6 +1064,7 @@ def start_social_connection(
         "response_type": "code",
         "config_id": config_id,
         "state": state,
+        "scope": ",".join(META_OAUTH_SCOPES),
     }
     return {"authorization_url": f"https://www.facebook.com/dialog/oauth?{urlencode(params)}"}
 

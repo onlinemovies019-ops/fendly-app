@@ -3,6 +3,7 @@ import hashlib
 import io
 import time
 from unittest.mock import AsyncMock
+from urllib.parse import parse_qs, urlsplit
 
 import pytest
 from sqlalchemy import create_engine, select
@@ -78,13 +79,15 @@ def test_meta_oauth_callback_stores_selected_page_and_linked_instagram(monkeypat
     def fake_get(url, params, timeout):
         if url.endswith("/oauth/access_token"):
             return FakeResponse({"access_token": "user-token"})
-        if url.endswith("/me/permissions"):
+        if url.endswith("/debug_token"):
             return FakeResponse(
                 {
-                    "data": [
-                        {"permission": "pages_manage_posts", "status": "granted"},
-                        {"permission": "instagram_manage_contents", "status": "granted"},
-                    ]
+                    "data": {
+                        "scopes": [
+                            "pages_manage_posts",
+                            "instagram_manage_contents",
+                        ]
+                    }
                 }
             )
         assert url.endswith("/me/accounts")
@@ -142,6 +145,10 @@ def test_meta_oauth_page_id_mismatch_reports_available_pages_without_tokens(monk
     def fake_get(url, params, timeout):
         if url.endswith("/oauth/access_token"):
             return FakeResponse({"access_token": "user-token"})
+        if url.endswith("/debug_token"):
+            return FakeResponse(
+                {"data": {"scopes": ["pages_manage_posts"]}}
+            )
         return FakeResponse(
             {
                 "data": [
@@ -1246,13 +1253,15 @@ def test_meta_oauth_rejects_missing_instagram_delete_permission(monkeypatch):
     def fake_get(url, params, timeout):
         if url.endswith("/oauth/access_token"):
             return FakeResponse({"access_token": "user-token"})
-        if url.endswith("/me/permissions"):
-            assert params == {"access_token": "user-token"}
+        if url.endswith("/debug_token"):
+            assert url == "https://graph.facebook.com/v20.0/debug_token"
+            assert params == {
+                "input_token": "user-token",
+                "access_token": "meta-app-id|meta-app-secret",
+            }
             return FakeResponse(
                 {
-                    "data": [
-                        {"permission": "pages_manage_posts", "status": "granted"},
-                    ]
+                    "data": {"scopes": ["pages_manage_posts"]}
                 }
             )
         assert url.endswith("/me/accounts")
@@ -1281,6 +1290,25 @@ def test_meta_oauth_rejects_missing_instagram_delete_permission(monkeypatch):
     assert "reconnect" in str(error.value.detail)
     assert session.get(SocialAccount, "facebook") is None
     assert session.get(SocialAccount, "instagram") is None
+
+
+def test_meta_login_url_requests_required_scopes_as_comma_separated_values(monkeypatch):
+    factory = _session_factory()
+    monkeypatch.setenv("APP_SECRET_KEY", "test-secret-key-that-is-long-enough")
+    monkeypatch.setenv("META_APP_ID", "meta-app-id")
+    monkeypatch.setenv("META_APP_SECRET", "meta-app-secret")
+    monkeypatch.setenv("META_LOGIN_CONFIG_ID", "meta-config-id")
+    monkeypatch.setenv("META_GRAPH_API_VERSION", "v23.0")
+    monkeypatch.setenv("META_REDIRECT_URI", "https://api.example.test/api/social/callback/meta")
+
+    with factory() as session:
+        result = social_publishing.start_social_connection(session, "admin-user")
+
+    query = parse_qs(urlsplit(result["authorization_url"]).query)
+    assert query["scope"] == [
+        "public_profile,pages_show_list,pages_read_engagement,pages_manage_posts,"
+        "instagram_basic,instagram_content_publish,instagram_manage_contents"
+    ]
 
 
 def test_admin_or_owner_removal_blocks_ambiguous_publication_without_post_id():

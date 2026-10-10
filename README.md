@@ -140,6 +140,11 @@ Facebook Login for Business permissions need `pages_show_list`,
 `pages_read_engagement`, `pages_manage_posts`, `instagram_basic`, and
 `instagram_content_publish` (singular). To allow Fendly to delete published
 Instagram media during report removal, also include `instagram_manage_contents`.
+Fendly includes these permissions in the Meta OAuth `scope` parameter as a
+comma-separated list and checks the exchanged token's granted scopes through
+Meta's `debug_token` endpoint before saving the connection. If the callback
+reports a missing deletion permission, update the Login for Business
+configuration and re-authorize.
 Set its configuration ID as
 `META_LOGIN_CONFIG_ID`, set the currently supported Graph API version in
 `META_GRAPH_API_VERSION`, and register the Meta callback URL above. If the
