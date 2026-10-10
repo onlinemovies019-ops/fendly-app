@@ -10855,24 +10855,23 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         actions.setOrientation(compact ? LinearLayout.VERTICAL : LinearLayout.HORIZONTAL);
         boolean anyMetaAccountConnected = facebookConnected || instagramConnected;
         if (anyMetaAccountConnected) {
-            if (!facebookConnected || !instagramConnected) {
-                String missingAccount = facebookConnected ? "Instagram" : "Facebook";
-                TextView connectMissing = actionButton("Connect " + missingAccount, true);
-                connectMissing.setOnClickListener(view -> startSocialAuthorization("meta"));
-                LinearLayout.LayoutParams connectParams = new LinearLayout.LayoutParams(
-                        compact ? -1 : -2, dp(44)
-                );
-                if (compact) {
-                    connectParams.bottomMargin = dp(8);
-                }
-                actions.addView(connectMissing, connectParams);
+            String connectLabel = facebookConnected && instagramConnected
+                    ? "Reconnect Meta" : "Connect Meta";
+            TextView reconnect = actionButton(connectLabel, true);
+            reconnect.setOnClickListener(view -> startSocialAuthorization("meta"));
+            LinearLayout.LayoutParams connectParams = new LinearLayout.LayoutParams(
+                    compact ? -1 : -2, dp(44)
+            );
+            if (compact) {
+                connectParams.bottomMargin = dp(8);
             }
+            actions.addView(reconnect, connectParams);
             TextView disconnect = actionButton("Disconnect Meta", false);
             disconnect.setOnClickListener(view -> confirmSocialDisconnect("facebook"));
             LinearLayout.LayoutParams disconnectParams = new LinearLayout.LayoutParams(
                     compact ? -1 : -2, dp(44)
             );
-            if (!compact && (!facebookConnected || !instagramConnected)) {
+            if (!compact) {
                 disconnectParams.setMargins(dp(8), 0, 0, 0);
             }
             actions.addView(disconnect, disconnectParams);

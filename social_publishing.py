@@ -513,8 +513,9 @@ def _delete_meta_post(
         encrypted_token = account.deletion_access_token_encrypted or ""
         if not encrypted_token:
             raise RuntimeError(
-                "Instagram deletion needs a Facebook User access token. Reconnect "
-                "the Meta account so Fendly can save the required deletion token."
+                "Instagram deletion needs a Facebook User access token, which is "
+                "missing from this saved Meta connection. In Admin Workspace, open "
+                "Meta accounts and select Reconnect Meta to authorize it again."
             )
     response = httpx.delete(
         _graph_url(quote(external_post_id, safe="")),
