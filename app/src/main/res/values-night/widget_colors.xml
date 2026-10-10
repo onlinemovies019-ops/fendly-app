@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="fendly_widget_primary_text">#FFFFFF</color>
+    <color name="fendly_widget_notification_text">#FFFFFF</color>
+    <color name="fendly_widget_found_text">#2B1D05</color>
+    <color name="fendly_widget_lost_text">#FFFFFF</color>
+    <color name="fendly_widget_found_row_color">#E8B24A</color>
+    <color name="fendly_widget_lost_row_color">#0B5D45</color>
+    <color name="fendly_widget_logo_background_color">#FFFFFF</color>
+</resources>

@@ -7,7 +7,7 @@ import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
-import android.graphics.Color;
+import android.view.View;
 import android.util.Log;
 import android.widget.RemoteViews;
 
@@ -201,33 +201,32 @@ public final class FendlyWidgetProvider extends AppWidgetProvider {
         int unreadCount = hasCurrentUserCounts ? preferences.getInt(KEY_UNREAD, 0) : 0;
         for (int widgetId : widgetIds) {
             RemoteViews views = new RemoteViews(context.getPackageName(), R.layout.fendly_widget);
-            int background = unreadCount > 0
+            boolean hasNotifications = unreadCount > 0 && hasCurrentUserCounts;
+            int background = hasNotifications
                     ? R.drawable.fendly_widget_background_alert
                     : R.drawable.fendly_widget_background;
-            int primaryText = unreadCount > 0 ? Color.WHITE : Color.rgb(35, 38, 42);
-            int secondaryText = unreadCount > 0 ? Color.rgb(255, 230, 228) : Color.rgb(93, 99, 106);
-            views.setInt(R.id.widget_root, "setBackgroundResource", background);
-            views.setTextColor(R.id.widget_title, primaryText);
-            views.setTextColor(R.id.widget_lost_count, primaryText);
-            views.setTextColor(R.id.widget_found_count, primaryText);
-            views.setTextColor(R.id.widget_notifications_count, secondaryText);
-            if (hasCurrentUserCounts) {
-                views.setTextViewText(R.id.widget_lost_count, String.format(
-                        Locale.getDefault(), "%s %d",
-                        LanguageManager.profileText(context, "widget_lost"), lostCount));
-                views.setTextViewText(R.id.widget_found_count, String.format(
-                        Locale.getDefault(), "%s %d",
-                        LanguageManager.profileText(context, "widget_found"), foundCount));
-                views.setTextViewText(R.id.widget_notifications_count, String.format(
-                        Locale.getDefault(), "%s %d",
-                        LanguageManager.profileText(context, "widget_notifications"), unreadCount));
-            } else {
-                views.setTextViewText(R.id.widget_lost_count, "—");
-                views.setTextViewText(R.id.widget_found_count, "—");
+            views.setInt(R.id.widget_capsule, "setBackgroundResource", background);
+            if (hasNotifications) {
+                views.setViewVisibility(R.id.widget_dashboard, View.GONE);
+                views.setViewVisibility(R.id.widget_notifications_count, View.VISIBLE);
                 views.setTextViewText(R.id.widget_notifications_count,
-                        LanguageManager.profileText(context, currentUid == null
-                                ? "widget_sign_in"
-                                : "widget_refresh"));
+                        LanguageManager.localizedDigits(context, String.valueOf(unreadCount)));
+            } else {
+                views.setViewVisibility(R.id.widget_dashboard, View.VISIBLE);
+                views.setViewVisibility(R.id.widget_notifications_count, View.GONE);
+                String lostLabel = LanguageManager.profileText(context, "widget_lost");
+                String foundLabel = LanguageManager.profileText(context, "widget_found");
+                String lostValue = hasCurrentUserCounts
+                        ? LanguageManager.localizedDigits(context, String.valueOf(lostCount))
+                        : "—";
+                String foundValue = hasCurrentUserCounts
+                        ? LanguageManager.localizedDigits(context, String.valueOf(foundCount))
+                        : "—";
+                views.setTextViewText(R.id.widget_lost_count, lostValue);
+                views.setTextViewText(R.id.widget_found_count, foundValue);
+                views.setContentDescription(R.id.widget_root, String.format(
+                        Locale.getDefault(), "%s %s, %s %s",
+                        lostLabel, lostValue, foundLabel, foundValue));
             }
 
             Intent openApp = new Intent(context, MainActivity.class)
@@ -238,7 +237,17 @@ public final class FendlyWidgetProvider extends AppWidgetProvider {
                     openApp,
                     PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
             views.setOnClickPendingIntent(R.id.widget_root, pendingIntent);
-            views.setContentDescription(R.id.widget_root, context.getString(R.string.widget_description));
+            if (hasNotifications) {
+                views.setContentDescription(R.id.widget_root, String.format(
+                        Locale.getDefault(), "%s: %s",
+                        LanguageManager.profileText(context, "widget_notifications"),
+                        LanguageManager.localizedDigits(context, String.valueOf(unreadCount))));
+            } else if (!hasCurrentUserCounts) {
+                views.setContentDescription(R.id.widget_root,
+                        LanguageManager.profileText(context, currentUid == null
+                                ? "widget_sign_in"
+                                : "widget_refresh"));
+            }
             manager.updateAppWidget(widgetId, views);
         }
     }

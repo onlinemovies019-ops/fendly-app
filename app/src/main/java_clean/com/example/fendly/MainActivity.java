@@ -1451,12 +1451,24 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                 primaryTextColor(),
                 Typeface.BOLD
         );
-        authTaglineTop.setTypeface(Typeface.create("sans-serif-rounded", Typeface.BOLD));
+        Typeface taglineTypeface = selectedLanguage == 0
+                ? ResourcesCompat.getFont(this, R.font.game_of_squids)
+                : null;
+        authTaglineTop.setTypeface(taglineTypeface != null
+                ? taglineTypeface
+                : Typeface.create("sans-serif-rounded", Typeface.BOLD));
         authTaglineTop.setGravity(Gravity.TOP | Gravity.CENTER_HORIZONTAL);
         authTaglineTop.setTextAlignment(View.TEXT_ALIGNMENT_CENTER);
         authTaglineTop.setIncludeFontPadding(false);
         authTaglineTop.setMaxLines(2);
         authTaglineTop.setTextSize(responsiveTextSize(16));
+        if (taglineTypeface != null) {
+            authTaglineTop.setSingleLine(true);
+            authTaglineTop.setTextSize(responsiveTextSize(14));
+            TextViewCompat.setAutoSizeTextTypeUniformWithConfiguration(
+                    authTaglineTop, 8, Math.round(responsiveTextSize(14)), 1,
+                    TypedValue.COMPLEX_UNIT_SP);
+        }
         emblemContent.addView(authTaglineTop, new LinearLayout.LayoutParams(-1, dp(48)));
 
         ImageView emblem = new ImageView(this);
@@ -1478,12 +1490,21 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                 primaryTextColor(),
                 Typeface.BOLD
         );
-        authTaglineBottom.setTypeface(Typeface.create("sans-serif-rounded", Typeface.BOLD));
+        authTaglineBottom.setTypeface(taglineTypeface != null
+                ? taglineTypeface
+                : Typeface.create("sans-serif-rounded", Typeface.BOLD));
         authTaglineBottom.setGravity(Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL);
         authTaglineBottom.setTextAlignment(View.TEXT_ALIGNMENT_CENTER);
         authTaglineBottom.setIncludeFontPadding(false);
         authTaglineBottom.setMaxLines(2);
         authTaglineBottom.setTextSize(responsiveTextSize(16));
+        if (taglineTypeface != null) {
+            authTaglineBottom.setSingleLine(true);
+            authTaglineBottom.setTextSize(responsiveTextSize(12));
+            TextViewCompat.setAutoSizeTextTypeUniformWithConfiguration(
+                    authTaglineBottom, 8, Math.round(responsiveTextSize(12)), 1,
+                    TypedValue.COMPLEX_UNIT_SP);
+        }
         emblemContent.addView(authTaglineBottom, new LinearLayout.LayoutParams(-1, dp(48)));
 
         LinearLayout.LayoutParams emblemWrapParams = new LinearLayout.LayoutParams(-1, dp(200));
@@ -6503,7 +6524,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         LinearLayout root = screenBase(translate("My reports"));
         addHeading(
                 translate("Your reports"),
-                translate("Only you and Fendly administrators can see the reports you submit.")
+                localizeReportsText("Only you and Fendly administrators can see the reports you submit.")
         );
         TextView loading = text(localizeReportsText("Loading reports..."), 16, secondaryTextColor(), Typeface.NORMAL);
         addField(root, loading);
@@ -6564,7 +6585,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         LinearLayout root = screenBase(translate("My reports"));
         addHeading(
                 translate("Your reports"),
-                translate("Only you and Fendly administrators can see the reports you submit.")
+                localizeReportsText("Only you and Fendly administrators can see the reports you submit.")
         );
         addField(activeContent, fieldLabel(localizeReportsText("Browse by category")));
         LinearLayout categoryTabs = new LinearLayout(this);
@@ -13942,7 +13963,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         String[] english = {
                 "Complete your profile", "A little about you", "This helps neighbours know who they are helping.", "Save and continue",
                 "Login with PIN", "Welcome back.", "Use the username and PIN from your Fendly profile.", "Log in",
-                "Home", "Find what matters.", "Lost or Found? Will Connect the Dots..", "LOST", "FOUND", "My reports", "My profile",
+                "Home", "Find what matters.", "Lost or Found? Will ConNect the Dots..", "LOST", "FOUND", "My reports", "My profile",
                 "Post found item", "Report lost item", "Help it get home.", "Let's find it.", "Add clear details so the right person can recognise it.",
                 "Item name", "Description and identifying details", "Location or landmark", "Date and time", "Upload item image", "Image selected",
                 "Take photo with camera", "Use current location", "Publish found item", "Publish lost item", "Fendly Plus",
@@ -14152,6 +14173,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         if (value == null) return null;
         String[][] entries = {
                 {"Loading reports...", "रिपोर्ट लोड हो रही हैं...", "अहवाल लोड होत आहेत...", "રિપોર્ટ લોડ થઈ રહ્યા છે...", "রিপোর্ট লোড হচ্ছে...", "அறிக்கைகள் ஏற்றப்படுகின்றன...", "రిపోర్టులు లోడ్ అవుతున్నాయి...", "ವರದಿಗಳನ್ನು ಲೋಡ್ ಮಾಡಲಾಗುತ್ತಿದೆ...", "റിപ്പോർട്ടുകൾ ലോഡ് ചെയ്യുന്നു..."},
+                {"Only you and Fendly administrators can see the reports you submit.", "आपके द्वारा जमा की गई रिपोर्ट केवल आप और Fendly के व्यवस्थापक देख सकते हैं।", "तुम्ही सादर केलेले अहवाल फक्त तुम्ही आणि Fendly प्रशासक पाहू शकतात.", "તમે સબમિટ કરેલા અહેવાલો ફક્ત તમે અને Fendly એડમિન જોઈ શકે છે.", "আপনার জমা দেওয়া প্রতিবেদনগুলো শুধু আপনি এবং Fendly প্রশাসকেরা দেখতে পারেন।", "நீங்கள் சமர்ப்பிக்கும் அறிக்கைகளை நீங்கள் மற்றும் Fendly நிர்வாகிகள் மட்டுமே பார்க்க முடியும்.", "మీరు సమర్పించిన నివేదికలను మీరు మరియు Fendly నిర్వాహకులు మాత్రమే చూడగలరు.", "ನೀವು ಸಲ್ಲಿಸಿದ ವರದಿಗಳನ್ನು ನೀವು ಮತ್ತು Fendly ನಿರ್ವಾಹಕರು ಮಾತ್ರ ನೋಡಬಹುದು.", "നിങ്ങൾ സമർപ്പിക്കുന്ന റിപ്പോർട്ടുകൾ നിങ്ങൾക്കും Fendly അഡ്മിനിസ്ട്രേറ്റർമാർക്കും മാത്രമേ കാണാനാകൂ."},
                 {"No reports yet.", "अभी तक कोई रिपोर्ट नहीं है।", "अद्याप कोणतेही अहवाल नाहीत.", "હજુ સુધી કોઈ રિપોર્ટ નથી.", "এখনও কোনো রিপোর্ট নেই।", "இதுவரை அறிக்கைகள் எதுவும் இல்லை.", "ఇంకా ఎటువంటి రిపోర్ట్లు లేవు.", "ಇನ್ನೂ ಯಾವುದೇ ವರದಿಗಳಿಲ್ಲ.", "ഇതുവരെ റിപ്പോർട്ടുകൾ ഇല്ല."},
                 {"Sign in to view reports.", "रिपोर्ट देखने के लिए साइन इन करें।", "अहवाल पाहण्यासाठी साइन इन करा.", "રિપોર્ટ જોવા માટે સાઇન ઇન કરો.", "রিপোর্ট দেখতে সাইন ইন করুন।", "அறிக்கைகளைப் பார்க்க உள்நுழைவும்.", "రిపోర్టులు చూసేందుకు సైన్ ఇన్ చేయండి.", "ವರದಿಗಳನ್ನು ವೀಕ್ಷಿಸಲು ಸೈನ್ ઇન ಮಾಡಿ.", "റിപ്പോർട്ടുകൾ കാണാൻ സൈൻ ഇൻ ചെയ്യുക."},
                 {"Reports are temporarily unavailable.", "रिपोर्ट्स अस्थायी रूप से उपलब्ध नहीं हैं।", "अहवाल तात्पुरते उपलब्ध नाहीत.", "રિપોર્ટ્સ અસ્થાયી રૂપે અનુપલબ્ધ છે.", "রিপোর্ট সাময়িকভাবে পাওয়া যাচ্ছে না।", "அறிக்கைகள் தற்காலிகமாகக் கிடைக்கவில்லை.", "రిపోర్టులు తాత్కాలికంగా అందుబాటులో లేవు.", "ವರದಿಗಳು ತಾತ್ಕಾಲಿಕವಾಗಿ ಲಭ್ಯವಾಗಿಲ್ಲ.", "റിപ്പോർട്ടുകൾ താൽకాలികമായി ലഭ്യമല്ല."},

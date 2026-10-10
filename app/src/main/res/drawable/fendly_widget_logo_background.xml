@@ -1,6 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
 <shape xmlns:android="http://schemas.android.com/apk/res/android"
-    android:shape="rectangle">
-    <solid android:color="#C62828" />
-    <corners android:radius="34dp" />
+    android:shape="oval">
+    <solid android:color="@color/fendly_widget_logo_background_color" />
 </shape>
