@@ -943,6 +943,11 @@ def test_removing_report_accepts_instagram_post_already_deleted_on_meta(monkeypa
         "_check_external_post",
         lambda *_args: pytest.fail("Complete feed reconciliation should be sufficient"),
     )
+    monkeypatch.setattr(
+        social_publishing,
+        "_find_report_publication_post_ids",
+        lambda *_args: ([], True),
+    )
 
     def unexpected_delete(*_args, **_kwargs):
         pytest.fail("Should not call Meta DELETE for an already unavailable post")
@@ -995,6 +1000,11 @@ def test_removing_report_accepts_post_deleted_during_meta_delete(monkeypatch):
         "_check_external_post",
         lambda *_args: "available",
     )
+    monkeypatch.setattr(
+        social_publishing,
+        "_find_report_publication_post_ids",
+        lambda *_args: ([], True),
+    )
 
     def delete_post(*_args, **_kwargs):
         raise RuntimeError("Meta returned an ambiguous delete response")
@@ -1040,6 +1050,11 @@ def test_removing_report_accepts_facebook_post_missing_from_complete_page_feed(m
         social_publishing,
         "_check_external_post",
         lambda *_args: pytest.fail("Complete Page feed reconciliation should be sufficient"),
+    )
+    monkeypatch.setattr(
+        social_publishing,
+        "_find_report_publication_post_ids",
+        lambda *_args: ([], True),
     )
     monkeypatch.setattr(
         social_publishing,
@@ -1688,6 +1703,156 @@ def test_admin_or_owner_removal_blocks_ambiguous_publication_without_post_id():
         assert len(failures) == 1
         assert "may have been published without a saved post ID" in failures[0]
         assert session.get(SocialPublication, "ambiguous-publication") is not None
+
+
+def test_removing_legacy_publication_finds_and_deletes_its_report_post(monkeypatch):
+    factory = _session_factory()
+    matched_posts = []
+    deleted_posts = []
+    monkeypatch.setattr(
+        social_publishing,
+        "_find_report_publication_post_ids",
+        lambda _account, report_id: (matched_posts.append(report_id) or ["legacy-post"], True),
+    )
+    monkeypatch.setattr(
+        social_publishing,
+        "_delete_meta_post",
+        lambda _account, provider, post_id: deleted_posts.append((provider, post_id)),
+    )
+
+    with factory() as session:
+        session.add(
+            SocialAccount(
+                provider="facebook",
+                account_id="page-id",
+                account_name="Fendly",
+                access_token_encrypted="encrypted-token",
+            )
+        )
+        session.add(
+            SocialPublication(
+                id="legacy-publication",
+                report_id="legacy-report",
+                report_type="lost",
+                provider="facebook",
+                status="failed",
+                last_error=social_publishing.UNEXPECTED_PUBLISHING_FAILURE,
+            )
+        )
+        session.commit()
+
+        failures = social_publishing.remove_report_publications(
+            session,
+            "legacy-report",
+            "lost",
+        )
+
+        assert failures == []
+        assert session.get(SocialPublication, "legacy-publication") is None
+    assert matched_posts == ["legacy-report"]
+    assert deleted_posts == [("facebook", "legacy-post")]
+
+
+def test_removing_legacy_saved_post_id_falls_back_to_matching_report_link(monkeypatch):
+    factory = _session_factory()
+    deleted_posts = []
+    monkeypatch.setattr(
+        social_publishing,
+        "_list_external_post_ids",
+        lambda *_args: (set(), True),
+    )
+    monkeypatch.setattr(
+        social_publishing,
+        "_find_report_publication_post_ids",
+        lambda _account, report_id: (
+            ["older-meta-post"] if report_id == "old-report" else [],
+            True,
+        ),
+    )
+    monkeypatch.setattr(
+        social_publishing,
+        "_delete_meta_post",
+        lambda _account, provider, post_id: deleted_posts.append((provider, post_id)),
+    )
+
+    with factory() as session:
+        session.add(
+            SocialAccount(
+                provider="facebook",
+                account_id="page-id",
+                account_name="Fendly",
+                access_token_encrypted="encrypted-token",
+            )
+        )
+        session.add(
+            SocialPublication(
+                id="old-id-publication",
+                report_id="old-report",
+                report_type="lost",
+                provider="facebook",
+                status="published",
+                external_post_id="stale-post-id",
+            )
+        )
+        session.commit()
+
+        failures = social_publishing.remove_report_publications(
+            session,
+            "old-report",
+            "lost",
+        )
+
+        assert failures == []
+        assert session.get(SocialPublication, "old-id-publication") is None
+    assert deleted_posts == [("facebook", "older-meta-post")]
+
+
+def test_legacy_post_search_matches_report_link_in_meta_feed(monkeypatch):
+    monkeypatch.setenv("META_GRAPH_API_VERSION", "v23.0")
+    monkeypatch.setenv("FENDLY_APP_URL", "https://fendly.example")
+    monkeypatch.setattr(social_publishing, "_decrypt_token", lambda _: "page-token")
+    requested = {}
+
+    class FakeResponse:
+        status_code = 200
+        is_error = False
+
+        def json(self):
+            return {
+                "data": [
+                    {
+                        "id": "matching-post",
+                        "message": "Fendly: https://fendly.example/item/report-123",
+                    },
+                    {
+                        "id": "unrelated-post",
+                        "message": "Fendly: https://fendly.example/item/report-456",
+                    },
+                ]
+            }
+
+    def fake_get(url, params, timeout):
+        requested["url"] = url
+        requested["params"] = params
+        return FakeResponse()
+
+    monkeypatch.setattr(social_publishing.httpx, "get", fake_get)
+    account = SocialAccount(
+        provider="facebook",
+        account_id="page-id",
+        account_name="Fendly",
+        access_token_encrypted="encrypted-token",
+    )
+
+    post_ids, complete = social_publishing._find_report_publication_post_ids(
+        account,
+        "report-123",
+    )
+
+    assert post_ids == ["matching-post"]
+    assert complete is True
+    assert requested["url"] == "https://graph.facebook.com/v23.0/page-id/published_posts"
+    assert requested["params"]["fields"] == "id,message"
 
 
 def test_publication_worker_does_not_retry_ambiguous_provider_failure(monkeypatch):

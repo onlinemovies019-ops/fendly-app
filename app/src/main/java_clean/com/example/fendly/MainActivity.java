@@ -301,6 +301,9 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
     private String editingReportId;
     private String editingReportType;
     private String editingReportImageUrl;
+    private String[] editingReportImageUrls = new String[3];
+    private double editingReportLat;
+    private double editingReportLng;
     private EditText pendingPaymentItem;
     private EditText pendingPaymentDescription;
     private EditText pendingPaymentLocation;
@@ -3903,6 +3906,9 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         editingReportId = null;
         editingReportType = null;
         editingReportImageUrl = null;
+        editingReportImageUrls = new String[3];
+        editingReportLat = 0.0;
+        editingReportLng = 0.0;
         draftItem = "";
         draftDescription = "";
         draftLocation = "";
@@ -4502,9 +4508,27 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
     }
 
     private void addWizardPhotoPreview(LinearLayout root) {
-        Bitmap cameraPhoto = reportCameraImages.length > 0 ? reportCameraImages[0] : null;
-        Uri selectedPhoto = reportImages.length > 0 ? reportImages[0] : null;
-        String existingPhoto = editingReportImageUrl == null ? "" : editingReportImageUrl.trim();
+        Bitmap cameraPhoto = null;
+        Uri selectedPhoto = null;
+        String existingPhoto = "";
+        for (int index = 0; index < reportImages.length; index++) {
+            if (reportCameraImages[index] != null) {
+                cameraPhoto = reportCameraImages[index];
+                break;
+            }
+            if (reportImages[index] != null) {
+                selectedPhoto = reportImages[index];
+                break;
+            }
+            if (editingReportImageUrls[index] != null
+                    && !editingReportImageUrls[index].trim().isEmpty()) {
+                existingPhoto = editingReportImageUrls[index].trim();
+                break;
+            }
+        }
+        if (existingPhoto.isEmpty() && editingReportImageUrl != null) {
+            existingPhoto = editingReportImageUrl.trim();
+        }
         if (cameraPhoto == null && selectedPhoto == null && existingPhoto.isEmpty()) return;
         ImageView preview = new ImageView(this);
         preview.setScaleType(ImageView.ScaleType.CENTER_CROP);
@@ -4530,6 +4554,20 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         return cleanDetails + "\nIdentifying details: " + cleanIdentifier;
     }
 
+    private String[] splitReportDetails(String details) {
+        String cleanDetails = details == null ? "" : details.trim();
+        String marker = "Identifying details:";
+        String loweredDetails = cleanDetails.toLowerCase(Locale.US);
+        int markerIndex = loweredDetails.lastIndexOf(marker.toLowerCase(Locale.US));
+        if (markerIndex < 0 || (markerIndex > 0 && cleanDetails.charAt(markerIndex - 1) != '\n')) {
+            return new String[] {cleanDetails, ""};
+        }
+        return new String[] {
+                cleanDetails.substring(0, markerIndex).trim(),
+                cleanDetails.substring(markerIndex + marker.length()).trim()
+        };
+    }
+
     private String reportLocationForSubmission(String location, String city) {
         String cleanLocation = location == null ? "" : location.trim();
         String cleanCity = city == null ? "" : city.trim();
@@ -4544,6 +4582,8 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
     private boolean reportHasPhoto() {
         for (int index = 0; index < reportImages.length; index++) {
             if (reportImages[index] != null || reportCameraImages[index] != null) return true;
+            if (editingReportImageUrls[index] != null
+                    && !editingReportImageUrls[index].trim().isEmpty()) return true;
         }
         return editingReportImageUrl != null && !editingReportImageUrl.trim().isEmpty();
     }
@@ -5212,36 +5252,58 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         saveButton.setText(translate("Saving..."));
         saveButton.setEnabled(false);
         FirebaseAuth.getInstance().getCurrentUser().getIdToken(false).addOnSuccessListener(token -> network.execute(() -> {
-            String imageUrl = editingReportImageUrl;
-            if (selectedImage != null || capturedImage != null) imageUrl = uploadImage(selectedImage, capturedImage, token.getToken());
-            String details = description.getText().toString().trim();
-            String locationValue = location.getText().toString().trim();
-            String dateValue = date.getText().toString().trim();
-            int code = putItem(
-                    type,
-                    editingReportId,
-                    item.getText().toString().trim(),
-                    details,
-                    locationValue,
-                    dateValue,
-                    imageUrl,
-                    token.getToken(),
-                    guidelinesAccepted
-            );
+            Uri[] images = reportImages.clone();
+            Bitmap[] cameraImages = reportCameraImages.clone();
+            String[] imageUrls = editingReportImageUrls.clone();
+            int code = 0;
+            List<String> retainedImageUrls = new ArrayList<>();
+            for (int slot = 0; slot < imageUrls.length; slot++) {
+                if (images[slot] != null || cameraImages[slot] != null) {
+                    imageUrls[slot] = uploadImage(images[slot], cameraImages[slot], token.getToken());
+                    if (imageUrls[slot] == null || imageUrls[slot].trim().isEmpty()) {
+                        code = -1;
+                        break;
+                    }
+                }
+                if (imageUrls[slot] != null && !imageUrls[slot].trim().isEmpty()) {
+                    retainedImageUrls.add(imageUrls[slot].trim());
+                }
+            }
+            if (code == 0) {
+                code = putItem(
+                        type,
+                        editingReportId,
+                        item.getText().toString().trim(),
+                        description.getText().toString().trim(),
+                        location.getText().toString().trim(),
+                        date.getText().toString().trim(),
+                        retainedImageUrls,
+                        editingReportLat,
+                        editingReportLng,
+                        token.getToken(),
+                        guidelinesAccepted
+                );
+            }
+            final int responseCode = code;
             runOnUiThread(() -> {
                 saveButton.setEnabled(true);
-                if (code >= 200 && code < 300) {
+                if (responseCode >= 200 && responseCode < 300) {
                     editingReportId = null;
                     editingReportType = null;
                     editingReportImageUrl = null;
+                    editingReportImageUrls = new String[3];
+                    editingReportLat = 0.0;
+                    editingReportLng = 0.0;
                     Toast.makeText(this, "Report updated", Toast.LENGTH_SHORT).show();
                     showReports();
                 } else {
                     saveButton.setText(translate("Retry update"));
-                        String message = code == 404
-                            ? "Report update API is not deployed yet"
-                            : "Could not update report (" + code + ")";
-                        Toast.makeText(this, message, Toast.LENGTH_LONG).show();
+                    String message = responseCode == -1
+                            ? "Could not upload one or more report photos"
+                            : responseCode == 404
+                                    ? "Report update API is not deployed yet"
+                                    : "Could not update report (" + responseCode + ")";
+                    Toast.makeText(this, message, Toast.LENGTH_LONG).show();
                 }
             });
         })).addOnFailureListener(error -> {
@@ -5258,7 +5320,9 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             String description,
             String location,
             String date,
-            String imageUrl,
+            List<String> imageUrls,
+            double latitude,
+            double longitude,
             String idToken,
             boolean guidelinesAccepted
     ) {
@@ -5272,10 +5336,21 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             connection.setDoOutput(true);
             connection.setRequestProperty("Authorization", "Bearer " + idToken);
             connection.setRequestProperty("Content-Type", "application/json; charset=UTF-8");
-            String imageJson = imageUrl == null || imageUrl.trim().isEmpty() ? "null" : "\"" + escapeJson(imageUrl) + "\"";
-            String body = "{\"title\":\"" + escapeJson(title) + "\",\"description\":\"" + escapeJson(description) + "\",\"source_language\":\"" + getTtsLocaleForSelectedLanguage().getLanguage() + "\",\"report_location\":\"" + escapeJson(location) + "\",\"report_date\":\"" + escapeJson(date) + "\",\"category\":\"" + escapeJson(backendReportCategory()) + "\",\"community_guidelines_accepted\":" + guidelinesAccepted + ",\"lat\":0.0,\"lng\":0.0,\"image_url\":" + imageJson + "}";
+            org.json.JSONArray imageArray = new org.json.JSONArray(imageUrls);
+            org.json.JSONObject body = new org.json.JSONObject();
+            body.put("title", title);
+            body.put("description", description);
+            body.put("source_language", getTtsLocaleForSelectedLanguage().getLanguage());
+            body.put("report_location", location);
+            body.put("report_date", date);
+            body.put("category", backendReportCategory());
+            body.put("community_guidelines_accepted", guidelinesAccepted);
+            body.put("lat", latitude);
+            body.put("lng", longitude);
+            body.put("image_urls", imageArray);
+            body.put("image_url", imageUrls.isEmpty() ? org.json.JSONObject.NULL : imageUrls.get(0));
             try (OutputStream output = connection.getOutputStream()) {
-                output.write(body.getBytes(StandardCharsets.UTF_8));
+                output.write(body.toString().getBytes(StandardCharsets.UTF_8));
             }
             return connection.getResponseCode();
         } catch (Exception error) {
@@ -6311,7 +6386,8 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         if (bitmap == null) {
             bitmap = bitmapFromUri(reportImages[slot]);
         }
-        if (bitmap == null) return;
+        String savedImageUrl = editingReportImageUrls[slot];
+        if (bitmap == null && (savedImageUrl == null || savedImageUrl.trim().isEmpty())) return;
 
         Dialog dialog = new Dialog(this, android.R.style.Theme_Black_NoTitleBar_Fullscreen);
         dialog.setCanceledOnTouchOutside(true);
@@ -6323,7 +6399,11 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         ImageView preview = new ImageView(this);
         preview.setLayoutParams(new FrameLayout.LayoutParams(-1, -1));
         preview.setScaleType(ImageView.ScaleType.FIT_CENTER);
-        preview.setImageBitmap(bitmap);
+        if (bitmap != null) {
+            preview.setImageBitmap(bitmap);
+        } else {
+            Glide.with(this).load(savedImageUrl).fitCenter().into(preview);
+        }
         preview.setOnClickListener(view -> dialog.dismiss());
         container.addView(preview);
 
@@ -6358,7 +6438,11 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
 
             ImageView image = new ImageView(this);
             image.setBackgroundColor(Color.TRANSPARENT);
-            boolean hasImage = reportImages[slot] != null || reportCameraImages[slot] != null;
+            String savedImageUrl = editingReportImageUrls[slot];
+            boolean hasSavedImage = savedImageUrl != null && !savedImageUrl.trim().isEmpty();
+            boolean hasImage = reportImages[slot] != null
+                    || reportCameraImages[slot] != null
+                    || hasSavedImage;
             if (hasImage) {
                 image.setScaleType(ImageView.ScaleType.CENTER_CROP);
                 image.setPadding(0, 0, 0, 0);
@@ -6366,12 +6450,9 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                 image.setScaleX(1f);
                 image.setScaleY(1f);
                 if (reportImages[slot] != null) {
-                    Bitmap existing = bitmapFromUri(reportImages[slot]);
-                    if (existing != null) {
-                        image.setImageBitmap(existing);
-                    } else {
-                        image.setImageResource(R.drawable.add_image);
-                    }
+                    Glide.with(this).load(reportImages[slot]).centerCrop().into(image);
+                } else if (hasSavedImage) {
+                    Glide.with(this).load(savedImageUrl).centerCrop().into(image);
                 }
                 if (reportCameraImages[slot] != null) {
                     image.setImageBitmap(reportCameraImages[slot]);
@@ -6412,6 +6493,8 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
     private void clearImageSlot(int slot) {
         reportImages[slot] = null;
         reportCameraImages[slot] = null;
+        editingReportImageUrls[slot] = null;
+        editingReportImageUrl = editingReportImageUrls[0];
         if (currentReportType != null) showReport(currentReportType);
     }
 
@@ -6707,11 +6790,27 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                 LinearLayout reportCard = reportRow(title, displayType + "  ·  " + detail, () -> {
                     editingReportId = reportId;
                     editingReportType = type;
-                    editingReportImageUrl = reportImageUrl;
+                    editingReportImageUrls = new String[3];
+                    JSONArray reportImageUrls = report.optJSONArray("image_urls");
+                    if (reportImageUrls != null) {
+                        for (int index = 0; index < Math.min(reportImageUrls.length(), editingReportImageUrls.length); index++) {
+                            String url = reportImageUrls.optString(index, "").trim();
+                            if (!url.isEmpty()) editingReportImageUrls[index] = url;
+                        }
+                    }
+                    if (editingReportImageUrls[0] == null && reportImageUrl != null
+                            && !reportImageUrl.trim().isEmpty()) {
+                        editingReportImageUrls[0] = reportImageUrl.trim();
+                    }
+                    editingReportImageUrl = editingReportImageUrls[0];
+                    editingReportLat = report.optDouble("lat", 0.0);
+                    editingReportLng = report.optDouble("lng", 0.0);
                     draftItem = title;
-                    draftDescription = report.optString("description", "");
+                    String[] savedDetails = splitReportDetails(report.optString("description", ""));
+                    draftDescription = savedDetails[0];
+                    draftIdentifier = savedDetails[1];
                     draftLocation = report.optString("report_location", "");
-                    draftCityTag = report.optString("report_location", "");
+                    draftCityTag = "";
                     draftDate = report.optString("report_date", "");
                     String savedCategory = report.optString("category", "").toLowerCase(Locale.US);
                     draftReportCategory = savedCategory.contains("animal") || savedCategory.contains("pet")
@@ -6719,7 +6818,6 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                             : savedCategory.contains("people") || savedCategory.contains("person")
                                     ? "person"
                                     : "item";
-                    draftIdentifier = "";
                     reportWizardStep = 1;
                     selectedImage = null;
                     capturedImage = null;

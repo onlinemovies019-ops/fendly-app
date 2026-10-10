@@ -454,9 +454,43 @@ def remove_report_publications(
                 or "Not retried automatically to avoid duplicate public posts."
                 in (publication.last_error or "")
             ):
-                failures.append(
-                    f"{publication.provider} post may have been published without a saved "
-                    "post ID. Reconcile the Meta publication before retrying removal."
+                account = session.get(SocialAccount, publication.provider)
+                if account is None:
+                    error_text = (
+                        f"{publication.provider} post may have been published without "
+                        "a saved post ID, and the social account is disconnected."
+                    )
+                else:
+                    post_ids, feed_complete = _find_report_publication_post_ids(
+                        account,
+                        report_id,
+                    )
+                    if feed_complete:
+                        removal_error = _remove_meta_posts_for_report_link(
+                            account,
+                            publication.provider,
+                            report_id,
+                            post_ids,
+                        )
+                        if removal_error is None:
+                            session.delete(publication)
+                            continue
+                        error_text = removal_error
+                    else:
+                        error_text = (
+                            f"{publication.provider} post may have been published without "
+                            "a saved post ID. Meta's feed could not be fully checked, so "
+                            "removal was not confirmed."
+                        )
+                publication.status = "failed"
+                publication.next_attempt_at = 0
+                publication.last_error = error_text[:500]
+                failures.append(error_text)
+                logger.error(
+                    "Could not reconcile legacy %s publication for report %s: %s",
+                    publication.provider,
+                    report_id,
+                    error_text,
                 )
                 continue
             session.delete(publication)
@@ -471,12 +505,30 @@ def remove_report_publications(
                 {publication.external_post_id},
             )
             if feed_complete and publication.external_post_id not in external_post_ids:
-                logger.info(
-                    "Meta %s feed confirms post %s is already unavailable",
-                    publication.provider,
-                    publication.external_post_id,
+                post_ids, search_complete = _find_report_publication_post_ids(
+                    account,
+                    report_id,
                 )
-                session.delete(publication)
+                if search_complete:
+                    removal_error = _remove_meta_posts_for_report_link(
+                        account,
+                        publication.provider,
+                        report_id,
+                        post_ids,
+                    )
+                    if removal_error is None:
+                        session.delete(publication)
+                        continue
+                    error_text = removal_error
+                else:
+                    error_text = (
+                        f"{publication.provider} post could not be found by its saved ID, "
+                        "and Meta's report-link search was inconclusive."
+                    )
+                publication.status = "failed"
+                publication.next_attempt_at = 0
+                publication.last_error = error_text[:500]
+                failures.append(error_text)
                 continue
             availability = (
                 "available"
@@ -484,8 +536,26 @@ def remove_report_publications(
                 else _check_external_post(account, publication.external_post_id)
             )
             if availability == "unavailable":
-                session.delete(publication)
-                continue
+                post_ids, search_complete = _find_report_publication_post_ids(
+                    account,
+                    report_id,
+                )
+                if search_complete:
+                    removal_error = _remove_meta_posts_for_report_link(
+                        account,
+                        publication.provider,
+                        report_id,
+                        post_ids,
+                    )
+                    if removal_error is None:
+                        session.delete(publication)
+                        continue
+                    error_text = removal_error
+                    publication.status = "failed"
+                    publication.next_attempt_at = 0
+                    publication.last_error = error_text[:500]
+                    failures.append(error_text)
+                    continue
             try:
                 _delete_meta_post(account, publication.provider, publication.external_post_id)
                 session.delete(publication)
@@ -510,18 +580,21 @@ def remove_report_publications(
                     f"{publication.provider} post could not be removed: {str(error)[:300]}"
                 )
 
-            if account is not None and _meta_post_is_unavailable(
+            post_ids, search_complete = _find_report_publication_post_ids(
                 account,
-                publication.external_post_id,
-            ):
-                logger.info(
-                    "Meta %s post %s became unavailable during deletion; "
-                    "treating removal as complete",
+                report_id,
+            )
+            if search_complete:
+                removal_error = _remove_meta_posts_for_report_link(
+                    account,
                     publication.provider,
-                    publication.external_post_id,
+                    report_id,
+                    post_ids,
                 )
-                session.delete(publication)
-                continue
+                if removal_error is None:
+                    session.delete(publication)
+                    continue
+                error_text = removal_error
 
         publication.status = "failed"
         publication.next_attempt_at = 0
@@ -543,6 +616,97 @@ def _meta_post_is_unavailable(account: SocialAccount, external_post_id: str) -> 
     if feed_complete:
         return external_post_id not in post_ids
     return _check_external_post(account, external_post_id) == "unavailable"
+
+
+def _find_report_publication_post_ids(
+    account: SocialAccount,
+    report_id: str,
+) -> tuple[list[str], bool]:
+    edge = "published_posts" if account.provider == "facebook" else "media"
+    fields = "id,message" if account.provider == "facebook" else "id,caption"
+    report_url = fendly_report_url(report_id)
+    access_token = _decrypt_token(account.access_token_encrypted)
+    post_ids: list[str] = []
+    after: str | None = None
+    seen_cursors: set[str] = set()
+
+    for _ in range(100):
+        params: dict[str, str | int] = {
+            "fields": fields,
+            "limit": 100,
+            "access_token": access_token,
+        }
+        if after is not None:
+            params["after"] = after
+        try:
+            response = httpx.get(
+                _graph_url(f"{quote(account.account_id, safe='')}/{edge}"),
+                params=params,
+                timeout=15,
+            )
+            payload = _response_object(response.json())
+        except (httpx.HTTPError, RuntimeError, ValueError, TypeError) as error:
+            logger.warning(
+                "Could not search Meta %s feed for report %s: %s",
+                account.provider,
+                report_id,
+                type(error).__name__,
+            )
+            return post_ids, False
+        if response.is_error or "error" in payload:
+            logger.warning(
+                "Meta %s feed search for report %s was inconclusive (HTTP %s)",
+                account.provider,
+                report_id,
+                response.status_code,
+            )
+            return post_ids, False
+
+        try:
+            entries = _response_array(payload.get("data"))
+        except (RuntimeError, TypeError):
+            return post_ids, False
+        for entry in entries:
+            post_id = entry.get("id")
+            message = entry.get("message") if account.provider == "facebook" else entry.get("caption")
+            if (
+                isinstance(post_id, str)
+                and post_id
+                and isinstance(message, str)
+                and report_url in message
+            ):
+                post_ids.append(post_id)
+
+        paging = payload.get("paging")
+        if not isinstance(paging, dict) or not paging.get("next"):
+            return post_ids, True
+        cursors = paging.get("cursors")
+        next_cursor = cursors.get("after") if isinstance(cursors, dict) else None
+        if not isinstance(next_cursor, str) or not next_cursor or next_cursor in seen_cursors:
+            return post_ids, False
+        seen_cursors.add(next_cursor)
+        after = next_cursor
+
+    logger.warning("Meta feed search exceeded the pagination safety limit")
+    return post_ids, False
+
+
+def _remove_meta_posts_for_report_link(
+    account: SocialAccount,
+    provider: str,
+    report_id: str,
+    post_ids: list[str],
+) -> str | None:
+    failures: list[str] = []
+    for post_id in post_ids:
+        try:
+            _delete_meta_post(account, provider, post_id)
+        except (HTTPException, httpx.HTTPError, RuntimeError, ValueError, TypeError) as error:
+            if not _meta_post_is_unavailable(account, post_id):
+                failures.append(
+                    f"{provider} post {post_id} could not be removed: {str(error)[:250]}"
+                )
+    return " ".join(failures) if failures else None
 
 
 def process_due_publications() -> None:

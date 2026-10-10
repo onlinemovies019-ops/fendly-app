@@ -732,9 +732,12 @@ async def update_item(
         created_at = record.created_at if record.created_at.tzinfo else record.created_at.replace(tzinfo=timezone.utc)
         if (now - created_at) > timedelta(hours=5):
             raise HTTPException(409, "Reports can only be edited within 5 hours of creation")
-    report_image_urls = payload.image_urls or (
-        [payload.image_url] if payload.image_url else
-        record.image_urls or ([record.image_url] if record.image_url else [])
+    report_image_urls = (
+        payload.image_urls
+        if payload.image_urls is not None
+        else [payload.image_url]
+        if payload.image_url
+        else record.image_urls or ([record.image_url] if record.image_url else [])
     )
     report_image_urls = list(dict.fromkeys(report_image_urls))
     _validate_report_image_urls(report_image_urls)
@@ -767,8 +770,14 @@ async def update_item(
     record.lng = payload.lng
     record.report_date = payload.report_date
     record.report_location = payload.report_location
-    record.image_urls = payload.image_urls or ([payload.image_url] if payload.image_url else record.image_urls)
-    record.image_url = payload.image_url or (record.image_urls[0] if record.image_urls else None)
+    record.image_urls = report_image_urls
+    record.image_url = (
+        payload.image_url
+        if payload.image_url is not None
+        else report_image_urls[0]
+        if report_image_urls
+        else None
+    )
     record.edit_count += 1
     # Save the user edit immediately. Matching lazily rebuilds missing embeddings.
     record.embedding = None

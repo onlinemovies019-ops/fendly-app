@@ -30,7 +30,7 @@ class ItemUpdate(BaseModel):
     report_date: str | None = Field(default=None, max_length=32)
     report_location: str | None = Field(default=None, max_length=500)
     image_url: str | None = Field(default=None, max_length=1000)
-    image_urls: list[str] = Field(default_factory=list, max_length=3)
+    image_urls: list[str] | None = Field(default=None, max_length=3)
     category: str = Field(default="other", min_length=1, max_length=80)
     community_guidelines_accepted: bool = False
 

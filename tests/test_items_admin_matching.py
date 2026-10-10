@@ -438,6 +438,55 @@ async def test_report_update_refreshes_english_fields(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_report_update_can_remove_all_saved_images(monkeypatch):
+    report = LostItem(
+        id="lost-images",
+        created_by="user-1",
+        title="Bag",
+        description="Blue bag",
+        category="other",
+        lat=0,
+        lng=0,
+        image_url="https://cdn.example/one.jpg",
+        image_urls=[
+            "https://cdn.example/one.jpg",
+            "https://cdn.example/two.jpg",
+        ],
+        edit_count=0,
+        created_at=datetime.now(timezone.utc),
+    )
+    session = Mock(spec=Session)
+    session.scalar.return_value = report
+
+    async def no_moderation(*_args, **_kwargs):
+        return None
+
+    async def translated_fields(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr(items_module, "moderate_content", no_moderation)
+    monkeypatch.setattr(items_module, "translate_report_fields", translated_fields)
+    payload = ItemUpdate(
+        title="Bag",
+        description="Blue bag",
+        category="other",
+        community_guidelines_accepted=True,
+        image_urls=[],
+    )
+
+    updated = await items_module.update_item(
+        "lost",
+        "lost-images",
+        payload,
+        session=session,
+        uid="user-1",
+    )
+
+    assert updated.image_urls == []
+    assert updated.image_url is None
+
+
+@pytest.mark.asyncio
 async def test_admin_user_search_returns_translated_report_fields():
     report = FoundItem(
         id="found-1",
