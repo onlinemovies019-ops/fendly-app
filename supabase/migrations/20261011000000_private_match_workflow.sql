@@ -5,6 +5,12 @@ ALTER TABLE public.admin_match_alerts
     ADD COLUMN IF NOT EXISTS verification_notes text,
     ADD COLUMN IF NOT EXISTS reviewed_at timestamptz;
 
+ALTER TABLE public.lost_items
+    ADD COLUMN IF NOT EXISTS allow_success_story_sharing boolean NOT NULL DEFAULT false;
+ALTER TABLE public.found_items
+    ADD COLUMN IF NOT EXISTS status varchar(16) NOT NULL DEFAULT 'FOUND',
+    ADD COLUMN IF NOT EXISTS allow_success_story_sharing boolean NOT NULL DEFAULT false;
+
 CREATE TABLE IF NOT EXISTS public.user_notifications (
     id varchar(36) PRIMARY KEY,
     firebase_uid varchar(128) NOT NULL,

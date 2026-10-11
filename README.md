@@ -99,12 +99,15 @@ them as unsupported.
   in-app notification inbox)
 - `GET /api/admin/alerts` and `POST /api/admin/alerts/{alert_id}/review`
   (admin-only match review; confirmation requires manually verified proof)
+- `GET /api/admin/success-stories` (admin-only; returns only reunited reports
+  whose owners opted in, with category, profile city, and a temporary signed
+  photo URL)
+- `PATCH /api/items/{lost|found}/{report_id}/resolution` (owner-only reunion
+  status and optional success-story consent)
 - `POST /api/admin/private-images/migrate?apply=false&limit=10` (admin-only
   legacy-image migration; preview first, then repeat with `apply=true` until
   `remaining_assets` and `pending_source_cleanup` are zero; local upload URLs
   are reported as unsupported and require recovery from backup)
-- `POST /api/admin/social/cleanup` (admin-only, batched removal of legacy
-  Facebook/Instagram posts; no new posts are published)
 - `DELETE /api/users/account` (deletes account data and its reports)
 - `/static/delete-account.html` (external account-deletion request page)
 - `GET /api/users/username/{username}`
@@ -154,10 +157,11 @@ recover those files from a backup and upload them to private Supabase Storage
 before retiring their references; the service will not try to read them from
 an ephemeral server disk.
 
-Fendly has no social publishing, Meta OAuth, or social account connection
-routes. An admin can still remove already-published legacy Facebook and
-Instagram posts in batches using `POST /api/admin/social/cleanup`; it is a
-delete-only cleanup operation and never runs when a report is created.
+Fendly has no social publishing, Meta OAuth, social account connection, or
+social-post cleanup APIs. Reunion-story consent defaults to false and is
+stored with each report; opted-in summaries are only available to admins for
+manual review and posting outside Fendly. Reopening a report revokes its
+success-story consent.
 
 ## Purge reports retained for previously deleted accounts
 

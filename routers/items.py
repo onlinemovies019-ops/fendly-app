@@ -34,7 +34,14 @@ from image_storage import (
     store_image as store_private_image,
 )
 from routers.payments import require_lost_report_entitlement
-from schemas import ItemCreate, ItemResponse, ItemUpdate, MatchRequest, MatchResponse
+from schemas import (
+    ItemCreate,
+    ItemResponse,
+    ItemUpdate,
+    MatchRequest,
+    MatchResponse,
+    ReportResolutionUpdate,
+)
 
 from translation import translate_report_fields
 
@@ -634,7 +641,11 @@ async def list_my_items(
         if (item.status or "").strip().upper() in recovered_statuses
     }
     matched_report_ids: set[str] = set()
-    recovered_report_ids = set(recovered_lost_ids)
+    recovered_report_ids = {
+        item.id
+        for item in [*lost_items, *found_items]
+        if (item.status or "").strip().upper() in recovered_statuses
+    }
     if lost_ids or found_ids:
         match_alerts = session.scalars(
             select(AdminMatchAlert).where(
@@ -675,7 +686,8 @@ async def list_my_items(
             "edit_count": item.edit_count,
             "created_at": item.created_at,
             "can_delete": _within_user_report_deletion_window(item.created_at),
-            "status": "Active" if item_type == "LOST" else "Published",
+            "status": item.status,
+            "allow_success_story_sharing": item.allow_success_story_sharing,
             "workflow_stage": (
                 4 if item.id in recovered_report_ids
                 else 3 if item.id in matched_report_ids
@@ -684,6 +696,46 @@ async def list_my_items(
         }
         results.append(result)
     return results
+
+
+@router.patch("/items/{item_type}/{item_id}/resolution")
+def update_report_resolution(
+    item_type: str,
+    item_id: str,
+    payload: ReportResolutionUpdate,
+    session: Session | None = Depends(get_db),
+    uid: str = Depends(get_current_user),
+) -> dict[str, object]:
+    session = _require_db_session(session)
+    normalized_type = item_type.strip().lower()
+    if normalized_type not in {"lost", "found"}:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Report type must be lost or found")
+
+    model = LostItem if normalized_type == "lost" else FoundItem
+    report = session.scalar(
+        select(model).where(model.id == item_id, model.created_by == uid)
+    )
+    if report is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Report not found")
+
+    report.status = (
+        "REUNITED"
+        if payload.resolved
+        else "LOST"
+        if normalized_type == "lost"
+        else "FOUND"
+    )
+    report.allow_success_story_sharing = (
+        payload.allow_success_story_sharing if payload.resolved else False
+    )
+    session.commit()
+    session.refresh(report)
+    return {
+        "id": report.id,
+        "type": normalized_type,
+        "status": report.status,
+        "allow_success_story_sharing": report.allow_success_story_sharing,
+    }
 
 
 def _within_user_report_deletion_window(created_at: datetime | None) -> bool:
@@ -716,6 +768,10 @@ async def update_item(
     record = session.scalar(select(model).where(model.id == item_id, model.created_by == uid))
     if record is None:
         raise HTTPException(404, "Report not found")
+    if not record.status:
+        record.status = "LOST" if model is LostItem else "FOUND"
+    if record.allow_success_story_sharing is None:
+        record.allow_success_story_sharing = False
     if record.edit_count >= 1:
         raise HTTPException(409, "This report can only be edited once")
     if record.created_at:
@@ -807,24 +863,7 @@ def delete_item(
         )
 
     try:
-        report.social_share_consent = False
-        session.commit()
-        from social_publishing import remove_report_publications
-
-        platform_failures = remove_report_publications(
-            session, item_id, normalized_type
-        )
-        session.commit()
-        if platform_failures:
-            raise HTTPException(
-                status.HTTP_502_BAD_GATEWAY,
-                "The report was not deleted because Facebook or Instagram did not "
-                "confirm deletion of every linked post. Resolve the listed issue "
-                "and retry: " + " ".join(platform_failures),
-            )
         delete_report_from_app(session, report, normalized_type)
-    except HTTPException:
-        raise
     except Exception as exc:
         session.rollback()
         logger.exception("Could not delete %s report %s", normalized_type, item_id)

@@ -19,7 +19,7 @@ from models import (
     ContentReport,
     FoundItem,
     LostItem,
-    SocialPublication,
+    User,
     UserNotification,
 )
 from routers.items import list_my_items
@@ -137,10 +137,6 @@ def test_admin_removal_deletes_report_and_linked_app_records(reports_client, mon
     monkeypatch.delenv("SUPABASE_URL", raising=False)
     monkeypatch.delenv("SUPABASE_SERVICE_ROLE_KEY", raising=False)
     main.app.dependency_overrides[admin_module.get_current_user] = lambda: "admin-uid"
-    monkeypatch.setattr(
-        "social_publishing.remove_report_publications",
-        lambda session, report_id, report_type: [],
-    )
     try:
         with Session(session_factory.kw["bind"]) as session:
             session.add_all([
@@ -189,7 +185,6 @@ def test_admin_removal_deletes_report_and_linked_app_records(reports_client, mon
         assert response.status_code == 200
         assert response.json() == {
             "status": "removed",
-            "platform_failures": [],
             "match_alert_failures": [],
         }
         with Session(session_factory.kw["bind"]) as session:
@@ -240,69 +235,44 @@ def test_private_image_migration_preview_is_admin_only(reports_client, monkeypat
         main.app.dependency_overrides.pop(admin_module.get_current_user, None)
 
 
-def test_admin_report_remains_visible_until_all_social_posts_are_removed(
-    reports_client, monkeypatch
-):
+def test_admin_report_deletion_does_not_call_social_apis(reports_client, monkeypatch):
     client, session_factory = reports_client
     monkeypatch.setenv("ADMIN_FIREBASE_UIDS", "admin-uid")
-    monkeypatch.delenv("SUPABASE_URL", raising=False)
-    monkeypatch.delenv("SUPABASE_SERVICE_ROLE_KEY", raising=False)
     main.app.dependency_overrides[admin_module.get_current_user] = lambda: "admin-uid"
-    monkeypatch.setattr(
-        "social_publishing.remove_report_publications",
-        lambda session, report_id, report_type: [
-            "instagram post could not be removed: permission denied"
-        ],
-    )
     try:
         with Session(session_factory.kw["bind"]) as session:
             session.add(LostItem(
-                id="partially-published-report",
+                id="no-social-report",
                 created_by="report-owner",
                 title="Lost cat",
                 description="Details",
                 lat=0,
                 lng=0,
-                social_share_consent=True,
             ))
             session.commit()
 
-        response = client.delete(
-            "/api/admin/items/lost/partially-published-report"
-        )
+        response = client.delete("/api/admin/items/lost/no-social-report")
 
-        assert response.status_code == 502
-        assert "NOT removed from Fendly" in response.json()["detail"]
-        assert "instagram post" in response.json()["detail"]
+        assert response.status_code == 200
+        assert response.json()["status"] == "removed"
         with Session(session_factory.kw["bind"]) as session:
-            report = session.get(LostItem, "partially-published-report")
-            assert report is not None
-            assert report.social_share_consent is False
+            assert session.get(LostItem, "no-social-report") is None
     finally:
         main.app.dependency_overrides.pop(admin_module.get_current_user, None)
 
 
-def test_owner_report_remains_visible_when_social_post_deletion_fails(
-    reports_client, monkeypatch
-):
+def test_owner_report_deletion_does_not_call_social_apis(reports_client):
     client, session_factory = reports_client
     main.app.dependency_overrides[items_module.get_current_user] = lambda: "report-owner"
-    monkeypatch.setattr(
-        "social_publishing.remove_report_publications",
-        lambda session, report_id, report_type: [
-            "facebook post could not be removed: permission denied"
-        ],
-    )
     try:
         with Session(session_factory.kw["bind"]) as session:
             session.add(LostItem(
-                id="owner-social-report",
+                id="owner-report",
                 created_by="report-owner",
                 title="Lost cat",
                 description="Details",
                 lat=0,
                 lng=0,
-                social_share_consent=True,
                 created_at=datetime.now(timezone.utc),
             ))
             session.commit()
@@ -311,16 +281,159 @@ def test_owner_report_remains_visible_when_social_post_deletion_fails(
         assert listed_reports.status_code == 200
         assert listed_reports.json()[0]["can_delete"] is True
 
-        response = client.delete("/api/items/lost/owner-social-report")
+        response = client.delete("/api/items/lost/owner-report")
 
-        assert response.status_code == 502
-        assert "facebook post" in response.json()["detail"]
+        assert response.status_code == 204
         with Session(session_factory.kw["bind"]) as session:
-            report = session.get(LostItem, "owner-social-report")
-            assert report is not None
-            assert report.social_share_consent is False
+            assert session.get(LostItem, "owner-report") is None
     finally:
         main.app.dependency_overrides.pop(items_module.get_current_user, None)
+
+
+def test_owner_resolution_stores_optional_consent_and_reopening_revokes_it(
+    reports_client,
+):
+    client, session_factory = reports_client
+    main.app.dependency_overrides[items_module.get_current_user] = lambda: "report-owner"
+    try:
+        with Session(session_factory.kw["bind"]) as session:
+            session.add(
+                FoundItem(
+                    id="reunited-found-report",
+                    created_by="report-owner",
+                    title="Found dog",
+                    description="Brown dog",
+                    lat=0,
+                    lng=0,
+                )
+            )
+            session.commit()
+
+        resolved = client.patch(
+            "/api/items/found/reunited-found-report/resolution",
+            json={"resolved": True, "allow_success_story_sharing": True},
+        )
+        assert resolved.status_code == 200
+        assert resolved.json()["status"] == "REUNITED"
+        assert resolved.json()["allow_success_story_sharing"] is True
+
+        listed = client.get("/api/items/mine")
+        assert listed.status_code == 200
+        assert listed.json()[0]["status"] == "REUNITED"
+        assert listed.json()[0]["allow_success_story_sharing"] is True
+        assert listed.json()[0]["workflow_stage"] == 4
+
+        reopened = client.patch(
+            "/api/items/found/reunited-found-report/resolution",
+            json={"resolved": False, "allow_success_story_sharing": True},
+        )
+        assert reopened.status_code == 200
+        assert reopened.json()["status"] == "FOUND"
+        assert reopened.json()["allow_success_story_sharing"] is False
+    finally:
+        main.app.dependency_overrides.pop(items_module.get_current_user, None)
+
+
+def test_only_report_owner_can_update_resolution(reports_client):
+    client, session_factory = reports_client
+    main.app.dependency_overrides[items_module.get_current_user] = lambda: "different-user"
+    try:
+        with Session(session_factory.kw["bind"]) as session:
+            session.add(
+                LostItem(
+                    id="private-resolution-report",
+                    created_by="report-owner",
+                    title="Lost watch",
+                    description="Silver",
+                    lat=0,
+                    lng=0,
+                )
+            )
+            session.commit()
+
+        response = client.patch(
+            "/api/items/lost/private-resolution-report/resolution",
+            json={"resolved": True, "allow_success_story_sharing": True},
+        )
+
+        assert response.status_code == 404
+        with Session(session_factory.kw["bind"]) as session:
+            report = session.get(LostItem, "private-resolution-report")
+            assert report.status == "LOST"
+            assert report.allow_success_story_sharing is False
+    finally:
+        main.app.dependency_overrides.pop(items_module.get_current_user, None)
+
+
+def test_admin_success_stories_returns_only_resolved_opted_in_minimal_fields(
+    reports_client,
+    monkeypatch,
+):
+    client, session_factory = reports_client
+    monkeypatch.setenv("ADMIN_FIREBASE_UIDS", "admin-uid")
+    main.app.dependency_overrides[admin_module.get_current_user] = lambda: "admin-uid"
+    monkeypatch.setattr(
+        admin_module,
+        "refresh_private_image_url",
+        lambda image_url: "https://signed.example/photo" if image_url else None,
+    )
+    try:
+        with Session(session_factory.kw["bind"]) as session:
+            session.add(
+                User(firebase_uid="story-owner", city="Pune")
+            )
+            session.add_all(
+                [
+                    LostItem(
+                        id="opted-story",
+                        created_by="story-owner",
+                        title="Lost bag",
+                        description="Private report text",
+                        category="bag",
+                        lat=0,
+                        lng=0,
+                        status="REUNITED",
+                        allow_success_story_sharing=True,
+                        image_url="private://photo",
+                    ),
+                    FoundItem(
+                        id="not-opted-story",
+                        created_by="story-owner",
+                        title="Found phone",
+                        description="Private found report",
+                        category="phone",
+                        lat=0,
+                        lng=0,
+                        status="REUNITED",
+                        allow_success_story_sharing=False,
+                    ),
+                    LostItem(
+                        id="active-opted-story",
+                        created_by="story-owner",
+                        title="Lost keys",
+                        description="Still missing",
+                        category="keys",
+                        lat=0,
+                        lng=0,
+                        allow_success_story_sharing=True,
+                    ),
+                ]
+            )
+            session.commit()
+
+        response = client.get("/api/admin/success-stories")
+
+        assert response.status_code == 200
+        assert response.json() == [
+            {
+                "type": "lost",
+                "category": "bag",
+                "city": "Pune",
+                "photo_url": "https://signed.example/photo",
+            }
+        ]
+    finally:
+        main.app.dependency_overrides.pop(admin_module.get_current_user, None)
 
 
 def test_my_reports_only_marks_recent_reports_as_deletable(reports_client, monkeypatch):

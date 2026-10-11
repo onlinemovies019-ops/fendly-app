@@ -6793,6 +6793,33 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                 reportCardContainer.addView(reportCard, new LinearLayout.LayoutParams(-1, -2));
                 reportCardContainer.addView(createReportStatusTracker(report));
                 reportCardContainer.setOnClickListener(view -> showReportDetailsDialog(report, false, true));
+                TextView reunionButton = actionButton(
+                        isCompleted ? "Edit reunion story consent" : "Mark as reunited",
+                        false
+                );
+                LinearLayout.LayoutParams reunionButtonParams =
+                        new LinearLayout.LayoutParams(-1, dp(44));
+                reunionButtonParams.setMargins(dp(12), dp(8), dp(12), 0);
+                reportCardContainer.addView(reunionButton, reunionButtonParams);
+                reunionButton.setOnClickListener(view -> showReunionConsentDialog(
+                        report,
+                        "FOUND".equalsIgnoreCase(type) ? "found" : "lost",
+                        reportId,
+                        isCompleted
+                ));
+                if (isCompleted) {
+                    TextView reopenButton = actionButton("Reopen report", false);
+                    LinearLayout.LayoutParams reopenButtonParams =
+                            new LinearLayout.LayoutParams(-1, dp(44));
+                    reopenButtonParams.setMargins(dp(12), dp(6), dp(12), 0);
+                    reportCardContainer.addView(reopenButton, reopenButtonParams);
+                    reopenButton.setOnClickListener(view -> submitReportResolution(
+                            "FOUND".equalsIgnoreCase(type) ? "found" : "lost",
+                            reportId,
+                            false,
+                            false
+                    ));
+                }
                 if (!isCompleted && "LOST".equalsIgnoreCase(type)) {
                     addCommunityPosterAction(reportCardContainer, report, dp(8), dp(12));
                 }
@@ -6865,6 +6892,83 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         TextView home = actionButton(translate("Back home"), false);
         home.setOnClickListener(view -> showHome());
         addField(root, home);
+    }
+
+    private void showReunionConsentDialog(
+            JSONObject report,
+            String reportType,
+            String reportId,
+            boolean alreadyResolved
+    ) {
+        CheckBox consent = new CheckBox(this);
+        consent.setText(
+                "Allow us to feature your happy reunion story on our community pages to help inspire others? (Optional)"
+        );
+        consent.setChecked(report.optBoolean("allow_success_story_sharing", false));
+        consent.setPadding(dp(20), dp(12), dp(20), dp(8));
+        new AlertDialog.Builder(this)
+                .setTitle(alreadyResolved ? "Reunion story preference" : "Mark as reunited")
+                .setMessage(alreadyResolved
+                        ? "You can change your optional sharing choice at any time."
+                        : "Confirm that your item has been reunited. Sharing your story is optional.")
+                .setView(consent)
+                .setNegativeButton("Cancel", null)
+                .setPositiveButton(alreadyResolved ? "Save choice" : "Mark reunited",
+                        (dialog, which) -> submitReportResolution(
+                                reportType,
+                                reportId,
+                                true,
+                                consent.isChecked()
+                        ))
+                .show();
+    }
+
+    private void submitReportResolution(
+            String reportType,
+            String reportId,
+            boolean resolved,
+            boolean allowSuccessStorySharing
+    ) {
+        FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
+        if (user == null) {
+            Toast.makeText(this, "Sign in to update your report.", Toast.LENGTH_LONG).show();
+            return;
+        }
+        user.getIdToken(false).addOnSuccessListener(token -> network.execute(() -> {
+            JSONObject payload = new JSONObject();
+            try {
+                payload.put("resolved", resolved);
+                payload.put("allow_success_story_sharing", allowSuccessStorySharing);
+            } catch (Exception error) {
+                Log.e("REPORT_RESOLUTION", "Could not prepare report update", error);
+                runOnUiThread(() -> Toast.makeText(
+                        this, "Could not prepare the report update.", Toast.LENGTH_LONG).show());
+                return;
+            }
+            AuthorizedResponse response = authorizedRequest(
+                    "PATCH",
+                    "/api/items/" + reportType + "/" + Uri.encode(reportId) + "/resolution",
+                    token.getToken(),
+                    payload.toString()
+            );
+            runOnUiThread(() -> {
+                if (response.statusCode < 200 || response.statusCode >= 300) {
+                    Toast.makeText(
+                            this,
+                            "Report update failed. " + authorizedRequestError(response),
+                            Toast.LENGTH_LONG
+                    ).show();
+                    return;
+                }
+                Toast.makeText(
+                        this,
+                        resolved ? "Report marked as reunited." : "Report reopened; sharing consent was removed.",
+                        Toast.LENGTH_LONG
+                ).show();
+                showReports();
+            });
+        })).addOnFailureListener(error -> Toast.makeText(
+                this, "Could not verify your Fendly sign-in.", Toast.LENGTH_LONG).show());
     }
 
     private View createReportStatusTracker(JSONObject report) {
@@ -10454,9 +10558,20 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         adminTitle.setTextAlignment(View.TEXT_ALIGNMENT_CENTER);
         root.addView(adminTitle, contentParams(-1, dp(28), dp(4)));
 
-        TextView removeLegacyPostsButton = actionButton("Remove old Fendly social posts", false);
-        removeLegacyPostsButton.setOnClickListener(view -> confirmLegacySocialPostRemoval());
-        root.addView(removeLegacyPostsButton, contentParams(-1, dp(44), dp(10)));
+        TextView successStoriesButton = actionButton("Opt-in reunion stories", false);
+        root.addView(successStoriesButton, contentParams(-1, dp(44), dp(10)));
+        LinearLayout successStories = new LinearLayout(this);
+        successStories.setOrientation(LinearLayout.VERTICAL);
+        root.addView(successStories, contentParams(-1, -2, 0));
+        successStories.setVisibility(View.GONE);
+        boolean[] successStoriesLoaded = {false};
+        successStoriesButton.setOnClickListener(view -> {
+            boolean show = successStories.getVisibility() != View.VISIBLE;
+            successStories.setVisibility(show ? View.VISIBLE : View.GONE);
+            if (show && !successStoriesLoaded[0]) {
+                loadAdminSuccessStories(successStories, successStoriesLoaded);
+            }
+        });
 
         TextView migrateLegacyImagesButton = actionButton(
                 "Move old report images to private storage", false);
@@ -10552,63 +10667,87 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         });
     }
 
-    private void confirmLegacySocialPostRemoval() {
-        new AlertDialog.Builder(this)
-                .setTitle("Remove old social posts?")
-                .setMessage(
-                        "Fendly will search its connected Meta accounts for posts linked to old reports "
-                                + "and remove them. Keep the account connected until cleanup completes."
-                )
-                .setNegativeButton("Cancel", null)
-                .setPositiveButton("Remove posts", (dialog, which) -> removeLegacySocialPostBatch())
-                .show();
-    }
-
-    private void removeLegacySocialPostBatch() {
+    private void loadAdminSuccessStories(
+            LinearLayout stories,
+            boolean[] loaded
+    ) {
         FirebaseUser adminUser = FirebaseAuth.getInstance().getCurrentUser();
         if (adminUser == null) {
-            Toast.makeText(this, "Sign in to remove old social posts.", Toast.LENGTH_LONG).show();
+            Toast.makeText(this, "Sign in to review reunion stories.", Toast.LENGTH_LONG).show();
             return;
         }
         adminUser.getIdToken(false).addOnSuccessListener(token -> network.execute(() -> {
-            AuthorizedResponse response = postAuthorizedResponse(
-                    "/api/admin/social/cleanup?limit=100", token.getToken());
+            AuthorizedResponse response = authorizedRequest(
+                    "GET",
+                    "/api/admin/success-stories",
+                    token.getToken()
+            );
             runOnUiThread(() -> {
                 if (response.statusCode < 200 || response.statusCode >= 300) {
                     Toast.makeText(
                             this,
-                            "Could not remove old posts. Check the connected Meta account and try again.",
+                            "Could not load opted-in reunion stories. "
+                                    + authorizedRequestError(response),
                             Toast.LENGTH_LONG
                     ).show();
                     return;
                 }
                 try {
-                    JSONObject result = new JSONObject(response.body);
-                    int processed = result.optInt("processed", 0);
-                    int removed = result.optInt("removed", 0);
-                    int remaining = result.optInt("remaining", 0);
-                    JSONArray failures = result.optJSONArray("failures");
-                    boolean hasFailures = failures != null && failures.length() > 0;
-                    String message;
-                    if (remaining == 0 && !hasFailures && processed == 0) {
-                        message = "Cleanup complete. No remaining reports need social-post cleanup.";
-                    } else {
-                        message = "Checked " + processed + " reports; removed posts for "
-                                + removed + ". Remaining reports: " + remaining + ".";
+                    JSONArray result = new JSONArray(response.body);
+                    stories.removeAllViews();
+                    if (result.length() == 0) {
+                        stories.addView(text(
+                                "No owners have opted in to share reunion stories.",
+                                14,
+                                secondaryTextColor(),
+                                Typeface.NORMAL
+                        ), contentParams(-1, -2, dp(6)));
                     }
-                    if (remaining > 0 && !hasFailures) {
-                        message += " Run cleanup again to continue.";
+                    for (int index = 0; index < result.length(); index++) {
+                        JSONObject story = result.optJSONObject(index);
+                        if (story == null) continue;
+                        String category = story.optString("category", "Item");
+                        String city = story.optString("city", "");
+                        String photoUrl = story.optString("photo_url", "");
+                        String summary = "Category: " + category
+                                + "\nCity: " + (city.isEmpty() ? "Not provided" : city)
+                                + "\nPhoto: " + (photoUrl.isEmpty() ? "Not available" : photoUrl);
+                        LinearLayout card = new LinearLayout(this);
+                        card.setOrientation(LinearLayout.VERTICAL);
+                        card.setPadding(dp(12), dp(10), dp(12), dp(10));
+                        card.setBackground(roundWithStroke(surfaceColor(), 14, borderColor()));
+                        LinearLayout.LayoutParams cardParams = new LinearLayout.LayoutParams(-1, -2);
+                        cardParams.setMargins(0, 0, 0, dp(10));
+                        stories.addView(card, cardParams);
+                        card.addView(text(
+                                summary,
+                                13,
+                                primaryTextColor(),
+                                Typeface.NORMAL
+                        ), new LinearLayout.LayoutParams(-1, -2));
+                        TextView copyButton = actionButton("Copy Summary", false);
+                        LinearLayout.LayoutParams copyParams =
+                                new LinearLayout.LayoutParams(-1, dp(40));
+                        copyParams.setMargins(0, dp(8), 0, 0);
+                        card.addView(copyButton, copyParams);
+                        copyButton.setOnClickListener(copyView -> {
+                            android.content.ClipboardManager clipboard =
+                                    (android.content.ClipboardManager)
+                                            getSystemService(Context.CLIPBOARD_SERVICE);
+                            if (clipboard == null) {
+                                Toast.makeText(this, "Clipboard is unavailable.", Toast.LENGTH_LONG).show();
+                                return;
+                            }
+                            clipboard.setPrimaryClip(
+                                    android.content.ClipData.newPlainText("Reunion summary", summary)
+                            );
+                            Toast.makeText(this, "Summary copied.", Toast.LENGTH_SHORT).show();
+                        });
                     }
-                    if (hasFailures) {
-                        message += " Some removals need administrator attention.";
-                    }
-                    new AlertDialog.Builder(this)
-                            .setTitle("Social post cleanup")
-                            .setMessage(message)
-                            .setPositiveButton("OK", null)
-                            .show();
+                    loaded[0] = true;
                 } catch (Exception error) {
-                    Toast.makeText(this, "Cleanup response could not be read.", Toast.LENGTH_LONG).show();
+                    Log.e("ADMIN_SUCCESS_STORIES", "Could not read success stories", error);
+                    Toast.makeText(this, "Reunion stories could not be read.", Toast.LENGTH_LONG).show();
                 }
             });
         })).addOnFailureListener(error -> Toast.makeText(
@@ -10754,6 +10893,15 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
     }
 
     private AuthorizedResponse authorizedRequest(String method, String path, String idToken) {
+        return authorizedRequest(method, path, idToken, null);
+    }
+
+    private AuthorizedResponse authorizedRequest(
+            String method,
+            String path,
+            String idToken,
+            String jsonBody
+    ) {
         HttpURLConnection connection = null;
         try {
             connection = (HttpURLConnection) new URL(API_BASE + path).openConnection();
@@ -10761,6 +10909,13 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             connection.setConnectTimeout(15000);
             connection.setReadTimeout(30000);
             connection.setRequestProperty("Authorization", "Bearer " + idToken);
+            if (jsonBody != null) {
+                connection.setDoOutput(true);
+                connection.setRequestProperty("Content-Type", "application/json; charset=utf-8");
+                try (OutputStream output = connection.getOutputStream()) {
+                    output.write(jsonBody.getBytes(StandardCharsets.UTF_8));
+                }
+            }
             int statusCode = connection.getResponseCode();
             InputStream stream = statusCode >= 200 && statusCode < 300
                     ? connection.getInputStream()
@@ -12519,10 +12674,6 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
 
     private AuthorizedResponse getAuthorizedResponse(String path, String idToken) {
         return authorizedResponse("GET", path, idToken);
-    }
-
-    private AuthorizedResponse postAuthorizedResponse(String path, String idToken) {
-        return authorizedResponse("POST", path, idToken);
     }
 
     private AuthorizedResponse authorizedResponse(String method, String path, String idToken) {

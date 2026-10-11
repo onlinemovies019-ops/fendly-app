@@ -186,7 +186,9 @@ class LostItem(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
     created_by: Mapped[str] = mapped_column(String(128), index=True)
-    status: Mapped[str] = mapped_column(String(16), default="LOST", index=True)
+    status: Mapped[str] = mapped_column(
+        String(16), default="LOST", server_default="LOST", index=True
+    )
     imei_hash: Mapped[str | None] = mapped_column(String(64))
     title: Mapped[str] = mapped_column(String(160))
     description: Mapped[str] = mapped_column(Text)
@@ -203,6 +205,9 @@ class LostItem(Base):
     image_url: Mapped[str | None] = mapped_column(String(1000))
     image_urls: Mapped[list[str] | None] = mapped_column(JSON)
     social_share_consent: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    allow_success_story_sharing: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="false", nullable=False
+    )
     hidden_from_public: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     social_poster_url: Mapped[str | None] = mapped_column(String(1000))
     edit_count: Mapped[int] = mapped_column(default=0)
@@ -216,6 +221,9 @@ class FoundItem(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
     created_by: Mapped[str] = mapped_column(String(128), index=True)
+    status: Mapped[str] = mapped_column(
+        String(16), default="FOUND", server_default="FOUND", index=True
+    )
     title: Mapped[str] = mapped_column(String(160))
     description: Mapped[str] = mapped_column(Text)
     title_en: Mapped[str | None] = mapped_column(Text)
@@ -231,6 +239,9 @@ class FoundItem(Base):
     image_url: Mapped[str | None] = mapped_column(String(1000))
     image_urls: Mapped[list[str] | None] = mapped_column(JSON)
     social_share_consent: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    allow_success_story_sharing: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="false", nullable=False
+    )
     hidden_from_public: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     social_poster_url: Mapped[str | None] = mapped_column(String(1000))
     edit_count: Mapped[int] = mapped_column(default=0)

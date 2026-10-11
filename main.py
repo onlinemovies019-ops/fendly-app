@@ -207,10 +207,31 @@ async def lifespan(_: FastAPI):
             add_column_if_missing("lost_items", "source_language", "varchar(16)", not_null=True, default="'auto'")
             add_column_if_missing("lost_items", "edit_count", "integer", not_null=True, default="0")
             add_column_if_missing("lost_items", "status", "varchar(16)", not_null=True, default="'LOST'")
+            add_column_if_missing(
+                "lost_items",
+                "allow_success_story_sharing",
+                "boolean",
+                not_null=True,
+                default="false",
+            )
             add_column_if_missing("lost_items", "imei_hash", "varchar(64)")
             add_column_if_missing("lost_items", "hidden_from_public", "boolean", not_null=True, default="false")
             add_column_if_missing("found_items", "report_date", "varchar(32)")
             add_column_if_missing("found_items", "report_location", "varchar(500)")
+            add_column_if_missing(
+                "found_items",
+                "status",
+                "varchar(16)",
+                not_null=True,
+                default="'FOUND'",
+            )
+            add_column_if_missing(
+                "found_items",
+                "allow_success_story_sharing",
+                "boolean",
+                not_null=True,
+                default="false",
+            )
             add_column_if_missing("found_items", "image_urls", "json")
             add_column_if_missing("found_items", "social_poster_url", "varchar(1000)")
             add_column_if_missing("found_items", "title_en", "text")

@@ -7,6 +7,7 @@ from models import (
     ContentReport,
     FoundItem,
     LostItem,
+    SocialPublication,
     UserNotification,
 )
 
@@ -37,6 +38,9 @@ def delete_report_from_app(
             ContentReport.report_type == report_type,
             ContentReport.report_id == report.id,
         )
+    )
+    session.execute(
+        delete(SocialPublication).where(SocialPublication.report_id == report.id)
     )
     session.execute(
         delete(AdminMatchAlert).where(

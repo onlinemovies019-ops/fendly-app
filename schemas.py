@@ -34,6 +34,11 @@ class ItemUpdate(BaseModel):
     community_guidelines_accepted: bool = False
 
 
+class ReportResolutionUpdate(BaseModel):
+    resolved: bool
+    allow_success_story_sharing: bool = False
+
+
 class ItemResponse(ItemCreate):
     model_config = ConfigDict(from_attributes=True)
 
@@ -41,6 +46,8 @@ class ItemResponse(ItemCreate):
     created_by: str
     created_at: datetime | None = None
     edit_count: int = 0
+    status: str = "LOST"
+    allow_success_story_sharing: bool = False
 
 
 class MatchRequest(BaseModel):

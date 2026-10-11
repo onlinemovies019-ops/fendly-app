@@ -363,6 +363,42 @@ async def list_all_items(
     ]
 
 
+@router.get("/success-stories")
+def list_opted_in_success_stories(
+    session: Session = Depends(get_db),
+    _: str = Depends(require_admin),
+) -> list[dict[str, object]]:
+    reports: list[tuple[str, LostItem | FoundItem]] = []
+    for item_type, model in (("lost", LostItem), ("found", FoundItem)):
+        reports.extend(
+            (item_type, report)
+            for report in session.scalars(
+                select(model).where(
+                    model.status.in_(("RECOVERED", "REUNITED", "CLOSED")),
+                    model.allow_success_story_sharing.is_(True),
+                )
+            ).all()
+            if not _is_test_report(report)
+        )
+
+    owner_ids = {report.created_by for _, report in reports}
+    cities = {
+        user.firebase_uid: user.city
+        for user in session.scalars(
+            select(User).where(User.firebase_uid.in_(owner_ids))
+        ).all()
+    } if owner_ids else {}
+    return [
+        {
+            "type": item_type,
+            "category": report.category,
+            "city": cities.get(report.created_by) or "",
+            "photo_url": refresh_private_image_url(report.image_url),
+        }
+        for item_type, report in reports
+    ]
+
+
 @router.delete("/items/{item_type}/{item_id}")
 def remove_admin_report(
     item_type: str,
@@ -379,25 +415,9 @@ def remove_admin_report(
     if report is None:
         raise HTTPException(404, "Report not found")
 
-    report.social_share_consent = False
-    session.commit()
-
-    from social_publishing import remove_report_publications
-
-    platform_failures = remove_report_publications(session, item_id, normalized_type)
-    session.commit()
-    if platform_failures:
-        detail = (
-            "The report was NOT removed from Fendly because Meta did not confirm "
-            "deletion of every linked post. Resolve the listed platform issue, then retry: "
-            + " ".join(platform_failures)
-        )
-        raise HTTPException(502, detail)
-
     delete_report_from_app(session, report, normalized_type)
     return {
         "status": "removed",
-        "platform_failures": platform_failures,
         "match_alert_failures": [],
     }
 
@@ -779,17 +799,6 @@ async def find_matches(
         item_response.update(_report_image_fields(item))
         result["item"] = item_response
     return ranked
-
-
-@router.post("/social/cleanup")
-def cleanup_legacy_social_posts(
-    limit: int = Query(default=100, ge=1, le=500),
-    session: Session = Depends(get_db),
-    _: str = Depends(require_admin),
-) -> dict[str, object]:
-    from social_publishing import remove_legacy_social_posts
-
-    return remove_legacy_social_posts(session, limit=limit)
 
 
 @router.post("/private-images/migrate")
