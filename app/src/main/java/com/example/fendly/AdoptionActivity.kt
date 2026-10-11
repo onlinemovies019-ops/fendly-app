@@ -3,10 +3,12 @@ package com.example.fendly
 import android.Manifest
 import android.graphics.BitmapFactory
 import android.graphics.Bitmap
-import android.graphics.Matrix
 import android.net.Uri
 import android.os.Bundle
+import android.util.Log
 import android.util.LruCache
+import android.view.Surface
+import java.io.File
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
@@ -68,6 +70,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.window.Dialog
@@ -76,11 +79,9 @@ import androidx.core.view.WindowCompat
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.core.content.ContextCompat
-import androidx.lifecycle.LifecycleOwner
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageCapture
 import androidx.camera.core.ImageCaptureException
-import androidx.camera.core.ImageProxy
 import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
@@ -1238,11 +1239,11 @@ private fun AdoptionCameraDialog(
     onDismiss: () -> Unit,
 ) {
     val context = LocalContext.current
-    val lifecycleOwner = context as? LifecycleOwner
+    val lifecycleOwner = LocalLifecycleOwner.current
     val previewView = remember(context) {
         PreviewView(context).apply {
             scaleType = PreviewView.ScaleType.FILL_CENTER
-            implementationMode = PreviewView.ImplementationMode.COMPATIBLE
+            implementationMode = PreviewView.ImplementationMode.PERFORMANCE
         }
     }
     val imageCapture = remember {
@@ -1253,32 +1254,62 @@ private fun AdoptionCameraDialog(
     val executor = remember { Executors.newSingleThreadExecutor() }
     var cameraProvider by remember { mutableStateOf<ProcessCameraProvider?>(null) }
     var cameraPreview by remember { mutableStateOf<Preview?>(null) }
+    var camera by remember { mutableStateOf<androidx.camera.core.Camera?>(null) }
     var cameraReady by remember { mutableStateOf(false) }
     var cameraError by remember { mutableStateOf(false) }
 
     LaunchedEffect(previewView, lifecycleOwner) {
-        if (lifecycleOwner == null) {
-            cameraError = true
-            return@LaunchedEffect
+        val providerFuture = ProcessCameraProvider.getInstance(context)
+        providerFuture.addListener(
+            {
+                try {
+                    val provider = providerFuture.get()
+                    val selector = if (provider.hasCamera(CameraSelector.DEFAULT_BACK_CAMERA)) {
+                        CameraSelector.DEFAULT_BACK_CAMERA
+                    } else {
+                        CameraSelector.DEFAULT_FRONT_CAMERA
+                    }
+                    val preview = Preview.Builder().build().also {
+                        it.surfaceProvider = previewView.surfaceProvider
+                    }
+                    previewView.post {
+                        try {
+                            val boundCamera = provider.bindToLifecycle(
+                                lifecycleOwner,
+                                selector,
+                                preview,
+                                imageCapture,
+                            )
+                            cameraProvider = provider
+                            cameraPreview = preview
+                            camera = boundCamera
+                        } catch (exception: Exception) {
+                            Log.e("AdoptionCamera", "Could not bind camera preview", exception)
+                            cameraError = true
+                        }
+                    }
+                } catch (exception: Exception) {
+                    Log.e("AdoptionCamera", "Could not initialize camera provider", exception)
+                    cameraError = true
+                }
+            },
+            ContextCompat.getMainExecutor(context),
+        )
+    }
+
+    DisposableEffect(camera, lifecycleOwner) {
+        val boundCamera = camera
+        val state = boundCamera?.cameraInfo?.cameraState
+        val observer = androidx.lifecycle.Observer<androidx.camera.core.CameraState> { cameraState ->
+            cameraReady = cameraState.type == androidx.camera.core.CameraState.Type.OPEN
+            cameraState.error?.let { error ->
+                Log.e("AdoptionCamera", "Camera entered an error state", error.cause)
+                cameraError = true
+            }
         }
-        try {
-            val provider = withContext(Dispatchers.IO) {
-                ProcessCameraProvider.getInstance(context).get()
-            }
-            val preview = Preview.Builder().build().also {
-                it.surfaceProvider = previewView.surfaceProvider
-            }
-            provider.bindToLifecycle(
-                lifecycleOwner,
-                CameraSelector.DEFAULT_BACK_CAMERA,
-                preview,
-                imageCapture,
-            )
-            cameraProvider = provider
-            cameraPreview = preview
-            cameraReady = true
-        } catch (_: Exception) {
-            cameraError = true
+        state?.observe(lifecycleOwner, observer)
+        onDispose {
+            state?.removeObserver(observer)
         }
     }
 
@@ -1317,50 +1348,38 @@ private fun AdoptionCameraDialog(
                     text = t("adopt_capture"),
                     enabled = cameraReady && !cameraError,
                     onClick = {
+                        val outputFile = try {
+                            File.createTempFile("adoption-photo-", ".jpg", context.cacheDir)
+                        } catch (exception: Exception) {
+                            Log.e("AdoptionCamera", "Could not create a temporary photo file", exception)
+                            cameraError = true
+                            return@FendlyPrimaryButton
+                        }
+                        imageCapture.targetRotation = previewView.display?.rotation
+                            ?: Surface.ROTATION_0
+                        val outputOptions = ImageCapture.OutputFileOptions.Builder(outputFile).build()
                         imageCapture.takePicture(
+                            outputOptions,
                             executor,
-                            object : ImageCapture.OnImageCapturedCallback() {
-                                override fun onCaptureSuccess(image: ImageProxy) {
-                                    try {
-                                        val buffer = image.planes.first().buffer
-                                        buffer.rewind()
-                                        val bytes = ByteArray(buffer.remaining())
-                                        buffer.get(bytes)
-                                        val decoded = BitmapFactory.decodeByteArray(
-                                            bytes,
-                                            0,
-                                            bytes.size,
-                                        )
-                                        val rotation = image.imageInfo.rotationDegrees
-                                        val bitmap = if (decoded != null && rotation != 0) {
-                                            val matrix = Matrix().apply {
-                                                postRotate(rotation.toFloat())
-                                            }
-                                            Bitmap.createBitmap(
-                                                decoded,
-                                                0,
-                                                0,
-                                                decoded.width,
-                                                decoded.height,
-                                                matrix,
-                                                true,
-                                            ).also { decoded.recycle() }
+                            object : ImageCapture.OnImageSavedCallback {
+                                override fun onImageSaved(
+                                    outputFileResults: ImageCapture.OutputFileResults,
+                                ) {
+                                    val bitmap = BitmapFactory.decodeFile(outputFile.absolutePath)
+                                    outputFile.delete()
+                                    ContextCompat.getMainExecutor(context).execute {
+                                        if (bitmap == null) {
+                                            Log.e("AdoptionCamera", "Camera saved an unreadable JPEG")
+                                            cameraError = true
                                         } else {
-                                            decoded
+                                            onCapture(bitmap)
                                         }
-                                        ContextCompat.getMainExecutor(context).execute {
-                                            if (bitmap == null) {
-                                                cameraError = true
-                                            } else {
-                                                onCapture(bitmap)
-                                            }
-                                        }
-                                    } finally {
-                                        image.close()
                                     }
                                 }
 
                                 override fun onError(exception: ImageCaptureException) {
+                                    outputFile.delete()
+                                    Log.e("AdoptionCamera", "Could not capture adoption photo", exception)
                                     ContextCompat.getMainExecutor(context).execute {
                                         cameraError = true
                                     }
