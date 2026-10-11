@@ -33,6 +33,13 @@ def test_direct_meta_credentials_override_saved_accounts_for_both_publications(m
             )
         return SimpleNamespace(raise_for_status=lambda: None, json=lambda: {"id": next(response_ids)})
 
+    monkeypatch.setattr(
+        "adoption_social.httpx.get",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            raise_for_status=lambda: None,
+            json=lambda: {"status_code": "FINISHED"},
+        ),
+    )
     monkeypatch.setattr("adoption_social.httpx.post", fake_post)
     fernet_key = base64.urlsafe_b64encode(hashlib.sha256(secret.encode("utf-8")).digest())
     token = Fernet(fernet_key).encrypt(b"page-token").decode("ascii")
@@ -173,8 +180,15 @@ def test_instagram_account_id_is_discovered_from_page_if_token_was_entered_as_id
     requests = []
     response_ids = iter(("facebook-publication", "instagram-container", "instagram-publication"))
 
+    container_statuses = iter(("IN_PROGRESS", "FINISHED"))
+
     def fake_get(endpoint, *, params, timeout):
         requests.append(("GET", endpoint, params, timeout))
+        if params.get("fields") == "status_code,status":
+            return SimpleNamespace(
+                raise_for_status=lambda: None,
+                json=lambda: {"status_code": next(container_statuses)},
+            )
         return SimpleNamespace(
             raise_for_status=lambda: None,
             json=lambda: {"instagram_business_account": {"id": "9876543210"}},
@@ -209,12 +223,61 @@ def test_instagram_account_id_is_discovered_from_page_if_token_was_entered_as_id
     assert discovery[0] == "GET"
     assert discovery[1].endswith("/1234567890")
     assert discovery[2]["fields"] == "instagram_business_account{id}"
+    status_checks = [request for request in requests if request[0] == "GET" and request[2]["fields"] == "status_code,status"]
+    assert len(status_checks) == 2
+    assert requests.index(status_checks[-1]) < next(
+        index for index, request in enumerate(requests)
+        if request[0] == "POST" and request[1].endswith("/media_publish")
+    )
     instagram_posts = [
         request for request in requests
         if request[0] == "POST" and "/9876543210/" in request[1]
     ]
     assert len(instagram_posts) == 2
     assert all("EAA-this-is-not-an-account-id" not in request[1] for request in requests)
+
+
+def test_instagram_container_error_stops_before_media_publish(monkeypatch):
+    monkeypatch.setenv("META_PAGE_ID", "1234567890")
+    monkeypatch.setenv("META_INSTAGRAM_ACCOUNT_ID", "9876543210")
+    monkeypatch.setenv("META_PAGE_ACCESS_TOKEN", "page-token")
+    posts = []
+
+    def fake_post(endpoint, *, data, timeout):
+        posts.append(endpoint)
+        return SimpleNamespace(raise_for_status=lambda: None, json=lambda: {"id": "container-id"})
+
+    monkeypatch.setattr("adoption_social.httpx.post", fake_post)
+    monkeypatch.setattr(
+        "adoption_social.httpx.get",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            raise_for_status=lambda: None,
+            json=lambda: {"status_code": "ERROR", "status": "Image could not be fetched"},
+        ),
+    )
+    listing = AdoptionListing(
+        id="listing-container-error",
+        lister_user_id="owner",
+        pet_name="Milo",
+        species="dog",
+        age_months=18,
+        gender="male",
+        health_status="Vaccinated",
+        description="Friendly and active.",
+        location_city="Pune",
+        images=["https://storage.example/pet.jpg"],
+        facebook_post_id="facebook-post",
+        auto_post_social=True,
+    )
+
+    publications, errors = publish_adoption_listing(listing, lambda *_: None)
+
+    assert publications == {}
+    assert errors == [
+        "Instagram: Instagram media processing ended with status ERROR: Image could not be fetched"
+    ]
+    assert len(posts) == 1
+    assert posts[0].endswith("/9876543210/media")
 
 
 def test_instagram_discovery_redacts_access_token_from_meta_error(monkeypatch):

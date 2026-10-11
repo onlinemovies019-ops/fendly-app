@@ -3,6 +3,7 @@ import hashlib
 import logging
 import os
 import re
+import time
 from collections.abc import Callable
 from urllib.parse import quote, urlsplit
 
@@ -16,6 +17,8 @@ logger = logging.getLogger(__name__)
 DEFAULT_GRAPH_VERSION = "v23.0"
 GRAPH_VERSION_PATTERN = re.compile(r"^v\d{1,2}\.0$")
 GRAPH_ID_PATTERN = re.compile(r"^\d+$")
+INSTAGRAM_CONTAINER_MAX_ATTEMPTS = 15
+INSTAGRAM_CONTAINER_POLL_INTERVAL_SECONDS = 2
 
 
 def _graph_configuration() -> tuple[str, str]:
@@ -174,6 +177,59 @@ def _graph_post(
     if not isinstance(identifier, str) or not identifier:
         raise RuntimeError("Meta Graph API did not return a publication ID")
     return identifier
+
+
+def _wait_for_instagram_container(
+    container_id: str,
+    access_token: str,
+    graph_version: str,
+) -> None:
+    endpoint = (
+        f"https://graph.facebook.com/{graph_version}/{quote(container_id, safe='')}"
+    )
+    for attempt in range(INSTAGRAM_CONTAINER_MAX_ATTEMPTS):
+        try:
+            response = httpx.get(
+                endpoint,
+                params={
+                    "fields": "status_code,status",
+                    "access_token": access_token,
+                },
+                timeout=30.0,
+            )
+            response.raise_for_status()
+            result = response.json()
+        except httpx.HTTPStatusError as exc:
+            try:
+                graph_error = exc.response.json().get("error", {}).get("message", "")
+            except (ValueError, AttributeError):
+                graph_error = ""
+            message = graph_error or f"Meta Graph API returned HTTP {exc.response.status_code}"
+            raise RuntimeError(
+                _redact_meta_error(message[:400], access_token)
+            ) from exc
+        except (httpx.HTTPError, ValueError) as exc:
+            raise RuntimeError("Could not check Instagram media processing status") from exc
+
+        status_code = result.get("status_code") if isinstance(result, dict) else None
+        if status_code == "FINISHED":
+            return
+        if status_code in {"ERROR", "EXPIRED"}:
+            status_message = result.get("status", "") if isinstance(result, dict) else ""
+            detail = f": {status_message}" if isinstance(status_message, str) and status_message else ""
+            raise RuntimeError(
+                f"Instagram media processing ended with status {status_code}{detail}"
+            )
+        if status_code != "IN_PROGRESS":
+            raise RuntimeError(
+                "Meta did not return a recognized Instagram media processing status"
+            )
+        if attempt < INSTAGRAM_CONTAINER_MAX_ATTEMPTS - 1:
+            time.sleep(INSTAGRAM_CONTAINER_POLL_INTERVAL_SECONDS)
+
+    raise RuntimeError(
+        "Instagram media is still processing; retry publishing in a few moments"
+    )
 
 
 def _graph_delete(endpoint: str, access_token: str) -> None:
@@ -335,6 +391,11 @@ def publish_adoption_listing(
                     "caption": caption,
                     "access_token": access_token,
                 },
+            )
+            _wait_for_instagram_container(
+                container_id,
+                access_token,
+                graph_version,
             )
             publications["instagram"] = _graph_post(
                 f"https://graph.facebook.com/{graph_version}/{instagram_id}/media_publish",
