@@ -72,7 +72,11 @@ Required environment variables:
 - The authenticated `/api/assistant/chat` endpoint uses the same server-side
 	`GEMINI_API_KEY` to answer Fendly app-help questions. It never exposes the key
 	to Android, limits each question to 1,000 characters and conversation
-	context to eight messages, and uses `GEMINI_ASSISTANT_MODEL` and
+	context to eight messages, and sends the selected app language (English,
+	Hindi, Marathi, Gujarati, Bengali, Tamil, Telugu, Kannada, or Malayalam) so
+	replies match the user's native or Romanized script and tone while keeping
+	technical app terms in English. It uses
+	`GEMINI_ASSISTANT_MODEL` and
 	`GEMINI_ASSISTANT_FALLBACK_MODEL` to select Gemini models. Assistant requests
 	are provider usage and may consume free-tier quota or incur charges according
 	to the Google AI Studio account's current plan and limits. If Gemini is

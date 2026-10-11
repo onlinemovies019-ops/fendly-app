@@ -6,6 +6,7 @@ import main
 from fendly_assistant import (
     AssistantChatRequest,
     AssistantMessage,
+    LANGUAGE_SCRIPT_RULES,
     generate_fendly_answer,
 )
 from routers import assistant as assistant_module
@@ -49,6 +50,7 @@ async def test_gemini_assistant_sends_grounded_conversation(monkeypatch):
     monkeypatch.setattr("fendly_assistant.httpx.AsyncClient", FakeAsyncClient)
     response = await generate_fendly_answer(AssistantChatRequest(
         question="How do I check my report?",
+        language="mr",
         history=[
             AssistantMessage(role="user", content="I submitted a report"),
             AssistantMessage(role="assistant", content="You can check it in My Reports."),
@@ -61,6 +63,10 @@ async def test_gemini_assistant_sends_grounded_conversation(monkeypatch):
     assert captured["body"]["systemInstruction"]["parts"][0]["text"].startswith(
         "You are Fendly Help"
     )
+    assert captured["body"]["systemInstruction"]["parts"][0]["text"].endswith(
+        LANGUAGE_SCRIPT_RULES.format(selected_language="Marathi")
+    )
+    assert "Romanized Marathi" in captured["body"]["systemInstruction"]["parts"][0]["text"]
     assert captured["body"]["contents"] == [
         {"role": "user", "parts": [{"text": "I submitted a report"}]},
         {"role": "model", "parts": [{"text": "You can check it in My Reports."}]},
@@ -126,7 +132,8 @@ def test_assistant_endpoint_requires_authentication():
 
 def test_assistant_endpoint_returns_gemini_answer_for_authenticated_user(monkeypatch):
     async def fake_answer(payload):
-        assert payload.question == "How do I use Fendly?"
+        assert payload.question == "mala app baddal mahiti dya"
+        assert payload.selected_language == "mr"
         return "Ask Fendly questions here."
 
     monkeypatch.setattr(assistant_module, "generate_fendly_answer", fake_answer)
@@ -136,7 +143,10 @@ def test_assistant_endpoint_returns_gemini_answer_for_authenticated_user(monkeyp
         response = client.post(
             "/api/assistant/chat",
             headers={"Authorization": "Bearer test-token"},
-            json={"question": "How do I use Fendly?"},
+            json={
+                "question": "mala app baddal mahiti dya",
+                "language": "mr",
+            },
         )
     finally:
         main.app.dependency_overrides.pop(assistant_module.get_current_user, None)
@@ -153,3 +163,29 @@ def test_assistant_request_limits_history_and_question_length():
             question="Help",
             history=[AssistantMessage(role="user", content="question")] * 9,
         )
+    with pytest.raises(ValueError):
+        AssistantChatRequest(question="Help", language="fr")
+    with pytest.raises(ValueError):
+        AssistantChatRequest(
+            question="Help",
+            language="mr",
+            selected_language="Hindi",
+        )
+
+
+@pytest.mark.parametrize(
+    ("payload", "expected_language"),
+    [
+        ({"user_selected_language": "Marathi"}, "mr"),
+        ({"selected_language": "Hindi"}, "hi"),
+        ({"language": "bn"}, "bn"),
+        ({}, "en"),
+    ],
+)
+def test_assistant_request_accepts_supported_language_names_and_aliases(
+    payload,
+    expected_language,
+):
+    request = AssistantChatRequest(question="Help", **payload)
+
+    assert request.selected_language == expected_language

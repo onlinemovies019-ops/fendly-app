@@ -13944,6 +13944,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         try {
             JSONObject request = new JSONObject();
             request.put("question", question);
+            request.put("language", languageCodeForIndex(selectedLanguage));
             JSONArray messages = new JSONArray();
             int firstMessage = Math.max(0, history.size() - 8);
             for (int index = firstMessage; index < history.size(); index++) {

@@ -3,7 +3,7 @@ import os
 from typing import Any, Literal
 
 import httpx
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 logger = logging.getLogger(__name__)
@@ -38,9 +38,40 @@ Fendly guidance:
   screen's gear menu, where text size can also be adjusted.
 """.strip()
 
+LANGUAGE_SCRIPT_RULES = """
+==================================================
+LANGUAGE & SCRIPT MATCHING RULES (NON-DISRUPTIVE)
+==================================================
+The user's app interface language is set to: {selected_language}
+
+1. CORE ASSISTANT ROLE:
+   - Continue acting fully as the app's assistant, answering all features, queries, and instructions exactly as trained. Do not alter your underlying domain knowledge or app support capabilities.
+
+2. DYNAMIC SCRIPT MATCHING:
+   - Match the user's input script and tone automatically:
+     a) NATIVE SCRIPT: If the user types in native characters (e.g., Devanagari, Tamil, Bengali, etc.), respond using native script in {selected_language}.
+     b) ROMANIZED SCRIPT (ENGLISH KEYBOARD): If the user writes in {selected_language} using Latin/English letters (e.g., Hinglish, Romanized Marathi, Tanglish, Manglish, etc.), you MUST reply in the same Romanized format using English letters.
+     c) ENGLISH: If the user speaks pure English, respond in standard English.
+
+3. READABILITY & CLARITY:
+   - Keep technical app terms (e.g., IMEI, OTP, Password, Settings, Profile, Verification, Download) in plain English for seamless user understanding.
+"""
+
 MAX_QUESTION_LENGTH = 1000
 MAX_HISTORY_MESSAGES = 8
 MAX_HISTORY_MESSAGE_LENGTH = 1500
+AssistantLanguage = Literal["en", "hi", "mr", "gu", "bn", "ta", "te", "kn", "ml"]
+ASSISTANT_LANGUAGE_NAMES: dict[AssistantLanguage, str] = {
+    "en": "English",
+    "hi": "Hindi",
+    "mr": "Marathi",
+    "gu": "Gujarati",
+    "bn": "Bengali",
+    "ta": "Tamil",
+    "te": "Telugu",
+    "kn": "Kannada",
+    "ml": "Malayalam",
+}
 
 
 class AssistantMessage(BaseModel):
@@ -58,10 +89,49 @@ class AssistantChatRequest(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
 
     question: str = Field(min_length=1, max_length=MAX_QUESTION_LENGTH)
+    selected_language: AssistantLanguage = "en"
     history: list[AssistantMessage] = Field(
         default_factory=_empty_assistant_history,
         max_length=MAX_HISTORY_MESSAGES,
     )
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_language_field_names(cls, value: Any) -> Any:
+        if not isinstance(value, dict):
+            return value
+        data = dict(value)
+        language_fields = ("user_selected_language", "selected_language", "language")
+        supplied_fields = [field for field in language_fields if field in data]
+        supplied_values = [data[field] for field in supplied_fields]
+        if supplied_values and any(
+            supplied_value != supplied_values[0]
+            for supplied_value in supplied_values[1:]
+        ):
+            raise ValueError("Provide only one consistent selected app language")
+        if supplied_fields:
+            data["selected_language"] = data[supplied_fields[0]]
+            for field in language_fields:
+                if field != "selected_language":
+                    data.pop(field, None)
+        return data
+
+    @field_validator("selected_language", mode="before")
+    @classmethod
+    def normalize_selected_language(cls, value: object) -> AssistantLanguage:
+        if not isinstance(value, str):
+            raise ValueError("Selected app language must be a supported language name or code")
+        normalized = value.strip().lower()
+        language_codes: dict[str, AssistantLanguage] = {
+            code: code for code in ASSISTANT_LANGUAGE_NAMES
+        }
+        language_codes.update({
+            name.lower(): code for code, name in ASSISTANT_LANGUAGE_NAMES.items()
+        })
+        language = language_codes.get(normalized)
+        if language is None:
+            raise ValueError("Selected app language is not supported")
+        return language
 
 
 class AssistantChatResponse(BaseModel):
@@ -100,8 +170,13 @@ async def generate_fendly_answer(payload: AssistantChatRequest) -> str:
         for message in history
     ]
     contents.append({"role": "user", "parts": [{"text": payload.question}]})
+    selected_language = ASSISTANT_LANGUAGE_NAMES[payload.selected_language]
+    full_system_prompt = (
+        f"{ASSISTANT_SYSTEM_INSTRUCTION}\n\n"
+        f"{LANGUAGE_SCRIPT_RULES.format(selected_language=selected_language)}"
+    )
     request_body: dict[str, Any] = {
-        "systemInstruction": {"parts": [{"text": ASSISTANT_SYSTEM_INSTRUCTION}]},
+        "systemInstruction": {"parts": [{"text": full_system_prompt}]},
         "contents": contents,
         "generationConfig": {
             "temperature": 0.3,
