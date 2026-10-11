@@ -46,14 +46,22 @@ def _connection_credentials(
     provider: str,
     account: SocialAccount | None,
 ) -> tuple[str, str] | None:
-    direct_id = os.getenv(
-        "META_FACEBOOK_PAGE_ID" if provider == "facebook" else "META_INSTAGRAM_ACCOUNT_ID",
-        "",
-    ).strip()
+    id_environment_name = (
+        "META_FACEBOOK_PAGE_ID" if provider == "facebook" else "META_INSTAGRAM_ACCOUNT_ID"
+    )
+    direct_id = os.getenv(id_environment_name, "").strip()
+    if provider == "facebook" and not direct_id:
+        direct_id = os.getenv("META_PAGE_ID", "").strip()
     direct_token = os.getenv("META_PAGE_ACCESS_TOKEN", "").strip()
     if direct_id and direct_token:
         return direct_id, direct_token
     if account is None or not account.account_id or not account.access_token_encrypted:
+        if direct_id and not direct_token:
+            raise RuntimeError(
+                "META_PAGE_ACCESS_TOKEN is required with the configured Meta account ID"
+            )
+        if direct_token and not direct_id:
+            raise RuntimeError(f"{id_environment_name} is required with META_PAGE_ACCESS_TOKEN")
         return None
     return account.account_id, _decrypt_connected_token(account.access_token_encrypted)
 

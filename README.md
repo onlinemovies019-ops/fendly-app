@@ -132,10 +132,12 @@ account connection previously saved by Fendly's Meta OAuth flow in
 `APP_SECRET_KEY`. The Graph API version defaults to `v23.0`; set
 `APP_DOWNLOAD_URL` only if the app's Play Store link differs from the default.
 For deployments without saved Meta account rows, the optional direct
-configuration is `META_FACEBOOK_PAGE_ID`, `META_INSTAGRAM_ACCOUNT_ID`, and
-`META_PAGE_ACCESS_TOKEN`. If the lister opts in but publishing is unavailable
-or fails, the adoption listing remains available and returns a separate
-social-post status for retry.
+configuration is `META_FACEBOOK_PAGE_ID` (or its `META_PAGE_ID` alias),
+`META_INSTAGRAM_ACCOUNT_ID`, and `META_PAGE_ACCESS_TOKEN`. The app ID, app
+secret, Graph API version, and login configuration ID do not replace the Page
+access token or Instagram account ID needed to publish. If the lister opts in
+but publishing is unavailable or fails, the adoption listing remains available
+and returns a separate social-post status for retry.
 
 The FastAPI startup applies
 `supabase/migrations/20261011000000_private_match_workflow.sql` to PostgreSQL

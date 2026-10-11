@@ -80,7 +80,8 @@ def test_opted_in_listing_reuses_connected_meta_accounts_for_both_publications(m
 
 
 def test_meta_api_failures_include_graph_error_in_render_logs(monkeypatch, caplog):
-    monkeypatch.setenv("META_FACEBOOK_PAGE_ID", "page-id")
+    monkeypatch.delenv("META_FACEBOOK_PAGE_ID", raising=False)
+    monkeypatch.setenv("META_PAGE_ID", "page-id")
     monkeypatch.setenv("META_INSTAGRAM_ACCOUNT_ID", "instagram-id")
     monkeypatch.setenv("META_PAGE_ACCESS_TOKEN", "test-token")
 
@@ -122,3 +123,30 @@ def test_meta_api_failures_include_graph_error_in_render_logs(monkeypatch, caplo
     ]
     assert "Facebook publishing failed: Meta permission denied" in caplog.text
     assert "Instagram publishing failed: Meta permission denied" in caplog.text
+
+
+def test_meta_page_id_requires_page_access_token(monkeypatch):
+    monkeypatch.setenv("META_PAGE_ID", "page-id")
+    monkeypatch.delenv("META_FACEBOOK_PAGE_ID", raising=False)
+    monkeypatch.delenv("META_PAGE_ACCESS_TOKEN", raising=False)
+
+    listing = AdoptionListing(
+        id="listing-3",
+        lister_user_id="owner",
+        pet_name="Milo",
+        species="dog",
+        breed="",
+        age_months=18,
+        gender="male",
+        health_status="Vaccinated",
+        description="Friendly and active.",
+        location_city="Pune",
+        images=["https://storage.example/pet.jpg"],
+        auto_post_social=True,
+    )
+
+    _, errors = publish_adoption_listing(listing, lambda *_: None)
+
+    assert errors[0] == (
+        "Facebook: META_PAGE_ACCESS_TOKEN is required with the configured Meta account ID"
+    )
