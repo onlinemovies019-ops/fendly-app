@@ -67,6 +67,14 @@ async def test_gemini_assistant_sends_grounded_conversation(monkeypatch):
         LANGUAGE_SCRIPT_RULES.format(selected_language="Marathi")
     )
     assert "Romanized Marathi" in captured["body"]["systemInstruction"]["parts"][0]["text"]
+    assert (
+        "Do not leave these labels in English"
+        in captured["body"]["systemInstruction"]["parts"][0]["text"]
+    )
+    assert (
+        "Lost & Found, My Reports, Pet Adoption, Profile & Settings, and Posters"
+        in captured["body"]["systemInstruction"]["parts"][0]["text"]
+    )
     assert captured["body"]["contents"] == [
         {"role": "user", "parts": [{"text": "I submitted a report"}]},
         {"role": "model", "parts": [{"text": "You can check it in My Reports."}]},

@@ -54,7 +54,8 @@ The user's app interface language is set to: {selected_language}
      c) ENGLISH: If the user speaks pure English, respond in standard English.
 
 3. READABILITY & CLARITY:
-   - Keep technical app terms (e.g., IMEI, OTP, Password, Settings, Profile, Verification, Download) in plain English for seamless user understanding.
+   - Keep technical terms (e.g., IMEI, OTP, Password, Verification, Download) in plain English for seamless user understanding.
+   - Translate Fendly feature names, section titles, navigation labels, and actions into {selected_language}, including Lost & Found, My Reports, Pet Adoption, Profile & Settings, and Posters. Do not leave these labels in English unless the user asks for English labels.
 """
 
 MAX_QUESTION_LENGTH = 1000
