@@ -12,7 +12,7 @@ def test_private_workflow_migration_runs_schema_and_storage_policies():
 
     sql = "\n".join(statements)
     assert "ALTER TABLE public.lost_items ENABLE ROW LEVEL SECURITY" in sql
-    assert "CREATE TABLE IF NOT EXISTS public.private_image_migration_cleanup" in sql
+    assert "private_image_migration_cleanup" not in sql
     assert "INSERT INTO storage.buckets" in sql
     assert "'report-images'" in sql
     assert "fendly_private_report_images_deny_clients" in sql

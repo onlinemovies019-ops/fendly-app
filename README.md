@@ -104,10 +104,6 @@ them as unsupported.
   photo URL)
 - `PATCH /api/items/{lost|found}/{report_id}/resolution` (owner-only reunion
   status and optional success-story consent)
-- `POST /api/admin/private-images/migrate?apply=false&limit=10` (admin-only
-  legacy-image migration; preview first, then repeat with `apply=true` until
-  `remaining_assets` and `pending_source_cleanup` are zero; local upload URLs
-  are reported as unsupported and require recovery from backup)
 - `DELETE /api/users/account` (deletes account data and its reports)
 - `/static/delete-account.html` (external account-deletion request page)
 - `GET /api/users/username/{username}`
@@ -149,13 +145,7 @@ not included in match notifications.
 All new report and profile images are uploaded with the Supabase Python client
 to the private `report-images` bucket. The database stores a stable object
 reference; API responses contain short-lived signed URLs. The service does not
-write uploaded images to or read images from a local filesystem. Legacy
-Cloudinary and Supabase Storage references can be reviewed and migrated using
-the admin-only private-image migration endpoint before their old sources are
-removed. Legacy `/static/uploads/` references are reported as unsupported:
-recover those files from a backup and upload them to private Supabase Storage
-before retiring their references; the service will not try to read them from
-an ephemeral server disk.
+write uploaded images to or read images from a local filesystem.
 
 Fendly has no social publishing, Meta OAuth, social account connection, or
 social-post cleanup APIs. Reunion-story consent defaults to false and is

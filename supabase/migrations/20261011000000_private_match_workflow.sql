@@ -42,29 +42,6 @@ CREATE UNIQUE INDEX IF NOT EXISTS user_notifications_match_recipient_uq
     ON public.user_notifications (match_alert_id, firebase_uid)
     WHERE match_alert_id IS NOT NULL;
 
-CREATE TABLE IF NOT EXISTS public.private_image_migration_cleanup (
-    source_key varchar(64) PRIMARY KEY,
-    source_kind varchar(16) NOT NULL,
-    source_locator varchar(1000) NOT NULL,
-    created_at timestamptz NOT NULL DEFAULT now(),
-    cleaned_at timestamptz,
-    last_error varchar(500)
-);
-
-ALTER TABLE public.private_image_migration_cleanup ENABLE ROW LEVEL SECURITY;
-REVOKE ALL PRIVILEGES ON TABLE public.private_image_migration_cleanup
-FROM PUBLIC, anon, authenticated;
-DROP POLICY IF EXISTS fendly_private_image_migration_deny_clients
-    ON public.private_image_migration_cleanup;
-CREATE POLICY fendly_private_image_migration_deny_clients
-    ON public.private_image_migration_cleanup
-    FOR ALL TO anon, authenticated USING (false) WITH CHECK (false);
-GRANT SELECT, INSERT, UPDATE, DELETE
-    ON TABLE public.private_image_migration_cleanup TO service_role;
-CREATE INDEX IF NOT EXISTS private_image_migration_cleanup_pending_idx
-    ON public.private_image_migration_cleanup (created_at)
-    WHERE cleaned_at IS NULL;
-
 ALTER TABLE public.lost_items ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.found_items ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.admin_match_alerts ENABLE ROW LEVEL SECURITY;

@@ -125,6 +125,7 @@ def test_community_poster_endpoint_does_not_expose_another_users_report(reports_
 def test_user_content_flagging_is_not_exposed(reports_client):
     client, _ = reports_client
     assert client.get("/api/admin/content-reports").status_code == 404
+    assert client.post("/api/admin/private-images/migrate").status_code == 404
     assert client.post(
         "/api/items/found/report-id/reports",
         json={"reason": "spam"},
@@ -193,44 +194,6 @@ def test_admin_removal_deletes_report_and_linked_app_records(reports_client, mon
             assert session.query(AdminMatchAlert).count() == 0
             assert session.query(ContentReport).count() == 0
             assert session.query(UserNotification).count() == 1
-    finally:
-        main.app.dependency_overrides.pop(admin_module.get_current_user, None)
-
-
-def test_private_image_migration_preview_is_admin_only(reports_client, monkeypatch):
-    client, session_factory = reports_client
-    monkeypatch.setenv("ADMIN_FIREBASE_UIDS", "admin-uid")
-    monkeypatch.setenv("CLOUDINARY_CLOUD_NAME", "fendly")
-    main.app.dependency_overrides[admin_module.get_current_user] = lambda: "not-admin"
-    try:
-        with Session(session_factory.kw["bind"]) as session:
-            session.add(
-                LostItem(
-                    id="legacy-image-report",
-                    created_by="report-owner",
-                    title="Lost item",
-                    description="Details",
-                    lat=0,
-                    lng=0,
-                    image_url=(
-                        "https://res.cloudinary.com/fendly/image/upload/"
-                        "v1234567890/legacy/item.jpg"
-                    ),
-                )
-            )
-            session.commit()
-
-        denied = client.post("/api/admin/private-images/migrate?apply=false")
-        assert denied.status_code == 403
-
-        main.app.dependency_overrides[admin_module.get_current_user] = lambda: "admin-uid"
-        preview = client.post("/api/admin/private-images/migrate?apply=false")
-
-        assert preview.status_code == 200
-        assert preview.json()["candidate_assets"] == 1
-        assert preview.json()["assets_in_batch"] == 1
-        assert preview.json()["unsupported_references"] == 0
-        assert preview.json()["migrated_assets"] == 0
     finally:
         main.app.dependency_overrides.pop(admin_module.get_current_user, None)
 

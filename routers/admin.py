@@ -8,7 +8,7 @@ import time
 from datetime import datetime, timezone
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy import desc, func, or_, select
 from sqlalchemy.orm import Session
@@ -799,23 +799,3 @@ async def find_matches(
         item_response.update(_report_image_fields(item))
         result["item"] = item_response
     return ranked
-
-
-@router.post("/private-images/migrate")
-async def migrate_legacy_private_images(
-    apply: bool = Query(default=False),
-    limit: int = Query(default=10, ge=1, le=25),
-    session: Session = Depends(get_db),
-    _: str = Depends(require_admin),
-) -> dict[str, object]:
-    from private_image_migration import migrate_private_images
-
-    try:
-        return await migrate_private_images(session, limit=limit, apply=apply)
-    except Exception as error:
-        session.rollback()
-        logger.exception("Private image migration failed")
-        raise HTTPException(
-            503,
-            "Private image migration is temporarily unavailable; no completion is reported.",
-        ) from error
