@@ -20,7 +20,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 from auth import router as auth_router, get_current_user
 from database import engine, get_db
-from models import Base, EmailOTPChallenge, PublicImeiLookupRateLimit, SmsOTPChallenge, SmsOTPRateLimit, User
+from models import Base, EmailOTPChallenge, SmsOTPChallenge, SmsOTPRateLimit, User
 from routers.items import create_item_compat, match_items, router as items_router
 from routers.notifications import inbox_router as inbox_notifications_router
 from routers.notifications import router as notifications_router
@@ -86,9 +86,6 @@ async def lifespan(_: FastAPI):
                 )
                 connection.execute(
                     text("ALTER TABLE public.sms_otp_rate_limits ENABLE ROW LEVEL SECURITY")
-                )
-                connection.execute(
-                    text("ALTER TABLE public.public_imei_lookup_rate_limits ENABLE ROW LEVEL SECURITY")
                 )
                 for table_name in (
                     "social_accounts",
@@ -214,7 +211,6 @@ async def lifespan(_: FastAPI):
                 not_null=True,
                 default="false",
             )
-            add_column_if_missing("lost_items", "imei_hash", "varchar(64)")
             add_column_if_missing("lost_items", "hidden_from_public", "boolean", not_null=True, default="false")
             add_column_if_missing("found_items", "report_date", "varchar(32)")
             add_column_if_missing("found_items", "report_location", "varchar(500)")
@@ -242,12 +238,6 @@ async def lifespan(_: FastAPI):
             add_column_if_missing("found_items", "edit_count", "integer", not_null=True, default="0")
             add_column_if_missing("found_items", "hidden_from_public", "boolean", not_null=True, default="false")
             add_column_if_missing("admin_match_alerts", "review_status", "varchar(20)", not_null=True, default="'pending'")
-            connection.execute(
-                text(
-                    "CREATE INDEX IF NOT EXISTS lost_items_status_imei_hash_idx "
-                    "ON lost_items (status, imei_hash)"
-                )
-            )
     if verify_image_bucket:
         from image_storage import verify_private_bucket
 
@@ -281,11 +271,6 @@ async def _cleanup_expired_otp_challenges() -> None:
                 session.execute(
                     delete(SmsOTPRateLimit).where(
                         SmsOTPRateLimit.sent_at <= now - 86400
-                    )
-                )
-                session.execute(
-                    delete(PublicImeiLookupRateLimit).where(
-                        PublicImeiLookupRateLimit.window_started <= now - 86400
                     )
                 )
                 session.commit()

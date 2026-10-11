@@ -118,7 +118,6 @@
     <string name="generic_error_no_keyguard">इस डिवाइस को पिन, पैटर्न या पासवर्ड की मदद से लॉक/अनलॉक नहीं किया जा सकता.</string>
     <string name="generic_error_user_canceled">उपयोगकर्ता ने पुष्टि करने की प्रक्रिया रद्द की.</string>
     <string name="google_api_key">AIzaSyBCHILhJr8XVpwP8IqlHh1fuXcOOcgu2y4</string>
-    <string name="cloudinary_cloud_name"></string>
     <string name="google_app_id">1:843756451128:android:14e1f4f730e604f92cfdcd</string>
     <string name="google_crash_reporting_api_key">AIzaSyBCHILhJr8XVpwP8IqlHh1fuXcOOcgu2y4</string>
     <string name="google_storage_bucket">fendly-6d746.firebasestorage.app</string>

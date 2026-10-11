@@ -14,7 +14,7 @@ from uuid import uuid4
 import firebase_admin
 from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Response, UploadFile, status
 from firebase_admin import firestore
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from PIL import Image, UnidentifiedImageError
 from sqlalchemy import delete, or_, select
 from sqlalchemy.orm import Session
@@ -23,7 +23,6 @@ from ai_matching import create_embedding, item_text
 from auth import get_current_user
 from database import SessionLocal, get_db
 from image_matching import cosine_similarity, create_image_embedding
-from imei_security import imei_digest, validate_imei
 from moderation import moderate_content
 from models import AdminMatchAlert, FoundItem, LostItem
 from notifications import persist_admin_match_alert, send_admin_match_email
@@ -191,7 +190,13 @@ class ItemSubmission(BaseModel):
     category: str = Field(default="other", min_length=1, max_length=80)
     community_guidelines_accepted: bool = False
     payment_id: str | None = Field(default=None, max_length=128)
-    imei_number: str | None = Field(default=None, exclude=True)
+
+    @model_validator(mode="before")
+    @classmethod
+    def reject_imei_number(cls, values: object) -> object:
+        if isinstance(values, dict) and values.get("imei_number") is not None:
+            raise ValueError("IMEI submission has been disabled")
+        return values
 
 
 def _require_db_session(session: Session | None) -> Session:
@@ -317,11 +322,6 @@ async def _save_item(
             status.HTTP_400_BAD_REQUEST,
             "You must accept the Community Guidelines before submitting a report",
         )
-    if payload.imei_number is not None:
-        if model is not LostItem:
-            raise HTTPException(status.HTTP_400_BAD_REQUEST, "IMEI can only be attached to a lost-item report")
-        validate_imei(payload.imei_number)
-
     category = resolve_item_category(payload.category, payload.title, payload.description)
     if model is LostItem:
         require_lost_report_entitlement(session, uid, payload.payment_id)
@@ -360,7 +360,7 @@ async def _save_item(
 
     # 4. Create and persist record
     item_values = payload.model_dump(
-        exclude={"payment_id", "imei_number", "community_guidelines_accepted"}
+        exclude={"payment_id", "community_guidelines_accepted"}
     )
     item_values["category"] = category
     item_values["image_url"] = private_image_reference(
@@ -373,7 +373,6 @@ async def _save_item(
     ]
     if model is LostItem:
         item_values["status"] = "LOST"
-        item_values["imei_hash"] = imei_digest(payload.imei_number) if payload.imei_number else None
     item_values.update(
         title_en=translated_fields["title"] if translated_fields else None,
         description_en=translated_fields["description"] if translated_fields else None,
@@ -569,7 +568,6 @@ async def create_item_compat(
             report_location=request.report_location,
             category=request.category,
             payment_id=request.payment_id,
-            imei_number=request.imei_number,
         )
         model = LostItem if request.type == "lost" else FoundItem
         record = await _save_item(payload, session, uid, model, background_tasks)

@@ -67,13 +67,6 @@
             android:label="@string/vault_title" />
 
         <activity
-            android:name=".SafeTradeCheckActivity"
-            android:exported="false"
-            android:label="SafeTrade IMEI check"
-            android:theme="@style/Theme.Fendly"
-            android:windowSoftInputMode="adjustResize" />
-
-        <activity
             android:name=".LanguageActivity"
             android:exported="false"
             android:theme="@style/Theme.Fendly"

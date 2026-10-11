@@ -43,8 +43,7 @@
 
                 <LinearLayout
                     android:layout_width="match_parent"
-                    android:layout_height="0dp"
-                    android:layout_weight="1"
+                    android:layout_height="25dp"
                     android:background="@drawable/fendly_widget_lost_row"
                     android:gravity="center_vertical"
                     android:orientation="horizontal"
@@ -53,17 +52,16 @@
                     <TextView
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:text="L"
+                        android:text="@string/widget_lost_initial"
                         android:textColor="@color/fendly_widget_lost_text"
                         android:textSize="14sp"
                         android:textStyle="bold" />
 
                     <TextView
                         android:id="@+id/widget_lost_count"
-                        android:layout_width="0dp"
+                        android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:layout_marginStart="8dp"
-                        android:layout_weight="1"
                         android:gravity="end"
                         android:maxLines="1"
                         android:textColor="@color/fendly_widget_primary_text"
@@ -73,9 +71,8 @@
 
                 <LinearLayout
                     android:layout_width="match_parent"
-                    android:layout_height="0dp"
+                    android:layout_height="25dp"
                     android:layout_marginTop="4dp"
-                    android:layout_weight="1"
                     android:background="@drawable/fendly_widget_found_row"
                     android:gravity="center_vertical"
                     android:orientation="horizontal"
@@ -84,17 +81,16 @@
                     <TextView
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:text="F"
+                        android:text="@string/widget_found_initial"
                         android:textColor="@color/fendly_widget_found_text"
                         android:textSize="14sp"
                         android:textStyle="bold" />
 
                     <TextView
                         android:id="@+id/widget_found_count"
-                        android:layout_width="0dp"
+                        android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:layout_marginStart="8dp"
-                        android:layout_weight="1"
                         android:gravity="end"
                         android:maxLines="1"
                         android:textColor="@color/fendly_widget_primary_text"

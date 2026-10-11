@@ -1,7 +1,7 @@
 from datetime import datetime
 from urllib.parse import urlsplit
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 class ItemCreate(BaseModel):
@@ -17,7 +17,13 @@ class ItemCreate(BaseModel):
     category: str = Field(default="other", min_length=1, max_length=80)
     community_guidelines_accepted: bool = False
     payment_id: str | None = Field(default=None, max_length=128)
-    imei_number: str | None = Field(default=None, exclude=True)
+
+    @model_validator(mode="before")
+    @classmethod
+    def reject_imei_number(cls, values: object) -> object:
+        if isinstance(values, dict) and values.get("imei_number") is not None:
+            raise ValueError("IMEI submission has been disabled")
+        return values
 
 
 class ItemUpdate(BaseModel):

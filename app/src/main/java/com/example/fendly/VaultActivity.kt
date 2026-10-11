@@ -111,7 +111,6 @@ private data class VaultRecord(
     val purchaseDate: String,
     val item: String,
     val serial: String,
-    val imei: String,
     val warrantyExpires: String,
 )
 
@@ -130,7 +129,6 @@ private fun VaultScreen(onBack: () -> Unit) {
     var purchaseDate by remember { mutableStateOf("") }
     var item by remember { mutableStateOf("") }
     var serial by remember { mutableStateOf("") }
-    var imei by remember { mutableStateOf("") }
     var warrantyMonths by remember { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
     var message by remember { mutableStateOf("") }
@@ -172,8 +170,7 @@ private fun VaultScreen(onBack: () -> Unit) {
                             store = json.optString("store"),
                             purchaseDate = json.optString("purchase_date"),
                             item = json.optString("item"),
-                            serial = json.optString("serial_imei"),
-                            imei = "",
+                            serial = json.optString("serial_number"),
                             warrantyExpires = json.optString("warranty_expiry"),
                         )
                     }
@@ -204,11 +201,9 @@ private fun VaultScreen(onBack: () -> Unit) {
                     .process(input)
                     .addOnSuccessListener { result ->
                         val ocr = result.text
-                        val serialMatch = Regex("(?i)(?:serial|s/?n|imei)\\s*[:#-]?\\s*([A-Z0-9-]{8,20})")
+                        val serialMatch = Regex("(?i)(?:serial|s/?n)\\s*[:#-]?\\s*([A-Z0-9-]{8,20})")
                             .find(ocr)?.groupValues?.getOrNull(1).orEmpty()
-                        val imeiMatch = Regex("(?<!\\d)\\d{15}(?!\\d)").find(ocr)?.value.orEmpty()
                         if (serial.isBlank()) serial = serialMatch
-                        if (imei.isBlank()) imei = imeiMatch
                         if (item.isBlank()) item = ocr.lineSequence().map(String::trim).firstOrNull { it.length in 3..80 }.orEmpty()
                         busy = false
                         message = if (ocr.isBlank()) t("vault_ocr_empty")
@@ -271,7 +266,7 @@ private fun VaultScreen(onBack: () -> Unit) {
                         field("store", store)
                         field("purchase_date", purchaseDate)
                         field("item", item)
-                        field("serial_imei", listOf(serial, imei).filter(String::isNotBlank).joinToString(" / "))
+                        field("serial_number", serial)
                         field("warranty_months", months.toString())
                         field("warranty_expiry", expiry)
                         output.write("--$boundary--\r\n".toByteArray(StandardCharsets.UTF_8))
@@ -290,7 +285,6 @@ private fun VaultScreen(onBack: () -> Unit) {
                         purchaseDate = ""
                         item = ""
                         serial = ""
-                        imei = ""
                         warrantyMonths = ""
                         loadRecords()
                     }
@@ -393,14 +387,6 @@ private fun VaultScreen(onBack: () -> Unit) {
                             singleLine = true,
                         )
                         FendlyTextField(
-                            value = imei,
-                            onValueChange = { imei = it },
-                            label = t("vault_imei"),
-                            modifier = Modifier.fillMaxWidth(),
-                            singleLine = true,
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                        )
-                        FendlyTextField(
                             value = warrantyMonths,
                             onValueChange = { warrantyMonths = it.filter(Char::isDigit).take(3) },
                             label = t("vault_warranty_months"),
@@ -473,7 +459,6 @@ private fun WarrantyCard(
             if (record.store.isNotBlank()) Text("${t("vault_store_prefix")}: ${record.store}")
             if (record.purchaseDate.isNotBlank()) Text("${t("vault_purchased_prefix")}: ${record.purchaseDate}")
             if (record.serial.isNotBlank()) Text("${t("vault_serial_prefix")}: ${record.serial}")
-            if (record.imei.isNotBlank()) Text("${t("vault_imei")}: ${record.imei}")
             Text(
                 when {
                     daysRemaining == null -> t("vault_expiry_unavailable")

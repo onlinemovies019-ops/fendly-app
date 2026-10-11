@@ -60,7 +60,6 @@ public final class AiMatchService {
             String paymentId,
             String sourceLanguage,
             String idToken,
-            String imeiNumber,
             String reportCategory,
             boolean communityGuidelinesAccepted
     ) throws Exception {
@@ -86,9 +85,6 @@ public final class AiMatchService {
                         : reportCategory.trim())
                 .put("community_guidelines_accepted", communityGuidelinesAccepted)
                 .put("payment_id", paymentId == null ? JSONObject.NULL : paymentId);
-        if ("lost".equalsIgnoreCase(type) && imeiNumber != null && !imeiNumber.isEmpty()) {
-            payload.put("imei_number", imeiNumber);
-        }
         return post("/api/items", payload, idToken);
     }
 

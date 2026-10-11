@@ -32,11 +32,6 @@
         submit. Reports are used to operate the service, show full reports to
         authorized administrators, and identify possible matches. Potential
         match details are available only to authorized administrators.</li>
-      <li><strong>Optional device IMEI:</strong> when submitting a lost-device
-        report, you may provide its 15-digit IMEI to support SafeTrade checks.
-        Fendly stores a keyed cryptographic hash of that number, not the raw
-        IMEI, and does not use it to associate devices with accounts. The hash
-        is used to compare the report with a buyer-initiated SafeTrade check.</li>
       <li><strong>Location:</strong> with permission, the app can use foreground
         device location to help add a location to a report. Fendly does not
         request background-location permission or continuously track location.</li>
@@ -80,30 +75,24 @@
       or other social platforms. An owner may choose to generate a community
       poster or alert card and share it using another app; information in
       materials or messages the owner shares is then subject to the recipient
-      platform's terms and visibility settings. Fendly administrators may use
-      existing connected Meta accounts only to remove legacy posts created by
-      earlier versions of the app.</p>
-    <p>SafeTrade's public IMEI verification endpoint returns only whether an
-      exact IMEI has an active lost-device report; it does not disclose who
-      filed the report or other report details. Lookups are rate-limited.
-      Fendly does not collect serial numbers for this feature and does not use
-      IMEIs to associate devices with accounts. The app does not use background
-      location tracking.</p>
+      platform's terms and visibility settings. If an owner opts in to sharing
+      a reunion story, authorized administrators may review its category, city,
+      and a temporary photo link and may manually share an approved story
+      outside Fendly. This consent is optional and defaults to off. Fendly does
+      not connect to social-media services to publish stories.</p>
+    <p>Fendly does not collect or use device IMEIs for lost reports, vault
+      records, or public verification. A one-time data update removes
+      previously stored report hashes and IMEI values from vault records. The
+      app does not use background location tracking.</p>
 
     <h2>Retention</h2>
     <p>SMS and email verification challenges expire after 10 minutes. Temporary
       verification rate-limit records use keyed digests rather than raw phone
       numbers or IP addresses and are cleaned up after their limit window.
-      SafeTrade retains the keyed IMEI digest only while its lost report is
-      retained; deleting the report removes its digest. The server-side key
-      needed to create and compare these digests is not sent to the app.
       Service-provider backups may retain deleted data until their normal
       backup-retention cycle expires. Push notifications already delivered to
-      a device cannot be recalled. When your Fendly account is deleted, Fendly
-      removes queued social-publication jobs for its reports. Public Meta
-      posts made by earlier app versions may remain until an administrator
-      confirms their removal; copies or caches retained by a social platform
-      are subject to that platform's policies.</p>
+      a device cannot be recalled. Copies of materials that users share through
+      other apps are subject to those platforms' policies.</p>
     <p>When account deletion completes, Fendly deletes the account's profiles,
       lost-and-found reports, report photos and generated community posters
       managed by Fendly, and related
@@ -124,10 +113,9 @@
       match alerts. Fendly also attempts to delete report and profile photos stored
       by services it controls. Deletion can fail temporarily if a required
       service is unavailable; the app will tell you to retry rather than
-      report success. Pending social publication jobs and their Fendly-side
-      records are removed with the reports. Legacy public Meta posts may
-      require a separate administrator cleanup; social-platform copies or
-      caches are subject to that platform's policies.</p>
+      report success. Copies of materials previously shared by users through
+      other apps are controlled by the receiving platforms and may need to be
+      removed there.</p>
 
     <h2>Community content</h2>
     <p>Fendly checks report text and images for safety before they are stored

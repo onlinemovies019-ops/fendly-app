@@ -69,8 +69,6 @@ services:
         sync: false
       - key: APP_SECRET_KEY
         sync: false
-      - key: META_GRAPH_API_VERSION
-        sync: false
       - key: RAZORPAY_KEY_ID
         sync: false
       - key: RAZORPAY_KEY_SECRET

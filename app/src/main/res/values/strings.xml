@@ -2,6 +2,9 @@
 <resources>
     <string name="app_name">Fendly</string>
     <string name="widget_description">Your Lost and Found report counts and unread Fendly notifications</string>
+    <string name="widget_lost_initial">L</string>
+    <string name="widget_found_initial">F</string>
+    <string name="reunion_story_optional_consent">Allow us to feature your happy reunion story on our community pages to help inspire others? (Optional)</string>
     <string name="vault_title">Digital Bill Locker &amp; Warranty Vault</string>
     <string name="profile_title">My profile</string>
     <string name="profile_account_details">Your account details and preferences.</string>
@@ -27,7 +30,6 @@
     <string name="gcm_defaultSenderId">843756451128</string>
     <string name="google_api_key">AIzaSyBCHILhJr8XVpwP8IqlHh1fuXcOOcgu2y4</string>
     <string name="default_web_client_id">843756451128-b5v1tpss2j5lpmo8lch3jgomqu3bb1a2.apps.googleusercontent.com</string>
-    <string name="cloudinary_cloud_name"></string>
     <string name="google_app_id">1:843756451128:android:14e1f4f730e604f92cfdcd</string>
     <string name="google_crash_reporting_api_key">AIzaSyBCHILhJr8XVpwP8IqlHh1fuXcOOcgu2y4</string>
     <string name="google_storage_bucket">fendly-6d746.firebasestorage.app</string>

@@ -24,9 +24,8 @@ Required environment variables:
 - `FIREBASE_SERVICE_ACCOUNT_JSON`, or `GOOGLE_APPLICATION_CREDENTIALS`: Firebase
 	Admin credentials used to verify Android ID tokens.
 - `APP_SECRET_KEY`: a private value of at least 32 characters used to protect
-	verification challenges, rate-limit identifiers, and SafeTrade IMEI hashes.
-	Keep this value stable: changing it makes existing SafeTrade IMEI hashes
-	impossible to compare with new lookups.
+  verification challenges and rate-limit identifiers. Keep this value stable
+  to preserve verification and rate-limit integrity.
 - `PUBLIC_BASE_URL`: Public API URL used for Fendly link generation.
 - `OPENAI_API_KEY`: Required in production for fail-closed moderation of report
   text and report images before storage. Moderation uses
@@ -46,11 +45,8 @@ Required environment variables:
   32-byte AES-256 key used for encrypted vault images. Keep the key stable and
   server-side; changing it makes existing vault images undecryptable.
 - `CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_API_KEY`, and `CLOUDINARY_API_SECRET`
-	enable deletion of Fendly-managed Cloudinary images during account/report
-	cleanup. Keep the API secret server-side only.
-- Meta credentials are used only by the administrator's legacy-post cleanup
-	workflow. Report creation does not publish to Meta or any other social
-	platform.
+  enable deletion of Fendly-managed legacy Cloudinary images during account
+  cleanup. Keep the API secret server-side only.
 - Set `FAST2SMS_API_KEY` to enable Indian SMS verification through Fast2SMS.
   Keep the key server-side in `.env` locally and in the deployment environment.
   Fendly sends OTPs through Fast2SMS Quick SMS (`q`) by default. To use the DLT
@@ -78,8 +74,7 @@ Uploads require Supabase Storage. Report images and encrypted vault images use
 separate private buckets; the API blocks public access to legacy
 `/static/uploads` files. The service does not read or write local upload files.
 Legacy `/static/uploads/` references require recovery from a backup and manual
-upload to private Supabase Storage; the admin migration endpoint will report
-them as unsupported.
+upload to private Supabase Storage.
 
 ## API
 
@@ -87,12 +82,8 @@ them as unsupported.
 - `POST /api/upload`
 - `POST /api/items/lost`
 - `POST /api/items/found`
-- Optional `imei_number` on a lost-device report: enables SafeTrade matching.
-  The API accepts exactly 15 digits and stores only a keyed HMAC digest; it
-  never returns or logs the raw IMEI.
-- `GET /api/v1/imei/verify/{imei_number}` (public; limited to 10 lookups per
-  client IP per minute; returns only CLEAN/FLAGGED and a generic message).
-  Access logging is disabled because the IMEI is part of the URL path.
+- Device IMEI collection and SafeTrade verification are disabled. The retired
+  `GET /api/v1/imei/verify/{imei_number}` path returns HTTP 410.
 - `GET /api/items/mine` (authenticated owner-only reports)
 - `POST /api/items/match` (admin-only matching)
 - `GET /api/notifications` and `POST /api/notifications/read` (owner-scoped
@@ -122,9 +113,11 @@ configuration is not accepted. Alternatively, configure `ADMIN_EMAIL` for a
 verified Fendly profile. Content moderation fails closed unless the production
 moderation provider is configured and responds successfully.
 
-Apply `supabase/migrations/20261004090000_safetrade_imei_verification.sql`
-before deploying SafeTrade. It adds a status and keyed-IMEI-hash index for
-lost reports and the persistent public lookup rate-limit table.
+As a coordinated release, apply
+`supabase/migrations/20261011133500_retire_imei_collection.sql` and deploy the
+updated backend and app. The migration removes stored lost-report IMEI hashes,
+removes the retired lookup quota table, and preserves non-IMEI Vault serial text
+where identifiable.
 
 The FastAPI startup applies
 `supabase/migrations/20261011000000_private_match_workflow.sql` to PostgreSQL

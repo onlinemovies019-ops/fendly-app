@@ -153,9 +153,6 @@ import androidx.fragment.app.FragmentActivity;
 import com.razorpay.PaymentData;
 import com.razorpay.PaymentResultWithDataListener;
 import com.razorpay.Checkout;
-import com.cloudinary.android.MediaManager;
-import com.cloudinary.android.callback.ErrorInfo;
-import com.cloudinary.android.callback.UploadCallback;
 import com.bumptech.glide.Glide;
 import android.net.Uri;
 import android.provider.MediaStore;
@@ -286,7 +283,6 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
     private String draftIdentifier = "";
     private String draftReportCategory = "item";
     private int reportWizardStep = 1;
-    private String draftImei = "";
     private boolean draftGuidelinesAccepted;
     private String localEmailOtp = "";
     private String draftFullName = "";
@@ -415,7 +411,6 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                 handleAppBack();
             }
         });
-        initializeCloudinary();
         getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
         if (Build.VERSION.SDK_INT >= 33 && ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
             ActivityCompat.requestPermissions(this, new String[]{Manifest.permission.POST_NOTIFICATIONS}, 100);
@@ -445,7 +440,6 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             draftIdentifier = savedInstanceState.getString("state_draft_identifier", "");
             draftReportCategory = savedInstanceState.getString("state_draft_report_category", "item");
             reportWizardStep = savedInstanceState.getInt("state_report_wizard_step", 1);
-            draftImei = savedInstanceState.getString("state_draft_imei", "");
             draftGuidelinesAccepted = savedInstanceState.getBoolean("state_draft_guidelines_accepted", false);
             draftFullName = savedInstanceState.getString("state_draft_full_name", "");
             draftEmail = savedInstanceState.getString("state_draft_email", "");
@@ -1020,7 +1014,6 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         outState.putString("state_draft_identifier", draftIdentifier);
         outState.putString("state_draft_report_category", draftReportCategory);
         outState.putInt("state_report_wizard_step", reportWizardStep);
-        outState.putString("state_draft_imei", draftImei);
         outState.putBoolean("state_draft_guidelines_accepted", draftGuidelinesAccepted);
         outState.putString("state_draft_full_name", draftFullName);
         outState.putString("state_draft_email", draftEmail);
@@ -3898,7 +3891,6 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         draftIdentifier = "";
         draftReportCategory = "item";
         reportWizardStep = 1;
-        draftImei = "";
         draftGuidelinesAccepted = false;
         selectedImage = null;
         capturedImage = null;
@@ -3953,9 +3945,6 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         TextView profile = actionButton("My profile", false);
         profile.setOnClickListener(view -> showProfile());
         addField(root, profile);
-        TextView safeTrade = actionButton(LanguageManager.profileText(this, "safe_trade_check"), false);
-        safeTrade.setOnClickListener(view -> startActivity(new Intent(this, SafeTradeCheckActivity.class)));
-        addField(root, safeTrade);
         String username = getSharedPreferences("fendly_account", MODE_PRIVATE).getString("username", "your account");
         TextView signedInText = text(translate("Signed in as") + " " + localizeProfileName(username), 14, secondaryTextColor(), Typeface.NORMAL);
         signedInText.setGravity(Gravity.CENTER);
@@ -4107,17 +4096,12 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         EditText city = field("");
         EditText date = field("");
         EditText identifier = field("");
-        EditText imei = field("");
-        imei.setInputType(InputType.TYPE_CLASS_NUMBER);
-        imei.setKeyListener(DigitsKeyListener.getInstance("0123456789"));
-        imei.setFilters(new InputFilter[] {new InputFilter.LengthFilter(15)});
         bindReportDraftField(item, draftItem, value -> draftItem = value);
         bindReportDraftField(description, draftDescription, value -> draftDescription = value);
         bindReportDraftField(location, draftLocation, value -> draftLocation = value);
         bindReportDraftField(city, draftCityTag, value -> draftCityTag = value);
         bindReportDraftField(date, draftDate, value -> draftDate = value);
         bindReportDraftField(identifier, draftIdentifier, value -> draftIdentifier = value);
-        bindReportDraftField(imei, draftImei, value -> draftImei = value);
         configureDateField(date);
 
         if (reportWizardStep == 1) {
@@ -4129,10 +4113,10 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             return;
         }
         if (reportWizardStep == 3) {
-            renderReportWizardDetailsStep(root, type, item, identifier, description, date, imei);
+            renderReportWizardDetailsStep(root, type, item, identifier, description, date);
             return;
         }
-        renderReportWizardReviewStep(root, type, item, description, location, city, date, identifier, imei);
+        renderReportWizardReviewStep(root, type, item, description, location, city, date, identifier);
     }
 
     private void addReportWizardProgress(LinearLayout root) {
@@ -4270,8 +4254,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             EditText item,
             EditText identifier,
             EditText description,
-            EditText date,
-            EditText imei
+            EditText date
     ) {
         addWizardSectionTitle(root, "Add identifying details");
         addLabeledField(root, localizeReportWizardText("Report title"), item);
@@ -4284,16 +4267,6 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                 "Describe color, brand, appearance, or other helpful details"
         ));
         addLabeledDateField(root, translate("FOUND".equalsIgnoreCase(type) ? "Date found" : "Date lost"), date);
-        if ("item".equals(draftReportCategory) && "LOST".equalsIgnoreCase(type) && editingReportId == null) {
-            addLabeledField(root, localizeReportWizardText("Optional 15-digit IMEI"), imei);
-            TextView disclosure = text(
-                    "IMEI is stored as a keyed hash for SafeTrade checks.",
-                    11,
-                    secondaryTextColor(),
-                    Typeface.NORMAL
-            );
-            addField(root, disclosure);
-        }
         addWizardNavigation(root, type, 4);
     }
 
@@ -4305,8 +4278,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             EditText location,
             EditText city,
             EditText date,
-            EditText identifier,
-            EditText imei
+            EditText identifier
     ) {
         String submissionDescription = reportDetailsForSubmission(description.getText().toString(), identifier.getText().toString());
         String locationValue = reportLocationForSubmission(location.getText().toString(), city.getText().toString());
@@ -4380,7 +4352,6 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                 if (!validateWizardReport(item, submissionDescription, locationValue, date)) return;
                 location.setText(locationValue);
                 description.setText(submissionDescription);
-                draftImei = imei.getText().toString().trim();
                 showPaymentOptions(item, description, location, date);
             });
             addField(root, payment);
@@ -4392,7 +4363,6 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             if (!validateWizardReport(item, submissionDescription, locationValue, date)) return;
             location.setText(locationValue);
             description.setText(submissionDescription);
-            draftImei = imei.getText().toString().trim();
             String paymentId = "LOST".equalsIgnoreCase(type)
                     ? getSharedPreferences("fendly_account", MODE_PRIVATE)
                             .getString("annual_subscription_payment_id", null)
@@ -4573,11 +4543,6 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         String dateValue = date.getText().toString().trim();
         if (!dateValue.isEmpty() && !validDate(dateValue)) {
             date.setError("Use a valid date in DD/MM/YYYY format");
-            return false;
-        }
-        if ("item".equals(draftReportCategory) && "LOST".equalsIgnoreCase(currentReportType)
-                && !draftImei.isEmpty() && !draftImei.matches("[0-9]{15}")) {
-            Toast.makeText(this, "IMEI must contain exactly 15 digits", Toast.LENGTH_LONG).show();
             return false;
         }
         return true;
@@ -4930,11 +4895,6 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             date.setError("Use a valid date in DD/MM/YYYY format");
             return;
         }
-        if ("LOST".equalsIgnoreCase(type) && "item".equals(draftReportCategory) && !draftImei.isEmpty()
-                && !draftImei.matches("[0-9]{15}")) {
-            Toast.makeText(this, "IMEI must contain exactly 15 digits", Toast.LENGTH_LONG).show();
-            return;
-        }
         if (editingReportId != null && type.equalsIgnoreCase(editingReportType)) {
             updateItem(type, item, description, location, date, publish, draftGuidelinesAccepted);
             return;
@@ -4961,10 +4921,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                 ItemSubmissionResult submission = postItem(
                         type, title, details, location.getText().toString().trim(),
                         date.getText().toString().trim(), latitude, longitude,
-                        images, cameraImages, token.getToken(), paymentId,
-                        "LOST".equalsIgnoreCase(type) && "item".equals(draftReportCategory)
-                                ? draftImei
-                                : "");
+                        images, cameraImages, token.getToken(), paymentId);
                 runOnUiThread(() -> {
                     publish.setEnabled(true);
                     int code = submission.statusCode;
@@ -5007,7 +4964,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         }
     }
 
-    private ItemSubmissionResult postItem(String type, String title, String description, String location, String date, double latitude, double longitude, Uri[] images, Bitmap[] cameraImages, String idToken, String paymentId, String imeiNumber) {
+    private ItemSubmissionResult postItem(String type, String title, String description, String location, String date, double latitude, double longitude, Uri[] images, Bitmap[] cameraImages, String idToken, String paymentId) {
         lastSubmissionError = null;
         try {
             List<String> imageUrls = new ArrayList<>();
@@ -5025,7 +4982,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             AiMatchService.ApiResponse response = AiMatchService.createItem(
                     title, description, imageUrl, imageUrls, type, latitude, longitude,
                     location, date, paymentId,
-                    getTtsLocaleForSelectedLanguage().getLanguage(), idToken, imeiNumber,
+                    getTtsLocaleForSelectedLanguage().getLanguage(), idToken,
                     backendReportCategory(),
                     draftGuidelinesAccepted);
             if (!response.isSuccessful()) {
@@ -6901,9 +6858,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             boolean alreadyResolved
     ) {
         CheckBox consent = new CheckBox(this);
-        consent.setText(
-                "Allow us to feature your happy reunion story on our community pages to help inspire others? (Optional)"
-        );
+        consent.setText(getString(R.string.reunion_story_optional_consent));
         consent.setChecked(report.optBoolean("allow_success_story_sharing", false));
         consent.setPadding(dp(20), dp(12), dp(20), dp(8));
         new AlertDialog.Builder(this)
@@ -7462,20 +7417,6 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             }
         }
         return 0L;
-    }
-
-    private void initializeCloudinary() {
-        String cloudName = getString(R.string.cloudinary_cloud_name).trim();
-        if (cloudName.isEmpty()) {
-            cloudName = "fendly";
-        }
-        try {
-            Map<String, Object> config = new LinkedHashMap<>();
-            config.put("cloud_name", cloudName);
-            MediaManager.init(this, config);
-        } catch (IllegalStateException ignored) {
-            // The process may already have initialized Cloudinary.
-        }
     }
 
     private void hydrateCloudProfile(Runnable onComplete) {
@@ -13740,7 +13681,6 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             if ("FOUND".equalsIgnoreCase(value) || "Found".equalsIgnoreCase(value)) return "મળેલ";
             if ("Report an item".equalsIgnoreCase(value) || "Click Lost/Found button to report".equalsIgnoreCase(value)) return "વસ્તુની રિપોર્ટ કરો";
             if ("Item name".equalsIgnoreCase(value)) return "વસ્તુનું નામ";
-            if ("IMEI Number".equalsIgnoreCase(value)) return "IMEI નંબર";
             if ("Description and identifying details".equalsIgnoreCase(value)) return "વર્ણન અને ઓળખ વિગતો";
             if ("Location or landmark".equalsIgnoreCase(value)) return "સ્થાન અથવા સીમાચિહ્ન";
             if ("Date and time".equalsIgnoreCase(value)) return "તારીખ અને સમય";
@@ -13830,7 +13770,6 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                 {"FOUND", "मिला", "सापडले", "ملا", "ಸಿಕ್ಕಿದೆ", "కనుగొన్నది", "পাওয়া গেছে", "കണ്ടെത്തി"},
                 {"Report an item", "वस्तु की रिपोर्ट करें", "वस्तूचा अहवाल द्या", "ایک چیز کی رپورٹ کریں", "ವಸ್ತುವನ್ನು ವರದಿ ಮಾಡಿ", "వస్తువును రిపోర్ట్ చేయండి", "একটি আইটেম রিপোর্ট করুন", "ഒരു ഇനം റിപ്പോർട്ട് ചെയ്യുക"},
                 {"Item name", "वस्तु का नाम", "वस्तूचे नाव", "چیز کا نام", "ವಸ್ತುವಿನ ಹೆಸರು", "వస్తువు పేరు", "আইটেমের নাম", "ഇനത്തിന്റെ പേര്"},
-                {"IMEI Number", "IMEI नंबर", "IMEI क्रमांक", "IMEI نمبر", "IMEI ಸಂಖ್ಯೆ", "IMEI నంబర్", "IMEI নম্বর", "IMEI നമ്പർ"},
                 {"Description and identifying details", "विवरण और पहचान की जानकारी", "वर्णन आणि ओळख तपशील", "تفصیل اور شناختی معلومات", "ವಿವರಣೆ ಮತ್ತು ಗುರುತಿಸುವ ವಿವರಗಳು", "వివరణ మరియు గుర్తింపు వివరాలు", "বর্ণনা ও শনাক্তকরণ তথ্য", "വിവരണം, തിരിച്ചറിയൽ വിശദാംശങ്ങൾ"},
                 {"Location or landmark", "स्थान या पहचान चिन्ह", "ठिकाण किंवा खूण", "مقام یا نشانی", "ಸ್ಥಳ ಅಥವಾ ಗುರುತು", "స్థలం లేదా గుర్తు", "অবস্থান বা চিহ্ন", "സ്ഥലം അല്ലെങ്കിൽ അടയാളം"},
                 {"Date and time", "दिनांक और समय", "दिनांक आणि वेळ", "تاریخ اور وقت", "ದಿನಾಂಕ ಮತ್ತು ಸಮಯ", "తేదీ మరియు సమయం", "তারিখ ও সময়", "തീയതിയും സമയവും"},
@@ -13980,7 +13919,6 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                 {"e.g. Brown dog", "उदाहरण: भूरा कुत्ता", "उदा. तपकिरी कुत्रा", "દા.ત. ભૂરા રંગનો કૂતરો", "যেমন: বাদামি কুকুর", "உதா: பழுப்பு நாய்", "ఉదా: గోధుమ రంగు కుక్క", "ಉದಾ: ಕಂದು ನಾಯಿ", "ഉദാ: തവിട്ടുനിറമുള്ള നായ"},
                 {"e.g. Missing person", "उदाहरण: लापता व्यक्ति", "उदा. बेपत्ता व्यक्ती", "દા.ત. ગુમ થયેલ વ્યક્તિ", "যেমন: নিখোঁজ ব্যক্তি", "உதா: காணாமல் போனவர்", "ఉదా: కనిపించని వ్యక్తి", "ಉದಾ: ಕಾಣೆಯಾದ ವ್ಯಕ್ತಿ", "ഉദാ: കാണാതായ വ്യക്തി"},
                 {"e.g. Nagpur", "उदाहरण: नागपुर", "उदा. नागपूर", "દા.ત. નાગપુર", "যেমন: নাগপুর", "உதா: நாக்பூர்", "ఉదా: నాగ్‌పూర్", "ಉದಾ: ನಾಗಪುರ", "ഉദാ: നാഗ്പൂർ"},
-                {"Optional 15-digit IMEI", "वैकल्पिक 15-अंकीय IMEI", "ऐच्छिक 15-अंकी IMEI", "વૈકલ્પિક 15-અંકનો IMEI", "ঐচ্ছিক ১৫-অঙ্কের IMEI", "விருப்பமான 15 இலக்க IMEI", "ఐచ్ఛిక 15 అంకెల IMEI", "ಐಚ್ಛಿಕ 15-ಅಂಕಿಯ IMEI", "ഐച്ഛിക 15 അക്ക IMEI"},
                 {"Report wizard", "रिपोर्ट विज़ार्ड", "अहवाल विझार्ड", "રિપોર્ટ વિઝાર્ડ", "রিপোর্ট উইজার্ড", "புகார் வழிகாட்டி", "నివేదిక విజార్డ్", "ವರದಿ ವಿಝಾರ್ಡ್", "റിപ്പോർട്ട് വിസാർഡ്"},
                 {"Describe color, brand, appearance, or other helpful details", "रंग, ब्रांड, रूप-रंग या अन्य उपयोगी विवरण बताएँ", "रंग, ब्रँड, रूप किंवा इतर उपयुक्त तपशील द्या", "રંગ, બ્રાન્ડ, દેખાવ અથવા અન્ય ઉપયોગી વિગતો આપો", "রং, ব্র্যান্ড, চেহারা বা অন্যান্য সহায়ক বিবরণ দিন", "நிறம், பிராண்ட், தோற்றம் அல்லது பிற பயனுள்ள விவரங்களை விவரிக்கவும்", "రంగు, బ్రాండ్, రూపం లేదా ఇతర ఉపయోగకరమైన వివరాలను వివరించండి", "ಬಣ್ಣ, ಬ್ರ್ಯಾಂಡ್, ರೂಪ ಅಥವಾ ಇತರ ಉಪಯುಕ್ತ ವಿವರಗಳನ್ನು ವಿವರಿಸಿ", "നിറം, ബ്രാൻഡ്, രൂപം അല്ലെങ്കിൽ മറ്റ് സഹായകരമായ വിശദാംശങ്ങൾ വിവരിക്കുക"}
         };
