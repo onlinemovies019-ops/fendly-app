@@ -6,6 +6,7 @@ from uuid import uuid4
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 from PIL import Image, UnidentifiedImageError
+from pydantic import BaseModel, Field
 from sqlalchemy import desc, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -28,13 +29,24 @@ from notifications import send_user_notification_push
 router = APIRouter(prefix="/api/adoptions", tags=["adoptions"])
 logger = logging.getLogger(__name__)
 MAX_IMAGE_BYTES = 10 * 1024 * 1024
-MAX_IMAGES = 5
+MAX_IMAGES = 3
 MIME_FORMATS = {
     "image/jpeg": ("JPEG", "jpg"),
     "image/png": ("PNG", "png"),
     "image/webp": ("WEBP", "webp"),
 }
 PHONE_PATTERN = re.compile(r"^\+?[0-9][0-9 ()-]{6,30}$")
+
+
+class AdoptionListingUpdate(BaseModel):
+    pet_name: str = Field(min_length=1, max_length=120)
+    species: str = Field(min_length=1, max_length=60)
+    breed: str | None = Field(default=None, max_length=120)
+    age_months: int = Field(ge=0, le=600)
+    gender: str = Field(min_length=1, max_length=32)
+    health_status: str = Field(min_length=1, max_length=500)
+    description: str = Field(min_length=1, max_length=5000)
+    location_city: str = Field(min_length=1, max_length=120)
 
 
 def _check_image(data: bytes, mime_type: str | None) -> str:
@@ -219,6 +231,79 @@ def get_adoption(
     if listing is None or listing.status == "adopted":
         raise HTTPException(404, "Adoption listing not found")
     return _serialize_listing(listing)
+
+
+@router.put("/{listing_id}")
+async def update_adoption(
+    listing_id: str,
+    payload: AdoptionListingUpdate,
+    session: Session = Depends(get_db),
+    uid: str = Depends(get_current_user),
+) -> dict[str, object]:
+    listing = session.get(AdoptionListing, listing_id)
+    if listing is None:
+        raise HTTPException(404, "Adoption listing not found")
+    if listing.lister_user_id != uid:
+        raise HTTPException(403, "Only the lister can edit this adoption listing")
+
+    pet_name = payload.pet_name.strip()
+    species = payload.species.strip().lower()
+    description = payload.description.strip()
+    rejection = await moderate_content(pet_name, description)
+    if rejection:
+        raise HTTPException(422, rejection)
+
+    listing.pet_name = pet_name
+    listing.species = species
+    listing.breed = payload.breed.strip() or None if payload.breed else None
+    listing.age_months = payload.age_months
+    listing.gender = payload.gender.strip()
+    listing.health_status = payload.health_status.strip()
+    listing.description = description
+    listing.location_city = payload.location_city.strip()
+    try:
+        session.commit()
+        session.refresh(listing)
+    except Exception as exc:
+        session.rollback()
+        logger.exception("Adoption listing update failed")
+        raise HTTPException(503, "Adoption listing could not be updated") from exc
+    return _serialize_listing(listing, include_owner_fields=True)
+
+
+@router.delete("/{listing_id}")
+def delete_adoption(
+    listing_id: str,
+    session: Session = Depends(get_db),
+    uid: str = Depends(get_current_user),
+) -> dict[str, str]:
+    listing = session.get(AdoptionListing, listing_id)
+    if listing is None:
+        raise HTTPException(404, "Adoption listing not found")
+    if listing.lister_user_id != uid:
+        raise HTTPException(403, "Only the lister can delete this adoption listing")
+
+    image_urls = list(listing.images or [])
+    session.query(AdoptionApplication).filter(
+        AdoptionApplication.listing_id == listing.id
+    ).delete(synchronize_session=False)
+    session.query(UserNotification).filter(
+        UserNotification.adoption_listing_id == listing.id
+    ).delete(synchronize_session=False)
+    session.delete(listing)
+    try:
+        session.commit()
+    except Exception as exc:
+        session.rollback()
+        logger.exception("Adoption listing deletion failed")
+        raise HTTPException(503, "Adoption listing could not be deleted") from exc
+
+    for image_url in image_urls:
+        try:
+            delete_adoption_image(image_url)
+        except Exception:
+            logger.exception("Could not delete adoption image after listing deletion")
+    return {"status": "deleted"}
 
 
 @router.post("", status_code=status.HTTP_201_CREATED)

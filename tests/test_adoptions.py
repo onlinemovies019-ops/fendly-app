@@ -53,7 +53,12 @@ def adoption_client(monkeypatch):
     engine.dispose()
 
 
-def _create_listing(client: TestClient, *, auto_post_social: str = "false"):
+def _create_listing(
+    client: TestClient,
+    *,
+    auto_post_social: str = "false",
+    image_count: int = 1,
+):
     response = client.post(
         "/api/adoptions",
         data={
@@ -67,9 +72,88 @@ def _create_listing(client: TestClient, *, auto_post_social: str = "false"):
             "location_city": "Pune",
             "auto_post_social": auto_post_social,
         },
-        files={"images": ("milo.jpg", io.BytesIO(b"valid image"), "image/jpeg")},
+        files=[
+            ("images", (f"milo-{index}.jpg", io.BytesIO(b"valid image"), "image/jpeg"))
+            for index in range(image_count)
+        ],
     )
     return response
+
+
+def test_adoption_listing_rejects_more_than_three_photos(adoption_client):
+    client, _, _ = adoption_client
+
+    response = _create_listing(client, image_count=4)
+
+    assert response.status_code == 422
+
+
+def test_lister_can_edit_and_delete_listing_but_other_users_cannot(adoption_client, monkeypatch):
+    client, session_factory, current_uid = adoption_client
+    deleted_images = []
+    monkeypatch.setattr(adoptions_module, "delete_adoption_image", deleted_images.append)
+
+    created = _create_listing(client)
+    assert created.status_code == 201, created.text
+    listing_id = created.json()["id"]
+    update = {
+        "pet_name": "Milo Updated",
+        "species": "dog",
+        "breed": "Indie",
+        "age_months": 20,
+        "gender": "male",
+        "health_status": "Vaccinated",
+        "description": "Friendly and active.",
+        "location_city": "Pune",
+    }
+
+    current_uid[0] = "another-user"
+    assert client.put(f"/api/adoptions/{listing_id}", json=update).status_code == 403
+    assert client.delete(f"/api/adoptions/{listing_id}").status_code == 403
+
+    current_uid[0] = "lister"
+    edited = client.put(f"/api/adoptions/{listing_id}", json=update)
+    assert edited.status_code == 200, edited.text
+    assert edited.json()["pet_name"] == "Milo Updated"
+
+    with Session(session_factory.kw["bind"]) as session:
+        session.add(
+            AdoptionApplication(
+                id="application-to-delete",
+                listing_id=listing_id,
+                applicant_user_id="applicant",
+                home_type="House",
+                pet_experience="Experienced",
+                contact_phone="+911234567890",
+                status="submitted",
+            )
+        )
+        session.add(
+            UserNotification(
+                firebase_uid="applicant",
+                found_item_id=None,
+                adoption_listing_id=listing_id,
+                notification_type="adoption_application_update",
+                title="Application update",
+                body="Test notification",
+                score=0.0,
+            )
+        )
+        session.commit()
+        expected_image_urls = list(session.get(AdoptionListing, listing_id).images)
+
+    deleted = client.delete(f"/api/adoptions/{listing_id}")
+    assert deleted.status_code == 200, deleted.text
+    assert deleted.json() == {"status": "deleted"}
+    assert deleted_images == expected_image_urls
+    with Session(session_factory.kw["bind"]) as session:
+        assert session.get(AdoptionListing, listing_id) is None
+        assert session.get(AdoptionApplication, "application-to-delete") is None
+        assert session.scalar(
+            select(UserNotification).where(
+                UserNotification.adoption_listing_id == listing_id
+            )
+        ) is None
 
 
 def test_public_feed_filters_and_hides_owner_and_social_fields(adoption_client):
