@@ -1,8 +1,10 @@
 import base64
 import hashlib
+import logging
 from types import SimpleNamespace
 
 from cryptography.fernet import Fernet
+import httpx
 
 from adoption_social import publish_adoption_listing
 from models import AdoptionListing, SocialAccount
@@ -75,3 +77,48 @@ def test_opted_in_listing_reuses_connected_meta_accounts_for_both_publications(m
     assert requests[0][1]["url"] == "https://storage.example/pet.jpg"
     assert requests[1][1]["image_url"] == "https://storage.example/pet.jpg"
     assert requests[2][1]["creation_id"] == "instagram-container"
+
+
+def test_meta_api_failures_include_graph_error_in_render_logs(monkeypatch, caplog):
+    monkeypatch.setenv("META_FACEBOOK_PAGE_ID", "page-id")
+    monkeypatch.setenv("META_INSTAGRAM_ACCOUNT_ID", "instagram-id")
+    monkeypatch.setenv("META_PAGE_ACCESS_TOKEN", "test-token")
+
+    def fail_post(endpoint, *, data, timeout):
+        request = httpx.Request("POST", endpoint)
+        response = httpx.Response(
+            400,
+            request=request,
+            json={"error": {"message": "Meta permission denied"}},
+        )
+        raise httpx.HTTPStatusError(
+            "Meta request failed",
+            request=request,
+            response=response,
+        )
+
+    monkeypatch.setattr("adoption_social.httpx.post", fail_post)
+    listing = AdoptionListing(
+        id="listing-2",
+        lister_user_id="owner",
+        pet_name="Milo",
+        species="dog",
+        breed="",
+        age_months=18,
+        gender="male",
+        health_status="Vaccinated",
+        description="Friendly and active.",
+        location_city="Pune",
+        images=["https://storage.example/pet.jpg"],
+        auto_post_social=True,
+    )
+
+    with caplog.at_level(logging.WARNING, logger="adoption_social"):
+        _, errors = publish_adoption_listing(listing, lambda *_: None)
+
+    assert errors == [
+        "Facebook: Meta permission denied",
+        "Instagram: Meta permission denied",
+    ]
+    assert "Facebook publishing failed: Meta permission denied" in caplog.text
+    assert "Instagram publishing failed: Meta permission denied" in caplog.text

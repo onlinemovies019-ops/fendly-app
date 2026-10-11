@@ -125,7 +125,11 @@ def publish_adoption_listing(
             on_publication("facebook", publications["facebook"])
         except RuntimeError as exc:
             errors.append(f"Facebook: {exc}")
-            logger.warning("Adoption listing %s Facebook publishing failed", listing.id)
+            logger.warning(
+                "Adoption listing %s Facebook publishing failed: %s",
+                listing.id,
+                str(exc)[:400],
+            )
     if not listing.instagram_post_id:
         try:
             credentials = _connection_credentials("instagram", instagram_account)
@@ -153,6 +157,10 @@ def publish_adoption_listing(
             on_publication("instagram", publications["instagram"])
         except RuntimeError as exc:
             errors.append(f"Instagram: {exc}")
-            logger.warning("Adoption listing %s Instagram publishing failed", listing.id)
+            logger.warning(
+                "Adoption listing %s Instagram publishing failed: %s",
+                listing.id,
+                str(exc)[:400],
+            )
 
     return publications, errors
