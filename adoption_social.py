@@ -1,12 +1,15 @@
+import base64
+import hashlib
 import logging
 import os
 import re
 from collections.abc import Callable
 from urllib.parse import urlsplit
 
+from cryptography.fernet import Fernet, InvalidToken
 import httpx
 
-from models import AdoptionListing
+from models import AdoptionListing, SocialAccount
 
 
 logger = logging.getLogger(__name__)
@@ -14,20 +17,45 @@ DEFAULT_GRAPH_VERSION = "v23.0"
 GRAPH_VERSION_PATTERN = re.compile(r"^v\d{1,2}\.0$")
 
 
-def _graph_configuration() -> tuple[str, str, str, str, str] | None:
-    page_id = os.getenv("META_FACEBOOK_PAGE_ID", "").strip()
-    instagram_id = os.getenv("META_INSTAGRAM_ACCOUNT_ID", "").strip()
-    access_token = os.getenv("META_PAGE_ACCESS_TOKEN", "").strip()
-    download_url = os.getenv("APP_DOWNLOAD_URL", "").strip()
+def _graph_configuration() -> tuple[str, str]:
+    download_url = os.getenv(
+        "APP_DOWNLOAD_URL",
+        "https://play.google.com/store/apps/details?id=com.example.fendly",
+    ).strip()
     graph_version = os.getenv("META_GRAPH_API_VERSION", DEFAULT_GRAPH_VERSION).strip()
-    if not (page_id and instagram_id and access_token and download_url):
-        return None
     parsed_download_url = urlsplit(download_url)
     if parsed_download_url.scheme != "https" or not parsed_download_url.netloc:
         raise ValueError("APP_DOWNLOAD_URL must be an HTTPS URL")
     if not GRAPH_VERSION_PATTERN.fullmatch(graph_version):
         raise ValueError("META_GRAPH_API_VERSION must look like v23.0")
-    return page_id, instagram_id, access_token, download_url, graph_version
+    return download_url, graph_version
+
+
+def _decrypt_connected_token(encrypted_token: str) -> str:
+    secret = os.getenv("APP_SECRET_KEY", "")
+    if len(secret) < 32:
+        raise RuntimeError("APP_SECRET_KEY is not configured for the saved Meta connection")
+    key = base64.urlsafe_b64encode(hashlib.sha256(secret.encode("utf-8")).digest())
+    try:
+        return Fernet(key).decrypt(encrypted_token.encode("ascii")).decode("utf-8")
+    except (InvalidToken, UnicodeError, ValueError) as exc:
+        raise RuntimeError("The saved Meta connection is invalid; reconnect Meta") from exc
+
+
+def _connection_credentials(
+    provider: str,
+    account: SocialAccount | None,
+) -> tuple[str, str] | None:
+    direct_id = os.getenv(
+        "META_FACEBOOK_PAGE_ID" if provider == "facebook" else "META_INSTAGRAM_ACCOUNT_ID",
+        "",
+    ).strip()
+    direct_token = os.getenv("META_PAGE_ACCESS_TOKEN", "").strip()
+    if direct_id and direct_token:
+        return direct_id, direct_token
+    if account is None or not account.account_id or not account.access_token_encrypted:
+        return None
+    return account.account_id, _decrypt_connected_token(account.access_token_encrypted)
 
 
 def _graph_post(endpoint: str, payload: dict[str, str]) -> str:
@@ -53,20 +81,17 @@ def _graph_post(endpoint: str, payload: dict[str, str]) -> str:
 def publish_adoption_listing(
     listing: AdoptionListing,
     on_publication: Callable[[str, str], None],
+    *,
+    facebook_account: SocialAccount | None = None,
+    instagram_account: SocialAccount | None = None,
 ) -> tuple[dict[str, str], list[str]]:
     try:
-        config = _graph_configuration()
+        download_url, graph_version = _graph_configuration()
     except ValueError as exc:
         return {}, [str(exc)]
-    if config is None:
-        return {}, [
-            "Meta auto-posting is not configured; set the Facebook Page ID, "
-            "Instagram account ID, Page access token, and app download URL."
-        ]
     if not listing.images:
         return {}, ["Add at least one public pet photo before requesting social posting."]
 
-    page_id, instagram_id, access_token, download_url, graph_version = config
     image_url = listing.images[0]
     caption = (
         f"{listing.pet_name} is looking for a loving home!\n"
@@ -82,10 +107,13 @@ def publish_adoption_listing(
 
     publications: dict[str, str] = {}
     errors = []
-    page_endpoint = f"https://graph.facebook.com/{graph_version}/{page_id}/photos"
-    instagram_media_endpoint = f"https://graph.facebook.com/{graph_version}/{instagram_id}/media"
     if not listing.facebook_post_id:
         try:
+            credentials = _connection_credentials("facebook", facebook_account)
+            if credentials is None:
+                raise RuntimeError("No connected Facebook Page is available for adoption posts")
+            page_id, access_token = credentials
+            page_endpoint = f"https://graph.facebook.com/{graph_version}/{page_id}/photos"
             publications["facebook"] = _graph_post(
                 page_endpoint,
                 {
@@ -100,6 +128,13 @@ def publish_adoption_listing(
             logger.warning("Adoption listing %s Facebook publishing failed", listing.id)
     if not listing.instagram_post_id:
         try:
+            credentials = _connection_credentials("instagram", instagram_account)
+            if credentials is None:
+                raise RuntimeError("No connected Instagram account is available for adoption posts")
+            instagram_id, access_token = credentials
+            instagram_media_endpoint = (
+                f"https://graph.facebook.com/{graph_version}/{instagram_id}/media"
+            )
             container_id = _graph_post(
                 instagram_media_endpoint,
                 {

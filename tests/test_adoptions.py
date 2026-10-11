@@ -210,4 +210,4 @@ def test_social_opt_in_failure_does_not_remove_public_listing(adoption_client):
         listing = session.get(AdoptionListing, response.json()["id"])
     assert listing is not None
     assert listing.auto_post_social is True
-    assert "not configured" in listing.social_post_error.lower()
+    assert "no connected facebook page" in listing.social_post_error.lower()

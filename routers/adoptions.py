@@ -14,7 +14,13 @@ from adoption_social import publish_adoption_listing
 from adoption_storage import delete_adoption_image, store_adoption_image
 from auth import get_current_user
 from database import get_db
-from models import AdoptionApplication, AdoptionListing, User, UserNotification
+from models import (
+    AdoptionApplication,
+    AdoptionListing,
+    SocialAccount,
+    User,
+    UserNotification,
+)
 from moderation import moderate_content
 from notifications import send_user_notification_push
 
@@ -98,7 +104,18 @@ def _publish_listing_social(listing: AdoptionListing, session: Session) -> None:
             listing.instagram_post_id = external_id
         session.commit()
 
-    publications, errors = publish_adoption_listing(listing, record_publication)
+    accounts = {
+        account.provider: account
+        for account in session.scalars(
+            select(SocialAccount).where(SocialAccount.provider.in_(("facebook", "instagram")))
+        ).all()
+    }
+    publications, errors = publish_adoption_listing(
+        listing,
+        record_publication,
+        facebook_account=accounts.get("facebook"),
+        instagram_account=accounts.get("instagram"),
+    )
     listing.facebook_post_id = publications.get("facebook", listing.facebook_post_id)
     listing.instagram_post_id = publications.get("instagram", listing.instagram_post_id)
     if errors:
