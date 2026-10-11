@@ -287,7 +287,6 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
     private String draftReportCategory = "item";
     private int reportWizardStep = 1;
     private String draftImei = "";
-    private boolean draftSocialShareConsent;
     private boolean draftGuidelinesAccepted;
     private String localEmailOtp = "";
     private String draftFullName = "";
@@ -319,8 +318,6 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
     private static final int PAGE_ADMIN = 7;
     private static final int PAGE_ADMIN_SUBSCRIPTIONS = 8;
     private boolean adminAlertsAutoShownThisVisit;
-    private boolean adminSocialPageOpen;
-    private boolean socialAuthorizationPending;
     private int pendingNotificationCount = 0;
     private TextView pendingNotificationBadge;
     private String adminReportFilter = "";
@@ -449,7 +446,6 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             draftReportCategory = savedInstanceState.getString("state_draft_report_category", "item");
             reportWizardStep = savedInstanceState.getInt("state_report_wizard_step", 1);
             draftImei = savedInstanceState.getString("state_draft_imei", "");
-            draftSocialShareConsent = savedInstanceState.getBoolean("state_draft_social_share_consent", false);
             draftGuidelinesAccepted = savedInstanceState.getBoolean("state_draft_guidelines_accepted", false);
             draftFullName = savedInstanceState.getString("state_draft_full_name", "");
             draftEmail = savedInstanceState.getString("state_draft_email", "");
@@ -985,14 +981,6 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                     .remove("draft_city")
                     .apply();
         }
-        if (socialAuthorizationPending && adminSocialPageOpen && currentPage == PAGE_ADMIN) {
-            socialAuthorizationPending = false;
-            new Handler(Looper.getMainLooper()).postDelayed(() -> {
-                if (adminSocialPageOpen && currentPage == PAGE_ADMIN) {
-                    showAdminSocialPublishingPage();
-                }
-            }, 500);
-        }
         if (currentPage == PAGE_PROFILE) {
             if (visibleFirstName != null || visibleAvatar != null || visibleEmail != null) {
                 refreshProfileViewInPlace(false);
@@ -1033,7 +1021,6 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         outState.putString("state_draft_report_category", draftReportCategory);
         outState.putInt("state_report_wizard_step", reportWizardStep);
         outState.putString("state_draft_imei", draftImei);
-        outState.putBoolean("state_draft_social_share_consent", draftSocialShareConsent);
         outState.putBoolean("state_draft_guidelines_accepted", draftGuidelinesAccepted);
         outState.putString("state_draft_full_name", draftFullName);
         outState.putString("state_draft_email", draftEmail);
@@ -1105,10 +1092,6 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             return;
         }
         if (currentPage == PAGE_ADMIN) {
-            if (adminSocialPageOpen) {
-                showAdminDashboard();
-                return;
-            }
             buildScreen();
             return;
         }
@@ -3916,7 +3899,6 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         draftReportCategory = "item";
         reportWizardStep = 1;
         draftImei = "";
-        draftSocialShareConsent = false;
         draftGuidelinesAccepted = false;
         selectedImage = null;
         capturedImage = null;
@@ -4339,25 +4321,6 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         addWizardSummaryRow(root, "Location", locationValue);
         addWizardSummaryRow(root, "Date", date.getText().toString().trim());
         addWizardSummaryRow(root, "Identifying details", submissionDescription);
-        if (editingReportId == null) {
-            CheckBox shareConsent = new CheckBox(this);
-            shareConsent.setText(localizeReportWizardText(
-                    "Allow Fendly to share this report on its Facebook and Instagram accounts"
-            ));
-            shareConsent.setTextColor(primaryTextColor());
-            shareConsent.setChecked(draftSocialShareConsent);
-            shareConsent.setOnCheckedChangeListener((button, checked) -> draftSocialShareConsent = checked);
-            addField(root, shareConsent);
-            TextView shareDisclosure = text(
-                    localizeReportWizardText(
-                            "Optional. Report type and title may be public. Facebook/Instagram may receive the generated poster and selected photo. Details, location, contact info and IMEI stay private. Instagram needs a public JPEG poster; Reels are not supported."
-                    ),
-                    12,
-                    secondaryTextColor(),
-                    Typeface.NORMAL
-            );
-            addField(root, shareDisclosure);
-        }
 
         CheckBox guidelinesConsent = new CheckBox(this);
         guidelinesConsent.setText(localizeReportWizardText(
@@ -4994,7 +4957,6 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                 publish.setEnabled(true);
                 return;
             }
-            boolean shareConsent = draftSocialShareConsent;
             network.execute(() -> {
                 ItemSubmissionResult submission = postItem(
                         type, title, details, location.getText().toString().trim(),
@@ -5002,8 +4964,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                         images, cameraImages, token.getToken(), paymentId,
                         "LOST".equalsIgnoreCase(type) && "item".equals(draftReportCategory)
                                 ? draftImei
-                                : "",
-                        shareConsent);
+                                : "");
                 runOnUiThread(() -> {
                     publish.setEnabled(true);
                     int code = submission.statusCode;
@@ -5046,7 +5007,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         }
     }
 
-    private ItemSubmissionResult postItem(String type, String title, String description, String location, String date, double latitude, double longitude, Uri[] images, Bitmap[] cameraImages, String idToken, String paymentId, String imeiNumber, boolean socialShareConsent) {
+    private ItemSubmissionResult postItem(String type, String title, String description, String location, String date, double latitude, double longitude, Uri[] images, Bitmap[] cameraImages, String idToken, String paymentId, String imeiNumber) {
         lastSubmissionError = null;
         try {
             List<String> imageUrls = new ArrayList<>();
@@ -5065,7 +5026,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                     title, description, imageUrl, imageUrls, type, latitude, longitude,
                     location, date, paymentId,
                     getTtsLocaleForSelectedLanguage().getLanguage(), idToken, imeiNumber,
-                    backendReportCategory(), socialShareConsent,
+                    backendReportCategory(),
                     draftGuidelinesAccepted);
             if (!response.isSuccessful()) {
                 lastSubmissionError = "Could not save report (" + response.getStatusCode() + "): " + response.getErrorMessage();
@@ -10483,7 +10444,6 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
 
     private void showAdminDashboard() {
         currentPage = PAGE_ADMIN;
-        adminSocialPageOpen = false;
         adminEnglishUi = true;
         screenRenderer = this::showAdminDashboard;
         LinearLayout root = screenBase("");
@@ -10494,9 +10454,14 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         adminTitle.setTextAlignment(View.TEXT_ALIGNMENT_CENTER);
         root.addView(adminTitle, contentParams(-1, dp(28), dp(4)));
 
-        TextView socialPublishingButton = actionButton("Manage social accounts and posts", false);
-        socialPublishingButton.setOnClickListener(view -> showAdminSocialPublishingPage());
-        root.addView(socialPublishingButton, contentParams(-1, dp(44), dp(10)));
+        TextView removeLegacyPostsButton = actionButton("Remove old Fendly social posts", false);
+        removeLegacyPostsButton.setOnClickListener(view -> confirmLegacySocialPostRemoval());
+        root.addView(removeLegacyPostsButton, contentParams(-1, dp(44), dp(10)));
+
+        TextView migrateLegacyImagesButton = actionButton(
+                "Move old report images to private storage", false);
+        migrateLegacyImagesButton.setOnClickListener(view -> confirmPrivateImageMigration());
+        root.addView(migrateLegacyImagesButton, contentParams(-1, dp(44), dp(8)));
 
         LinearLayout overview = new LinearLayout(this);
         overview.setOrientation(LinearLayout.HORIZONTAL);
@@ -10587,615 +10552,200 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         });
     }
 
-    private void showAdminSocialPublishingPage() {
-        currentPage = PAGE_ADMIN;
-        adminSocialPageOpen = true;
-        adminEnglishUi = true;
-        screenRenderer = this::showAdminSocialPublishingPage;
-        LinearLayout root = screenBase("");
-
-        TextView backButton = actionButton("Back to admin workspace", false);
-        backButton.setOnClickListener(view -> showAdminDashboard());
-        root.addView(backButton, contentParams(-1, dp(42), dp(10)));
-
-        TextView title = text("Social publishing", 20, primaryTextColor(), Typeface.NORMAL);
-        title.setGravity(Gravity.CENTER);
-        root.addView(title, contentParams(-1, dp(30), dp(6)));
-        TextView note = text(
-                "Connect Fendly brand accounts here. Reporters still opt in separately for each report.",
-                12, secondaryTextColor(), Typeface.NORMAL);
-        note.setGravity(Gravity.CENTER);
-        root.addView(note, contentParams(-1, -2, dp(12)));
-
-        TextView message = text("", 12, secondaryTextColor(), Typeface.NORMAL);
-        root.addView(message, contentParams(-1, -2, dp(8)));
-        LinearLayout channels = new LinearLayout(this);
-        channels.setOrientation(LinearLayout.VERTICAL);
-        root.addView(channels, contentParams(-1, -2, dp(16)));
-
-        TextView historyTitle = text("Recent publication jobs", 15, primaryTextColor(), Typeface.NORMAL);
-        root.addView(historyTitle, contentParams(-1, dp(24), dp(8)));
-        LinearLayout history = new LinearLayout(this);
-        history.setOrientation(LinearLayout.VERTICAL);
-        root.addView(history, contentParams(-1, -2, dp(12)));
-
-        TextView refreshButton = actionButton("Refresh status", true);
-        refreshButton.setOnClickListener(view ->
-                loadAdminSocialPublishing(channels, history, message, true));
-        root.addView(refreshButton, contentParams(-1, dp(44), dp(8)));
-        loadAdminSocialPublishing(channels, history, message, true);
+    private void confirmLegacySocialPostRemoval() {
+        new AlertDialog.Builder(this)
+                .setTitle("Remove old social posts?")
+                .setMessage(
+                        "Fendly will search its connected Meta accounts for posts linked to old reports "
+                                + "and remove them. Keep the account connected until cleanup completes."
+                )
+                .setNegativeButton("Cancel", null)
+                .setPositiveButton("Remove posts", (dialog, which) -> removeLegacySocialPostBatch())
+                .show();
     }
 
-    private void loadAdminSocialPublishing(
-            LinearLayout channels,
-            LinearLayout history,
-            TextView message,
-            boolean refreshPlatformStatus
-    ) {
+    private void removeLegacySocialPostBatch() {
         FirebaseUser adminUser = FirebaseAuth.getInstance().getCurrentUser();
         if (adminUser == null) {
-            message.setText(translate("Sign in to manage Fendly's social accounts."));
-            return;
-        }
-        message.setText(translate("Loading social account status…"));
-        adminUser.getIdToken(false).addOnSuccessListener(token -> network.execute(() -> {
-            AuthorizedResponse statusResponse = getAuthorizedResponse(
-                    "/api/social/status", token.getToken());
-            AuthorizedResponse historyResponse = refreshPlatformStatus
-                    ? postAuthorizedResponse("/api/social/publications/refresh?limit=20", token.getToken())
-                    : getAuthorizedResponse("/api/social/publications?limit=20", token.getToken());
-            runOnUiThread(() -> {
-                if (!adminSocialPageOpen || currentPage != PAGE_ADMIN) return;
-                if (statusResponse.statusCode != 200) {
-                    message.setText(socialPublishingRequestError(statusResponse));
-                    return;
-                }
-                channels.removeAllViews();
-                history.removeAllViews();
-                try {
-                    JSONObject status = new JSONObject(statusResponse.body);
-                    boolean facebookConnected = socialProviderConnected(status, "facebook");
-                    boolean instagramConnected = socialProviderConnected(status, "instagram");
-                    addSocialMetaProviderRow(
-                            channels,
-                            facebookConnected,
-                            socialProviderName(status, "facebook"),
-                            instagramConnected,
-                            socialProviderName(status, "instagram")
-                    );
-                    message.setText(translate(
-                            "Generated posters can be sent to Facebook/Instagram. "
-                                    + "Failed or interrupted jobs are not automatically retried."
-                    ));
-                } catch (Exception error) {
-                    Log.e("SOCIAL_PUBLISHING", "Could not parse social account status", error);
-                    message.setText(translate("The server returned invalid social account status."));
-                    return;
-                }
-
-                if (historyResponse.statusCode != 200) {
-                    addSocialHistoryEntry(history, socialPublishingRequestError(historyResponse));
-                    return;
-                }
-                try {
-                    JSONArray publications = new JSONArray(historyResponse.body);
-                    Map<String, ArrayList<JSONObject>> groupedPublications = new LinkedHashMap<>();
-                    for (int index = 0; index < publications.length(); index++) {
-                        JSONObject item = publications.getJSONObject(index);
-                        String provider = item.optString("provider", "")
-                                .toLowerCase(Locale.ROOT);
-                        if (!"facebook".equals(provider) && !"instagram".equals(provider)) {
-                            continue;
-                        }
-                        String reportId = item.optString("report_id", "").trim();
-                        String groupKey = reportId.isEmpty() ? "unavailable-" + index : reportId;
-                        if (!groupedPublications.containsKey(groupKey)) {
-                            groupedPublications.put(groupKey, new ArrayList<>());
-                        }
-                        groupedPublications.get(groupKey).add(item);
-                    }
-                    if (groupedPublications.isEmpty()) {
-                        addSocialHistoryEntry(history, "No Facebook or Instagram publication jobs yet.");
-                    } else {
-                        final LinearLayout[] expandedPanel = {null};
-                        for (Map.Entry<String, ArrayList<JSONObject>> entry
-                                : groupedPublications.entrySet()) {
-                            addSocialPublicationGroup(
-                                    history,
-                                    entry.getValue(),
-                                    expandedPanel
-                            );
-                        }
-                    }
-                } catch (Exception error) {
-                    Log.e("SOCIAL_PUBLISHING", "Could not parse publication history", error);
-                    addSocialHistoryEntry(history, "The server returned invalid publication history.");
-                }
-            });
-        })).addOnFailureListener(error -> runOnUiThread(() -> {
-            Log.e("SOCIAL_PUBLISHING", "Could not retrieve Firebase admin token", error);
-            message.setText(translate("Could not verify your Fendly sign-in. Please try again."));
-        }));
-    }
-
-    private void addSocialPublicationGroup(
-            LinearLayout parent,
-            List<JSONObject> publications,
-            LinearLayout[] expandedPanel
-    ) {
-        JSONObject firstPublication = publications.get(0);
-        String reportId = firstPublication.optString("report_id", "unavailable");
-        String reportType = firstPublication.optString("report_type", "report")
-                .toUpperCase(Locale.ROOT);
-        String reportTitle = firstPublication.optString("report_title", "").trim();
-        String reportCategory = firstPublication.optString("report_category", "").trim();
-        String subject = socialPublicationSubject(reportCategory, reportTitle);
-        String panelTitle = "found".equalsIgnoreCase(reportType)
-                ? "Found " + lowercaseSocialSubject(subject) + " report"
-                : subject + " lost report";
-
-        LinearLayout card = new LinearLayout(this);
-        card.setOrientation(LinearLayout.VERTICAL);
-        card.setPadding(dp(12), dp(10), dp(12), dp(10));
-        card.setBackground(roundWithStroke(surfaceColor(), 12, borderColor()));
-        LinearLayout.LayoutParams cardParams = new LinearLayout.LayoutParams(-1, -2);
-        cardParams.bottomMargin = dp(8);
-        parent.addView(card, cardParams);
-
-        LinearLayout header = new LinearLayout(this);
-        header.setGravity(Gravity.CENTER_VERTICAL);
-        card.addView(header, new LinearLayout.LayoutParams(-1, -2));
-        TextView title = text(
-                panelTitle,
-                13,
-                primaryTextColor(),
-                Typeface.BOLD
-        );
-        header.addView(title, new LinearLayout.LayoutParams(0, -2, 1));
-        TextView expandIcon = text("＋", 18, secondaryTextColor(), Typeface.NORMAL);
-        expandIcon.setGravity(Gravity.CENTER);
-        header.addView(expandIcon, new LinearLayout.LayoutParams(dp(28), dp(28)));
-
-        LinearLayout details = new LinearLayout(this);
-        details.setOrientation(LinearLayout.VERTICAL);
-        details.setVisibility(View.GONE);
-        LinearLayout.LayoutParams detailsParams = new LinearLayout.LayoutParams(-1, -2);
-        detailsParams.topMargin = dp(8);
-        card.addView(details, detailsParams);
-
-        TextView reportIdRow = text(
-                "Report ID: " + reportId,
-                11,
-                secondaryTextColor(),
-                Typeface.NORMAL
-        );
-        details.addView(reportIdRow, new LinearLayout.LayoutParams(-1, -2));
-
-        String posterUrl = "";
-        String reportImageUrl = "";
-        for (JSONObject publication : publications) {
-            String provider = publication.optString("provider", "").toLowerCase(Locale.ROOT);
-            String platformStatus = publication.optString("platform_status", "not_checked");
-            String jobStatus = publication.optString("status", "unknown");
-            if ("available".equals(platformStatus)) {
-                jobStatus += " (present in platform feed)";
-            } else if ("unavailable".equals(platformStatus)) {
-                jobStatus = "not found (deleted or inaccessible)";
-            } else if ("check_failed".equals(platformStatus)) {
-                jobStatus = "platform status unknown";
-            }
-            String rowText = provider + " · " + jobStatus;
-            String error = publication.optString("last_error", "");
-            if (!error.isEmpty()) rowText += "\n" + error;
-            TextView providerRow = text(rowText, 12, secondaryTextColor(), Typeface.NORMAL);
-            providerRow.setPadding(dp(8), dp(7), dp(8), dp(7));
-            providerRow.setBackground(roundWithStroke(backgroundColor(), 8, borderColor()));
-            LinearLayout.LayoutParams providerParams = new LinearLayout.LayoutParams(-1, -2);
-            providerParams.topMargin = dp(6);
-            details.addView(providerRow, providerParams);
-            if (posterUrl.isEmpty()) {
-                posterUrl = publication.optString("poster_url", "").trim();
-            }
-            if (posterUrl.isEmpty()) {
-                posterUrl = publication.optString("published_image_url", "").trim();
-            }
-            if (reportImageUrl.isEmpty()) {
-                reportImageUrl = publication.optString("report_image_url", "").trim();
-            }
-        }
-
-        final boolean isPublishedPosterAvailable = !posterUrl.isEmpty();
-        final String previewUrl = isPublishedPosterAvailable ? posterUrl : reportImageUrl;
-        if (!previewUrl.isEmpty()) {
-            TextView previewLabel = text(
-                    isPublishedPosterAvailable
-                            ? "Published post image · tap to enlarge"
-                            : "Report photo preview · tap to enlarge",
-                    11,
-                    secondaryTextColor(),
-                    Typeface.NORMAL
-            );
-            LinearLayout.LayoutParams labelParams = new LinearLayout.LayoutParams(-1, -2);
-            labelParams.topMargin = dp(10);
-            details.addView(previewLabel, labelParams);
-
-            ImageView thumbnail = new ImageView(this);
-            thumbnail.setScaleType(ImageView.ScaleType.CENTER_CROP);
-            thumbnail.setContentDescription(isPublishedPosterAvailable
-                    ? "Preview the published social post image"
-                    : "Preview the report photo");
-            thumbnail.setBackground(roundWithStroke(backgroundColor(), 8, borderColor()));
-            thumbnail.setClipToOutline(true);
-            LinearLayout.LayoutParams thumbnailParams =
-                    new LinearLayout.LayoutParams(dp(112), dp(144));
-            thumbnailParams.topMargin = dp(6);
-            details.addView(thumbnail, thumbnailParams);
-            Glide.with(this)
-                    .load(previewUrl)
-                    .placeholder(new ColorDrawable(Color.argb(100, 190, 190, 190)))
-                    .error(new ColorDrawable(Color.argb(100, 190, 190, 190)))
-                    .into(thumbnail);
-            thumbnail.setOnClickListener(view -> showSocialPosterPreview(previewUrl));
-        }
-
-        View.OnClickListener togglePanel = view -> {
-            if (expandedPanel[0] == details) {
-                details.setVisibility(View.GONE);
-                expandIcon.setText("＋");
-                expandedPanel[0] = null;
-                return;
-            }
-            if (expandedPanel[0] != null) {
-                expandedPanel[0].setVisibility(View.GONE);
-                View oldCard = (View) expandedPanel[0].getParent();
-                View oldHeader = oldCard instanceof LinearLayout
-                        ? ((LinearLayout) oldCard).getChildAt(0) : null;
-                if (oldHeader instanceof LinearLayout) {
-                    View oldIcon = ((LinearLayout) oldHeader).getChildAt(1);
-                    if (oldIcon instanceof TextView) ((TextView) oldIcon).setText("＋");
-                }
-            }
-            details.setVisibility(View.VISIBLE);
-            expandIcon.setText("−");
-            expandedPanel[0] = details;
-        };
-        header.setOnClickListener(togglePanel);
-    }
-
-    private String socialPublicationSubject(String category, String title) {
-        String normalizedTitle = title.toLowerCase(Locale.ROOT);
-        String[][] namedSubjects = {
-                {"cat", "cat"}, {"kitten", "cat"}, {"dog", "dog"}, {"puppy", "dog"},
-                {"cow", "cow"}, {"goat", "goat"}, {"horse", "horse"},
-                {"bird", "bird"}, {"parrot", "parrot"}, {"rabbit", "rabbit"},
-                {"fish", "fish"}, {"people", "People"}, {"person", "People"},
-                {"woman", "People"}, {"man", "People"}, {"child", "People"},
-                {"phone", "phone"}, {"wallet", "wallet"}, {"bag", "bag"},
-                {"bicycle", "bicycle"}, {"cycle", "bicycle"}, {"car", "car"},
-                {"laptop", "laptop"}
-        };
-        for (String[] subject : namedSubjects) {
-            if (containsSocialSubject(normalizedTitle, subject[0])) {
-                return "People".equals(subject[1])
-                        ? subject[1] : capitalizeSocialSubject(subject[1]);
-            }
-        }
-        String normalizedCategory = category.trim().toLowerCase(Locale.ROOT);
-        if (normalizedCategory.contains("people") || normalizedCategory.contains("person")) {
-            return "People";
-        }
-        if (normalizedCategory.contains("animal")) return "Animal";
-        if (!normalizedCategory.isEmpty() && !"other".equals(normalizedCategory)) {
-            String categorySubject = normalizedCategory.replaceAll("\\s+", " ").trim();
-            if (categorySubject.contains("accessories")) return "Item";
-            return capitalizeSocialSubject(categorySubject);
-        }
-        String cleanTitle = title.trim()
-                .replaceAll("(?i)\\b(lost|found|missing|report|item)\\b", " ")
-                .replaceAll("[^\\p{L}\\p{N} ]", " ")
-                .replaceAll("\\s+", " ")
-                .trim();
-        if (cleanTitle.isEmpty()) return "Item";
-        String[] words = cleanTitle.split(" ");
-        return capitalizeSocialSubject(words[0]);
-    }
-
-    private boolean containsSocialSubject(String value, String subject) {
-        return value.matches("(?s).*\\b" + java.util.regex.Pattern.quote(subject) + "\\b.*");
-    }
-
-    private String capitalizeSocialSubject(String subject) {
-        if (subject.isEmpty()) return subject;
-        return subject.substring(0, 1).toUpperCase(Locale.ROOT) + subject.substring(1);
-    }
-
-    private String lowercaseSocialSubject(String subject) {
-        if (subject.isEmpty()) return subject;
-        if ("People".equals(subject)) return "people";
-        return subject.substring(0, 1).toLowerCase(Locale.ROOT) + subject.substring(1);
-    }
-
-    private void showSocialPosterPreview(String posterUrl) {
-        Dialog dialog = new Dialog(this, android.R.style.Theme_Black_NoTitleBar_Fullscreen);
-        dialog.setCanceledOnTouchOutside(true);
-
-        FrameLayout container = new FrameLayout(this);
-        container.setBackgroundColor(Color.BLACK);
-        ImageView preview = new ImageView(this);
-        preview.setScaleType(ImageView.ScaleType.FIT_CENTER);
-        container.addView(preview, new FrameLayout.LayoutParams(-1, -1));
-        Glide.with(this)
-                .load(posterUrl)
-                .placeholder(new ColorDrawable(Color.BLACK))
-                .error(new ColorDrawable(Color.BLACK))
-                .into(preview);
-        preview.setOnClickListener(view -> dialog.dismiss());
-
-        ImageView close = new ImageView(this);
-        close.setImageResource(android.R.drawable.ic_menu_close_clear_cancel);
-        close.setColorFilter(Color.WHITE);
-        close.setBackground(roundWithStroke(Color.argb(180, 0, 0, 0), 18, Color.WHITE));
-        close.setPadding(dp(4), dp(4), dp(4), dp(4));
-        FrameLayout.LayoutParams closeParams =
-                new FrameLayout.LayoutParams(dp(32), dp(32), Gravity.TOP | Gravity.END);
-        closeParams.setMargins(dp(12), dp(12), dp(12), 0);
-        close.setOnClickListener(view -> dialog.dismiss());
-        container.addView(close, closeParams);
-
-        dialog.setContentView(container);
-        dialog.show();
-        Window window = dialog.getWindow();
-        if (window != null) {
-            window.setLayout(-1, -1);
-            window.setFlags(
-                    WindowManager.LayoutParams.FLAG_FULLSCREEN,
-                    WindowManager.LayoutParams.FLAG_FULLSCREEN
-            );
-            window.clearFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND);
-        }
-    }
-
-    private boolean socialProviderConnected(JSONObject status, String provider) {
-        return status.optJSONObject(provider) != null
-                && status.optJSONObject(provider).optBoolean("connected", false);
-    }
-
-    private String socialProviderName(JSONObject status, String provider) {
-        JSONObject account = status.optJSONObject(provider);
-        return account == null ? "" : account.optString("account_name", "");
-    }
-
-    private void addSocialMetaProviderRow(
-            LinearLayout parent,
-            boolean facebookConnected,
-            String facebookName,
-            boolean instagramConnected,
-            String instagramName
-    ) {
-        LinearLayout card = new LinearLayout(this);
-        card.setOrientation(LinearLayout.VERTICAL);
-        card.setPadding(dp(16), dp(14), dp(16), dp(14));
-        card.setBackground(roundWithStroke(surfaceColor(), 16, borderColor()));
-
-        LinearLayout header = new LinearLayout(this);
-        header.setGravity(Gravity.CENTER_VERTICAL);
-        card.addView(header, new LinearLayout.LayoutParams(-1, -2));
-        TextView title = text("Meta accounts", 15, primaryTextColor(), Typeface.BOLD);
-        title.setGravity(Gravity.START | Gravity.CENTER_VERTICAL);
-        title.setIncludeFontPadding(false);
-        header.addView(title, new LinearLayout.LayoutParams(0, -2, 1));
-        TextView expandIcon = text("＋", 18, secondaryTextColor(), Typeface.NORMAL);
-        expandIcon.setGravity(Gravity.CENTER);
-        header.addView(expandIcon, new LinearLayout.LayoutParams(dp(28), dp(28)));
-
-        LinearLayout details = new LinearLayout(this);
-        details.setOrientation(LinearLayout.VERTICAL);
-        details.setVisibility(View.GONE);
-        LinearLayout.LayoutParams detailsParams = new LinearLayout.LayoutParams(-1, -2);
-        detailsParams.topMargin = dp(4);
-        card.addView(details, detailsParams);
-
-        LinearLayout accounts = new LinearLayout(this);
-        accounts.setOrientation(LinearLayout.VERTICAL);
-        LinearLayout.LayoutParams accountsParams = new LinearLayout.LayoutParams(-1, -2);
-        accountsParams.topMargin = dp(12);
-        details.addView(accounts, accountsParams);
-
-        addSocialMetaAccountRow(
-                accounts,
-                "Facebook Page",
-                facebookConnected,
-                facebookConnected && !facebookName.isEmpty()
-                        ? "Connected as " + facebookName : null,
-                false
-        );
-        addSocialMetaAccountRow(
-                accounts,
-                "Instagram",
-                instagramConnected,
-                instagramConnected && !instagramName.isEmpty()
-                        ? "Connected as @" + instagramName : null,
-                true
-        );
-
-        LinearLayout actions = new LinearLayout(this);
-        actions.setGravity(Gravity.END);
-        boolean compact = getResources().getConfiguration().screenWidthDp < 410
-                || getResources().getConfiguration().fontScale > 1.1f;
-        actions.setOrientation(compact ? LinearLayout.VERTICAL : LinearLayout.HORIZONTAL);
-        boolean anyMetaAccountConnected = facebookConnected || instagramConnected;
-        if (anyMetaAccountConnected) {
-            String connectLabel = facebookConnected && instagramConnected
-                    ? "Reconnect Meta" : "Connect Meta";
-            TextView reconnect = actionButton(connectLabel, true);
-            reconnect.setOnClickListener(view -> startSocialAuthorization("meta"));
-            LinearLayout.LayoutParams connectParams = new LinearLayout.LayoutParams(
-                    compact ? -1 : -2, dp(44)
-            );
-            if (compact) {
-                connectParams.bottomMargin = dp(8);
-            }
-            actions.addView(reconnect, connectParams);
-            TextView disconnect = actionButton("Disconnect Meta", false);
-            disconnect.setOnClickListener(view -> confirmSocialDisconnect("facebook"));
-            LinearLayout.LayoutParams disconnectParams = new LinearLayout.LayoutParams(
-                    compact ? -1 : -2, dp(44)
-            );
-            if (!compact) {
-                disconnectParams.setMargins(dp(8), 0, 0, 0);
-            }
-            actions.addView(disconnect, disconnectParams);
-        } else {
-            TextView connect = actionButton("Connect Meta", true);
-            connect.setOnClickListener(view -> startSocialAuthorization("meta"));
-            actions.addView(connect, new LinearLayout.LayoutParams(
-                    compact ? -1 : -2, dp(44)
-            ));
-        }
-
-        LinearLayout.LayoutParams actionsParams = new LinearLayout.LayoutParams(-1, -2);
-        actionsParams.topMargin = dp(16);
-        details.addView(actions, actionsParams);
-        header.setOnClickListener(view -> {
-            boolean isExpanded = details.getVisibility() == View.VISIBLE;
-            details.setVisibility(isExpanded ? View.GONE : View.VISIBLE);
-            expandIcon.setText(isExpanded ? "＋" : "−");
-        });
-        LinearLayout.LayoutParams cardParams = new LinearLayout.LayoutParams(-1, -2);
-        cardParams.bottomMargin = dp(8);
-        parent.addView(card, cardParams);
-    }
-
-    private void addSocialMetaAccountRow(
-            LinearLayout parent,
-            String provider,
-            boolean connected,
-            String connectedAccount,
-            boolean addTopMargin
-    ) {
-        LinearLayout row = new LinearLayout(this);
-        row.setOrientation(LinearLayout.VERTICAL);
-        row.setGravity(Gravity.START);
-
-        TextView providerLabel = text(provider, 13, primaryTextColor(), Typeface.BOLD);
-        providerLabel.setGravity(Gravity.START | Gravity.CENTER_VERTICAL);
-        providerLabel.setIncludeFontPadding(false);
-        row.addView(providerLabel, new LinearLayout.LayoutParams(-1, -2));
-
-        String status = connected
-                ? (connectedAccount == null ? "Connected" : connectedAccount)
-                : "Not connected";
-        TextView accountStatus = text(status, 13, secondaryTextColor(), Typeface.NORMAL);
-        accountStatus.setGravity(Gravity.START | Gravity.CENTER_VERTICAL);
-        accountStatus.setIncludeFontPadding(false);
-        LinearLayout.LayoutParams statusParams = new LinearLayout.LayoutParams(-1, -2);
-        statusParams.topMargin = dp(3);
-        row.addView(accountStatus, statusParams);
-
-        LinearLayout.LayoutParams rowParams = new LinearLayout.LayoutParams(-1, -2);
-        if (addTopMargin) {
-            rowParams.topMargin = dp(12);
-        }
-        parent.addView(row, rowParams);
-    }
-
-    private void startSocialAuthorization(String provider) {
-        FirebaseUser adminUser = FirebaseAuth.getInstance().getCurrentUser();
-        if (adminUser == null) {
-            Toast.makeText(this, "Sign in to connect a social account.", Toast.LENGTH_LONG).show();
+            Toast.makeText(this, "Sign in to remove old social posts.", Toast.LENGTH_LONG).show();
             return;
         }
         adminUser.getIdToken(false).addOnSuccessListener(token -> network.execute(() -> {
-            AuthorizedResponse response = socialAuthorizedRequest(
-                    "POST", "/api/social/connect/" + provider, token.getToken());
+            AuthorizedResponse response = postAuthorizedResponse(
+                    "/api/admin/social/cleanup?limit=100", token.getToken());
             runOnUiThread(() -> {
                 if (response.statusCode < 200 || response.statusCode >= 300) {
-                    Toast.makeText(this, socialPublishingRequestError(response), Toast.LENGTH_LONG).show();
-                    return;
-                }
-                try {
-                    String authorizationUrl = new JSONObject(response.body).optString("authorization_url", "");
-                    Uri uri = Uri.parse(authorizationUrl);
-                    String host = uri.getHost();
-                    boolean permittedHost = "meta".equals(provider)
-                            ? "facebook.com".equalsIgnoreCase(host)
-                                    || (host != null && host.endsWith(".facebook.com"))
-                            : "x.com".equalsIgnoreCase(host)
-                                    || (host != null && host.endsWith(".x.com"));
-                    if (!"https".equalsIgnoreCase(uri.getScheme()) || !permittedHost) {
-                        throw new IllegalArgumentException("Unexpected authorization URL");
-                    }
-                    socialAuthorizationPending = true;
-                    startActivity(new Intent(Intent.ACTION_VIEW, uri));
-                } catch (Exception error) {
-                    Log.e("SOCIAL_PUBLISHING", "Could not open provider authorization", error);
                     Toast.makeText(
                             this,
-                            "The server returned an invalid authorization link.",
+                            "Could not remove old posts. Check the connected Meta account and try again.",
                             Toast.LENGTH_LONG
                     ).show();
-                }
-            });
-        })).addOnFailureListener(error -> {
-            Log.e("SOCIAL_PUBLISHING", "Could not retrieve Firebase admin token", error);
-            runOnUiThread(() -> Toast.makeText(
-                    this, "Could not verify your Fendly sign-in.", Toast.LENGTH_LONG).show());
-        });
-    }
-
-    private void confirmSocialDisconnect(String provider) {
-        Dialog dialog = new Dialog(this);
-        dialog.requestWindowFeature(Window.FEATURE_NO_TITLE);
-        LinearLayout content = themedDialogContent(
-                R.drawable.ic_field_lock,
-                "Disconnect social account?",
-                "Fendly will stop using the stored authorization. Revoke Fendly in the provider settings to remove platform access too."
-        );
-        LinearLayout actions = new LinearLayout(this);
-        actions.setOrientation(LinearLayout.HORIZONTAL);
-        actions.setGravity(Gravity.CENTER);
-
-        TextView cancel = filledButton("Cancel", LOST_GREEN, LOST_GREEN_ON);
-        cancel.setOnClickListener(view -> dialog.dismiss());
-        actions.addView(cancel, new LinearLayout.LayoutParams(0, dp(44), 1f));
-
-        TextView disconnect = filledButton("Disconnect", Color.rgb(180, 45, 45), Color.WHITE);
-        LinearLayout.LayoutParams disconnectParams = new LinearLayout.LayoutParams(0, dp(44), 1f);
-        disconnectParams.setMargins(dp(12), 0, 0, 0);
-        actions.addView(disconnect, disconnectParams);
-        disconnect.setOnClickListener(view -> {
-            dialog.dismiss();
-            disconnectSocialAccount(provider);
-        });
-
-        content.addView(actions, new LinearLayout.LayoutParams(-1, dp(44)));
-        dialog.setContentView(content);
-        dialog.setCanceledOnTouchOutside(false);
-        dialog.show();
-        sizeThemedDialog(dialog);
-    }
-
-    private void disconnectSocialAccount(String provider) {
-        FirebaseUser adminUser = FirebaseAuth.getInstance().getCurrentUser();
-        if (adminUser == null) return;
-        adminUser.getIdToken(false).addOnSuccessListener(token -> network.execute(() -> {
-            AuthorizedResponse response = socialAuthorizedRequest(
-                    "DELETE", "/api/social/account/" + provider, token.getToken());
-            runOnUiThread(() -> {
-                if (response.statusCode < 200 || response.statusCode >= 300) {
-                    Toast.makeText(this, socialPublishingRequestError(response), Toast.LENGTH_LONG).show();
                     return;
                 }
-                showAdminSocialPublishingPage();
+                try {
+                    JSONObject result = new JSONObject(response.body);
+                    int processed = result.optInt("processed", 0);
+                    int removed = result.optInt("removed", 0);
+                    int remaining = result.optInt("remaining", 0);
+                    String message = "Checked " + processed + " reports; removed posts for "
+                            + removed + ". Remaining reports: " + remaining + ".";
+                    if (remaining > 0) message += " Run cleanup again to continue.";
+                    if (result.optJSONArray("failures") != null
+                            && result.optJSONArray("failures").length() > 0) {
+                        message += " Some removals need administrator attention.";
+                    }
+                    new AlertDialog.Builder(this)
+                            .setTitle("Social post cleanup")
+                            .setMessage(message)
+                            .setPositiveButton("OK", null)
+                            .show();
+                } catch (Exception error) {
+                    Toast.makeText(this, "Cleanup response could not be read.", Toast.LENGTH_LONG).show();
+                }
             });
-        })).addOnFailureListener(error -> {
-            Log.e("SOCIAL_PUBLISHING", "Could not retrieve Firebase admin token", error);
-            runOnUiThread(() -> Toast.makeText(
-                    this, "Could not verify your Fendly sign-in.", Toast.LENGTH_LONG).show());
+        })).addOnFailureListener(error -> Toast.makeText(
+                this, "Could not verify your Fendly sign-in.", Toast.LENGTH_LONG).show());
+    }
+
+    private void confirmPrivateImageMigration() {
+        FirebaseUser adminUser = FirebaseAuth.getInstance().getCurrentUser();
+        if (adminUser == null) {
+            Toast.makeText(this, "Sign in to migrate report images.", Toast.LENGTH_LONG).show();
+            return;
+        }
+        adminUser.getIdToken(false).addOnSuccessListener(token -> network.execute(() -> {
+            AuthorizedResponse preview = authorizedRequest(
+                    "POST",
+                    "/api/admin/private-images/migrate?apply=false&limit=10",
+                    token.getToken()
+            );
+            runOnUiThread(() -> {
+                if (preview.statusCode < 200 || preview.statusCode >= 300) {
+                    Toast.makeText(
+                            this,
+                            "Could not check legacy images. " + authorizedRequestError(preview),
+                            Toast.LENGTH_LONG
+                    ).show();
+                    return;
+                }
+                try {
+                    JSONObject result = new JSONObject(preview.body);
+                    int candidates = result.optInt("candidate_assets", 0);
+                    int unsupported = result.optInt("unsupported_references", 0);
+                    int pendingCleanup = result.optInt("pending_source_cleanup", 0);
+                    if (candidates == 0 && pendingCleanup == 0) {
+                        String message = unsupported == 0
+                                ? "All recognized report images are already using private storage."
+                                : "No supported legacy images were found. "
+                                        + unsupported + " image references need manual review.";
+                        new AlertDialog.Builder(this)
+                                .setTitle("Private image migration")
+                                .setMessage(message)
+                                .setPositiveButton("OK", null)
+                                .show();
+                        return;
+                    }
+                    String message = "Move " + candidates
+                            + " legacy image assets to private storage and remove their old copies?";
+                    if (unsupported > 0) {
+                        message += "\n\n" + unsupported
+                                + " unsupported image references will be left unchanged for review.";
+                    }
+                    if (pendingCleanup > 0) {
+                        message += "\n\n" + pendingCleanup
+                                + " old source removals are waiting to be retried.";
+                    }
+                    new AlertDialog.Builder(this)
+                            .setTitle("Migrate legacy images?")
+                            .setMessage(message)
+                            .setNegativeButton("Cancel", null)
+                            .setPositiveButton("Migrate", (dialog, which) ->
+                                    runPrivateImageMigration(token.getToken()))
+                            .show();
+                } catch (Exception error) {
+                    Log.e("PRIVATE_IMAGE_MIGRATION", "Could not read migration preview", error);
+                    Toast.makeText(
+                            this, "Migration preview could not be read.", Toast.LENGTH_LONG).show();
+                }
+            });
+        })).addOnFailureListener(error -> Toast.makeText(
+                this, "Could not verify your Fendly sign-in.", Toast.LENGTH_LONG).show());
+    }
+
+    private void runPrivateImageMigration(String idToken) {
+        Toast.makeText(this, "Migrating legacy images…", Toast.LENGTH_SHORT).show();
+        network.execute(() -> {
+            int totalMigrated = 0;
+            int totalRemoved = 0;
+            int remaining = 0;
+            int unsupported = 0;
+            int pendingCleanup = 0;
+            String failure = null;
+            for (int batch = 0; batch < 100; batch++) {
+                AuthorizedResponse response = authorizedRequest(
+                        "POST",
+                        "/api/admin/private-images/migrate?apply=true&limit=10",
+                        idToken
+                );
+                if (response.statusCode < 200 || response.statusCode >= 300) {
+                    failure = authorizedRequestError(response);
+                    break;
+                }
+                try {
+                    JSONObject result = new JSONObject(response.body);
+                    int migrated = result.optInt("migrated_assets", 0);
+                    totalMigrated += migrated;
+                    totalRemoved += result.optInt("removed_sources", 0);
+                    remaining = result.optInt("remaining_assets", 0);
+                    unsupported = result.optInt("unsupported_references", 0);
+                    pendingCleanup = result.optInt("pending_source_cleanup", 0);
+                    JSONArray failures = result.optJSONArray("failures");
+                    if (failures != null && failures.length() > 0) {
+                        failure = failures.optString(0, "Some image operations failed.");
+                        break;
+                    }
+                    if (remaining == 0 && pendingCleanup == 0) break;
+                    if (migrated == 0 && remaining > 0) {
+                        failure = "The migration made no progress; retry after reviewing the remaining images.";
+                        break;
+                    }
+                } catch (Exception error) {
+                    Log.e("PRIVATE_IMAGE_MIGRATION", "Could not read migration result", error);
+                    failure = "The migration response could not be read.";
+                    break;
+                }
+            }
+            final String finalFailure = failure;
+            final int finalMigrated = totalMigrated;
+            final int finalRemoved = totalRemoved;
+            final int finalRemaining = remaining;
+            final int finalUnsupported = unsupported;
+            final int finalPendingCleanup = pendingCleanup;
+            runOnUiThread(() -> {
+                StringBuilder message = new StringBuilder("Migrated ")
+                        .append(finalMigrated)
+                        .append(" image assets; removed ")
+                        .append(finalRemoved)
+                        .append(" old copies.");
+                if (finalRemaining > 0) message.append("\nAssets remaining: ").append(finalRemaining);
+                if (finalPendingCleanup > 0) {
+                    message.append("\nOld copies awaiting removal: ").append(finalPendingCleanup);
+                }
+                if (finalUnsupported > 0) {
+                    message.append("\nUnsupported references needing review: ")
+                            .append(finalUnsupported);
+                }
+                if (finalFailure != null) message.append("\n\n").append(finalFailure);
+                new AlertDialog.Builder(this)
+                        .setTitle("Private image migration")
+                        .setMessage(message.toString())
+                        .setPositiveButton("OK", null)
+                        .show();
+            });
         });
     }
 
-    private AuthorizedResponse socialAuthorizedRequest(String method, String path, String idToken) {
+    private AuthorizedResponse authorizedRequest(String method, String path, String idToken) {
         HttpURLConnection connection = null;
         try {
             connection = (HttpURLConnection) new URL(API_BASE + path).openConnection();
@@ -11210,14 +10760,14 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             String body = stream == null ? "" : readStream(stream);
             return new AuthorizedResponse(statusCode, body);
         } catch (Exception error) {
-            Log.e("SOCIAL_PUBLISHING", "Social account request failed", error);
+            Log.e("API_REQUEST", "Authenticated request failed", error);
             return new AuthorizedResponse(-1, "");
         } finally {
             if (connection != null) connection.disconnect();
         }
     }
 
-    private String socialPublishingRequestError(AuthorizedResponse response) {
+    private String authorizedRequestError(AuthorizedResponse response) {
         if (response.statusCode < 0) {
             return "Could not reach the Fendly server. Check your connection and try again.";
         }
@@ -11225,18 +10775,9 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             String detail = new JSONObject(response.body).optString("detail", "").trim();
             if (!detail.isEmpty()) return detail;
         } catch (Exception ignored) {
-            Log.w("SOCIAL_PUBLISHING", "Social endpoint returned a non-JSON error response");
+            Log.w("API_REQUEST", "Authenticated endpoint returned a non-JSON error response");
         }
-        return "Social account request failed (HTTP " + response.statusCode + ").";
-    }
-
-    private void addSocialHistoryEntry(LinearLayout parent, String value) {
-        TextView row = text(value, 12, secondaryTextColor(), Typeface.NORMAL);
-        row.setPadding(dp(10), dp(8), dp(10), dp(8));
-        row.setBackground(roundWithStroke(surfaceColor(), 10, borderColor()));
-        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(-1, -2);
-        params.bottomMargin = dp(6);
-        parent.addView(row, params);
+        return "Request failed (HTTP " + response.statusCode + ").";
     }
 
     private void populateAdminReportCategoryTabs(
@@ -11565,9 +11106,9 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         LinearLayout content = themedDialogContent(
                 R.drawable.ic_field_lock,
                 "Delete report?",
-                "This permanently deletes the report from Fendly and removes its linked "
-                        + "Facebook and Instagram posts. The report stays in Fendly unless "
-                        + "both platforms confirm deletion."
+                "Fendly removes the report only after linked legacy Meta posts are confirmed "
+                        + "removed. If Meta cannot confirm removal, the report stays in Fendly "
+                        + "until an administrator retries cleanup."
         );
         LinearLayout actions = new LinearLayout(this);
         actions.setOrientation(LinearLayout.HORIZONTAL);
@@ -11612,7 +11153,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         }
 
         user.getIdToken(false).addOnSuccessListener(tokenResult -> network.execute(() -> {
-            AuthorizedResponse response = socialAuthorizedRequest(
+            AuthorizedResponse response = authorizedRequest(
                     "DELETE",
                     "/api/admin/items/" + reportType + "/" + Uri.encode(reportId),
                     tokenResult.getToken()
@@ -11669,7 +11210,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         LinearLayout content = themedDialogContent(
                 R.drawable.ic_field_lock,
                 "Report not deleted",
-                socialPublishingRequestError(response)
+                authorizedRequestError(response)
         );
         TextView close = filledButton("OK", GOLD, GOLD_ON);
         LinearLayout.LayoutParams closeParams = new LinearLayout.LayoutParams(-1, dp(44));
@@ -12769,9 +12310,9 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             rejectParams.setMargins(dp(8), 0, 0, 0);
             actions.addView(reject, rejectParams);
             confirm.setOnClickListener(view -> saveAdminAlertReview(
-                alertId, "confirmed", idToken, status, actions));
+                alertId, idToken, status, actions));
             reject.setOnClickListener(view -> saveAdminAlertReview(
-                alertId, "rejected", idToken, status, actions));
+                alertId, "rejected", idToken, status, actions, "", false));
             row.addView(actions, new LinearLayout.LayoutParams(-1, dp(42)));
             }
 
@@ -12831,14 +12372,53 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         return column;
     }
 
-    private void saveAdminAlertReview(String alertId, String decision, String idToken,
+    private void saveAdminAlertReview(String alertId, String idToken,
                                       TextView status, LinearLayout actions) {
+        EditText evidence = field("Describe the proof you personally verified");
+        new AlertDialog.Builder(this)
+                .setTitle("Verify match evidence")
+                .setMessage("Confirm only after comparing reliable identifying proof.")
+                .setView(evidence)
+                .setNegativeButton("Cancel", null)
+                .setPositiveButton("Confirm match", (dialog, which) -> {
+                    String notes = evidence.getText().toString().trim();
+                    if (notes.length() < 10) {
+                        Toast.makeText(
+                                this,
+                                "Add at least 10 characters describing the verified proof.",
+                                Toast.LENGTH_LONG
+                        ).show();
+                        return;
+                    }
+                    saveAdminAlertReview(
+                            alertId, "confirmed", idToken, status, actions, notes, true);
+                })
+                .show();
+    }
+
+    private void saveAdminAlertReview(String alertId, String decision, String idToken,
+                                      TextView status, LinearLayout actions,
+                                      String verificationNotes, boolean proofVerified) {
         status.setText(translate("Saving decision..."));
         actions.setEnabled(false);
         for (int index = 0; index < actions.getChildCount(); index++) {
             actions.getChildAt(index).setEnabled(false);
         }
-        String body = "{\"decision\":\"" + decision + "\"}";
+        String body;
+        try {
+            body = new JSONObject()
+                    .put("decision", decision)
+                    .put("proof_verified", proofVerified)
+                    .put("verification_notes", verificationNotes)
+                    .toString();
+        } catch (Exception error) {
+            status.setText(translate("Could not prepare verification decision."));
+            actions.setEnabled(true);
+            for (int index = 0; index < actions.getChildCount(); index++) {
+                actions.getChildAt(index).setEnabled(true);
+            }
+            return;
+        }
         network.execute(() -> {
             boolean saved = postAuthorized("/api/admin/alerts/" + alertId + "/review", idToken, body);
             runOnUiThread(() -> {
@@ -14345,8 +13925,6 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                 {"Location", "स्थान", "ठिकाण", "સ્થાન", "অবস্থান", "இடம்", "స్థానం", "ಸ್ಥಳ", "സ്ഥലം"},
                 {"Details", "विवरण", "तपशील", "વિગતો", "বিবরণ", "விவரங்கள்", "వివరాలు", "ವಿವರಗಳು", "വിശദാംശങ്ങൾ"},
                 {"Review", "समीक्षा", "पुनरावलोकन", "સમીક્ષા", "পর্যালোচনা", "மதிப்பாய்வு", "సమీక్ష", "ಪರಿಶೀಲನೆ", "അവലോകനം"},
-                {"Allow Fendly to share this report on its Facebook and Instagram accounts", "Fendly को इस रिपोर्ट को अपने Facebook और Instagram खातों पर साझा करने दें", "Fendly ला हा अहवाल त्याच्या Facebook आणि Instagram खात्यांवर शेअर करू द्या", "Fendly ને આ અહેવાલ તેના Facebook અને Instagram એકાઉન્ટ્સ પર શેર કરવા દો", "Fendly-কে এই প্রতিবেদনটি তার Facebook ও Instagram অ্যাকাউন্টে শেয়ার করতে দিন", "இந்த அறிக்கையை Fendly தனது Facebook மற்றும் Instagram கணக்குகளில் பகிர அனுமதிக்கவும்", "ఈ నివేదికను Fendly తన Facebook మరియు Instagram ఖాతాల్లో పంచుకోవడానికి అనుమతించండి", "ಈ ವರದಿಯನ್ನು Fendly ತನ್ನ Facebook ಮತ್ತು Instagram ಖಾತೆಗಳಲ್ಲಿ ಹಂಚಿಕೊಳ್ಳಲು ಅನುಮತಿಸಿ", "ഈ റിപ്പോർട്ട് Fendly-യുടെ Facebook, Instagram അക്കൗണ്ടുകളിൽ പങ്കിടാൻ അനുവദിക്കുക"},
-                {"Optional. Report type and title may be public. Facebook/Instagram may receive the generated poster and selected photo. Details, location, contact info and IMEI stay private. Instagram needs a public JPEG poster; Reels are not supported.", "वैकल्पिक। रिपोर्ट का प्रकार और शीर्षक सार्वजनिक हो सकते हैं। Facebook/Instagram को जनरेट किया गया पोस्टर और चुनी गई फोटो मिल सकती है। विवरण, स्थान, संपर्क जानकारी और IMEI निजी रहेंगे। Instagram के लिए सार्वजनिक JPEG पोस्टर जरूरी है; Reels समर्थित नहीं हैं।", "ऐच्छिक. अहवालाचा प्रकार आणि शीर्षक सार्वजनिक होऊ शकतात. Facebook/Instagram ला तयार केलेले पोस्टर आणि निवडलेला फोटो मिळू शकतो. तपशील, ठिकाण, संपर्क माहिती आणि IMEI खाजगी राहतील. Instagram साठी सार्वजनिक JPEG पोस्टर आवश्यक आहे; Reels समर्थित नाहीत.", "વૈકલ્પિક. રિપોર્ટનો પ્રકાર અને શીર્ષક જાહેર થઈ શકે છે. Facebook/Instagram ને બનાવેલું પોસ્ટર અને પસંદ કરેલો ફોટો મળી શકે છે. વિગતો, સ્થાન, સંપર્ક માહિતી અને IMEI ખાનગી રહેશે. Instagram માટે જાહેર JPEG પોસ્ટર જરૂરી છે; Reels સપોર્ટેડ નથી.", "ঐচ্ছিক। প্রতিবেদনের ধরন ও শিরোনাম প্রকাশ্যে যেতে পারে। Facebook/Instagram তৈরি করা পোস্টার ও নির্বাচিত ছবি পেতে পারে। বিবরণ, অবস্থান, যোগাযোগের তথ্য ও IMEI ব্যক্তিগত থাকবে। Instagram-এর জন্য সর্বজনীন JPEG পোস্টার দরকার; Reels সমর্থিত নয়।", "விருப்பத்தேர்வு. அறிக்கை வகையும் தலைப்பும் பொதுவாகலாம். Facebook/Instagram உருவாக்கிய போஸ்டரையும் தேர்ந்தெடுத்த படத்தையும் பெறலாம். விவரங்கள், இடம், தொடர்புத் தகவல், IMEI தனிப்பட்டவை. Instagram-க்கு பொதுவில் கிடைக்கும் JPEG போஸ்டர் தேவை; Reels ஆதரிக்கப்படவில்லை.", "ఐచ్ఛికం. నివేదిక రకం మరియు శీర్షిక పబ్లిక్ కావచ్చు. Facebook/Instagram రూపొందించిన పోస్టర్ మరియు ఎంచుకున్న ఫోటోను పొందవచ్చు. వివరాలు, స్థానం, సంప్రదింపు సమాచారం, IMEI ప్రైవేట్‌గా ఉంటాయి. Instagram‌కు పబ్లిక్ JPEG పోస్టర్ అవసరం; Reels‌కు మద్దతు లేదు.", "ಐಚ್ಛಿಕ. ವರದಿ ಪ್ರಕಾರ ಮತ್ತು ಶೀರ್ಷಿಕೆ ಸಾರ್ವಜನಿಕವಾಗಬಹುದು. Facebook/Instagram ರಚಿಸಿದ ಪೋಸ್ಟರ್ ಮತ್ತು ಆಯ್ಕೆಮಾಡಿದ ಫೋಟೋ ಪಡೆಯಬಹುದು. ವಿವರಗಳು, ಸ್ಥಳ, ಸಂಪರ್ಕ ಮಾಹಿತಿ ಮತ್ತು IMEI ಖಾಸಗಿ. Instagram ಗೆ ಸಾರ್ವಜನಿಕ JPEG ಪೋಸ್ಟರ್ ಬೇಕು; Reels ಬೆಂಬಲಿತವಲ್ಲ.", "ഐച്ഛികം. റിപ്പോർട്ടിന്റെ തരവും തലക്കെട്ടും പൊതുവാകാം. Facebook/Instagram സൃഷ്ടിച്ച പോസ്റ്ററും തിരഞ്ഞെടുത്ത ചിത്രവും ലഭിക്കും. വിശദാംശങ്ങൾ, സ്ഥലം, ബന്ധപ്പെടാനുള്ള വിവരങ്ങൾ, IMEI എന്നിവ സ്വകാര്യമാണ്. Instagram-ന് പൊതുവായി ലഭ്യമായ JPEG പോസ്റ്റർ വേണം; Reels പിന്തുണയ്ക്കുന്നില്ല."},
                 {"Choose what you are reporting", "आप किसकी रिपोर्ट कर रहे हैं चुनें", "कशाची नोंद करायची ते निवडा", "તમે શું નોંધવા માંગો છો તે પસંદ કરો", "আপনি কী রিপোর্ট করছেন তা বেছে নিন", "எதைப் புகாரளிக்கிறீர்கள் என்பதைத் தேர்ந்தெடுக்கவும்", "మీరు దేనిని నివేదిస్తున్నారో ఎంచుకోండి", "ನೀವು ಏನನ್ನು ವರದಿ ಮಾಡುತ್ತಿದ್ದೀರಿ ಆಯ್ಕೆಮಾಡಿ", "എന്താണ് റിപ്പോർട്ട് ചെയ്യുന്നതെന്ന് തിരഞ്ഞെടുക്കുക"},
                 {"Item / Valuables", "वस्तु / कीमती सामान", "वस्तू / मौल्यवान वस्तू", "વસ્તુ / કીમતી ચીજ", "জিনিস / মূল্যবান সামগ্রী", "பொருள் / மதிப்புமிக்கவை", "వస్తువు / విలువైనవి", "ವಸ್ತು / ಬೆಲೆಬಾಳುವವು", "വസ്തു / വിലപിടിപ്പുള്ളവ"},
                 {"Pet / Animal", "पालतू / पशु", "पाळीव प्राणी / प्राणी", "પાળતુ પ્રાણી / પ્રાણી", "পোষা প্রাণী / পশু", "செல்லப்பிராணி / விலங்கு", "పెంపుడు జంతువు / జంతువు", "ಸಾಕುಪ್ರಾಣಿ / ಪ್ರಾಣಿ", "വളർത്തുമൃഗം / മൃഗം"},

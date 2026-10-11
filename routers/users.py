@@ -17,6 +17,7 @@ import httpx
 
 from auth import _firebase_app, get_current_user
 from database import get_db
+from image_storage import refresh_private_image_url
 from models import (
     DeviceToken,
     AdminMatchAlert,
@@ -31,6 +32,10 @@ from models import (
 )
 from profile_service import update_profile_record
 from schemas import ProfileUpdate, UsernameRequest
+from routers.notifications import (
+    get_user_notification_payload,
+    mark_user_notifications_read as mark_notifications_as_read,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -84,6 +89,11 @@ def _delete_profile_photo_asset(photo_url: str) -> None:
     supabase_url = os.getenv("SUPABASE_URL", "").rstrip("/")
     bucket = os.getenv("SUPABASE_STORAGE_BUCKET", "uploads")
     service_role_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "")
+    storage_bucket = None
+    object_key = None
+    if parsed.scheme == "storage" and parsed.netloc:
+        storage_bucket = unquote(parsed.netloc)
+        object_key = unquote(parsed.path.lstrip("/"))
     if supabase_url:
         storage_base = urlsplit(supabase_url)
         segments = [unquote(part) for part in parsed.path.split("/") if part]
@@ -91,23 +101,29 @@ def _delete_profile_photo_asset(photo_url: str) -> None:
             parsed.scheme == storage_base.scheme
             and parsed.netloc == storage_base.netloc
             and len(segments) == 6
-            and segments[:4] == ["storage", "v1", "object", "public"]
+            and segments[:3] == ["storage", "v1", "object"]
+            and segments[3] in {"public", "sign"}
             and segments[4] == bucket
             and filename_pattern.fullmatch(segments[5])
         ):
-            if not service_role_key:
-                raise RuntimeError("Supabase storage credentials are required to delete the profile image")
-            endpoint = f"{supabase_url}/storage/v1/object/{quote(bucket, safe='')}/{quote(segments[5], safe='')}"
-            response = httpx.delete(
-                endpoint,
-                headers={
-                    "Authorization": f"Bearer {service_role_key}",
-                    "apikey": service_role_key,
-                },
-                timeout=15.0,
-            )
-            response.raise_for_status()
-            return
+            storage_bucket, object_key = segments[4], segments[5]
+    if storage_bucket == bucket and object_key and filename_pattern.fullmatch(object_key):
+        if not supabase_url or not service_role_key:
+            raise RuntimeError("Supabase storage credentials are required to delete the profile image")
+        endpoint = (
+            f"{supabase_url}/storage/v1/object/{quote(bucket, safe='')}/"
+            f"{quote(object_key, safe='')}"
+        )
+        response = httpx.delete(
+            endpoint,
+            headers={
+                "Authorization": f"Bearer {service_role_key}",
+                "apikey": service_role_key,
+            },
+            timeout=15.0,
+        )
+        response.raise_for_status()
+        return
 
     public_base_url = os.getenv(
         "PUBLIC_BASE_URL",
@@ -346,33 +362,7 @@ def get_user_notifications(
     session: Session = Depends(get_db),
     uid: str = Depends(get_current_user),
 ) -> dict[str, object]:
-    unread_count = session.scalar(
-        select(func.count(UserNotification.id)).where(
-            UserNotification.firebase_uid == uid,
-            UserNotification.is_read.is_(False),
-        )
-    ) or 0
-    notifications = session.scalars(
-        select(UserNotification)
-        .where(UserNotification.firebase_uid == uid)
-        .order_by(desc(UserNotification.created_at))
-        .limit(50)
-    ).all()
-    return {
-        "unread_count": unread_count,
-        "notifications": [
-            {
-                "id": notification.id,
-                "found_item_id": notification.found_item_id,
-                "title": notification.title,
-                "body": notification.body,
-                "score": notification.score,
-                "is_read": notification.is_read,
-                "created_at": notification.created_at.isoformat() if notification.created_at else None,
-            }
-            for notification in notifications
-        ],
-    }
+    return get_user_notification_payload(session, uid)
 
 
 @router.post("/notifications/read")
@@ -380,16 +370,7 @@ def mark_user_notifications_read(
     session: Session = Depends(get_db),
     uid: str = Depends(get_current_user),
 ) -> dict[str, int]:
-    result = session.execute(
-        update(UserNotification)
-        .where(
-            UserNotification.firebase_uid == uid,
-            UserNotification.is_read.is_(False),
-        )
-        .values(is_read=True)
-    )
-    session.commit()
-    return {"updated": result.rowcount or 0}
+    return {"updated": mark_notifications_as_read(session, uid)}
 
 
 def normalize_username(value: str) -> str:
@@ -584,7 +565,9 @@ def get_profile(
             "mobile": getattr(user, "mobile", None) or "",
             "state": getattr(user, "state", None) or "",
             "city": getattr(user, "city", None) or "",
-            "profile_photo_url": getattr(user, "profile_photo_url", None) or "",
+            "profile_photo_url": refresh_private_image_url(
+                getattr(user, "profile_photo_url", None)
+            ) or "",
             "instagram_url": getattr(user, "instagram_url", None) or "",
             "facebook_url": getattr(user, "facebook_url", None) or "",
             "email_verified": bool(getattr(user, "email_verified", False)),

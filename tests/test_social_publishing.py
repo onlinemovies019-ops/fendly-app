@@ -15,6 +15,7 @@ from PIL import Image, ImageDraw
 
 import social_publishing
 import social_poster
+import main
 from models import Base, FoundItem, LostItem, SocialAccount, SocialOAuthState, SocialPublication
 from routers import items as items_module
 
@@ -185,31 +186,9 @@ def test_meta_oauth_page_id_mismatch_reports_available_pages_without_tokens(monk
     assert "private-page-token" not in str(error.value)
 
 
-def test_social_caption_excludes_report_details_and_masks_contact_values(monkeypatch):
-    app_url = "https://download.fendly.example"
-    monkeypatch.setenv("FENDLY_APP_URL", app_url)
-    report = LostItem(
-        id="7e5e744d-1be9-4c47-b1d1-95a9d817d980",
-        created_by="report-owner",
-        title="Blue bag call +1 555 123 4567",
-        description="Contains a home address and a private phone number.",
-        category="bag",
-        lat=12.3,
-        lng=45.6,
-        report_location="Private address",
-    )
-
-    caption = social_publishing._safe_caption(report, "lost")
-
-    assert "Blue bag" in caption
-    assert "555 123 4567" not in caption
-    assert "home address" not in caption
-    assert "Private address" not in caption
-    assert "12.3" not in caption
-    assert caption.endswith(
-        f"Fendly: {app_url}/item/7e5e744d-1be9-4c47-b1d1-95a9d817d980"
-    )
-    assert "Get the Fendly app" not in caption
+def test_automatic_social_publishers_are_removed():
+    assert not hasattr(social_publishing, "_publish_facebook")
+    assert not hasattr(social_publishing, "_publish_instagram")
 
 
 def test_generated_community_poster_uses_the_report_link(monkeypatch):
@@ -329,7 +308,7 @@ def test_social_poster_still_renders_when_report_photo_cannot_be_loaded(monkeypa
     assert renderer_args["photo"] is None
 
 
-def test_schedule_report_publications_only_queues_connected_channels():
+def test_report_publication_scheduling_is_permanently_disabled():
     factory = _session_factory()
     with factory() as session:
         session.add_all(
@@ -359,20 +338,11 @@ def test_schedule_report_publications_only_queues_connected_channels():
         session.flush()
         tasks = BackgroundTasks()
 
-        social_publishing.schedule_report_publications(session, report, "found", tasks)
-
-        jobs = session.scalars(
-            select(SocialPublication).order_by(SocialPublication.provider)
-        ).all()
-        assert [(job.provider, job.status) for job in jobs] == [
-            ("facebook", "pending"),
-            ("instagram", "pending"),
-        ]
-        assert len(tasks.tasks) == 2
-
-        report.social_share_consent = False
-        social_publishing.schedule_report_publications(session, report, "found", None)
-        assert len(session.scalars(select(SocialPublication)).all()) == 2
+        with pytest.raises(HTTPException) as error:
+            social_publishing.schedule_report_publications(session, report, "found", tasks)
+        assert error.value.status_code == 410
+        assert session.scalars(select(SocialPublication)).all() == []
+        assert tasks.tasks == []
 
 
 def test_social_publication_scheduling_ignores_legacy_x_account():
@@ -402,7 +372,7 @@ def test_social_publication_scheduling_ignores_legacy_x_account():
         with pytest.raises(HTTPException) as error:
             social_publishing.schedule_report_publications(session, report, "found", None)
 
-        assert error.value.status_code == 503
+        assert error.value.status_code == 410
         assert session.scalars(select(SocialPublication)).all() == []
 
 
@@ -430,12 +400,11 @@ def test_social_status_only_exposes_facebook_and_instagram_accounts():
 
 
 def test_social_api_only_registers_meta_connection_and_callback_routes():
-    route_paths = {route.path for route in social_publishing.router.routes}
-
-    assert "/api/social/connect/meta" in route_paths
-    assert "/api/social/callback/meta" in route_paths
-    assert "/api/social/connect/x" not in route_paths
-    assert "/api/social/callback/x" not in route_paths
+    route_paths = {
+        route.path for route in main.app.routes
+        if getattr(route, "path", "").startswith("/api/social")
+    }
+    assert route_paths == set()
 
 
 def test_social_sharing_opt_in_requires_a_connected_brand_account():
@@ -457,13 +426,13 @@ def test_social_sharing_opt_in_requires_a_connected_brand_account():
         try:
             social_publishing.schedule_report_publications(session, report, "found", None)
         except HTTPException as error:
-            assert error.status_code == 503
-            assert "Uncheck social sharing" in error.detail
+            assert error.status_code == 410
+            assert "permanently disabled" in error.detail
         else:
             raise AssertionError("Social sharing should require a connected brand account")
 
 
-def test_report_submission_persists_consent_and_creates_publication_job(monkeypatch):
+def test_report_submission_does_not_create_social_publication_job(monkeypatch):
     factory = _session_factory()
     with factory() as session:
         session.add(
@@ -479,16 +448,9 @@ def test_report_submission_persists_consent_and_creates_publication_job(monkeypa
         monkeypatch.setattr(items_module, "create_embedding", AsyncMock(return_value=None))
         monkeypatch.setattr(items_module, "create_image_embedding", AsyncMock(return_value=None))
         monkeypatch.setattr(items_module, "translate_report_fields", AsyncMock(return_value=None))
-        poster_renderer = AsyncMock(return_value=b"poster")
-        monkeypatch.setattr(social_publishing, "render_report_poster", poster_renderer)
-        monkeypatch.setattr(
-            social_publishing,
-            "store_image",
-            AsyncMock(return_value="https://storage.example.test/community-poster.jpg"),
-        )
         tasks = BackgroundTasks()
 
-        report = asyncio.run(
+        report_response = asyncio.run(
             items_module.create_item_compat(
                 items_module.ItemSubmission(
                     title="Blue bag",
@@ -503,17 +465,15 @@ def test_report_submission_persists_consent_and_creates_publication_job(monkeypa
             )
         )
 
-        assert report.social_share_consent is True
-        assert report.social_poster_url is None
-        job = session.scalar(select(SocialPublication).where(SocialPublication.report_id == report.id))
-        assert job is not None
-        assert job.provider == "facebook"
-        assert job.status == "pending"
-        assert len(tasks.tasks) == 2
-        assert tasks.tasks[1].func is items_module._process_created_report_background
-        poster_renderer.assert_not_awaited()
+        report = session.get(FoundItem, report_response["id"])
+        assert report is not None
+        assert report.social_share_consent is False
+        assert session.scalars(select(SocialPublication)).all() == []
+        assert len(tasks.tasks) == 1
+        assert tasks.tasks[0].func is items_module._process_created_report_background
 
 
+@pytest.mark.skip(reason="Automatic Meta publishing has been removed.")
 def test_facebook_publishes_generated_poster_instead_of_report_photo(monkeypatch):
     monkeypatch.setenv("META_GRAPH_API_VERSION", "v23.0")
     account = SocialAccount(
@@ -555,6 +515,7 @@ def test_facebook_publishes_generated_poster_instead_of_report_photo(monkeypatch
     assert requested["data"]["url"] != report.image_url
 
 
+@pytest.mark.skip(reason="Automatic Meta publishing has been removed.")
 def test_facebook_publication_does_not_treat_photo_id_as_page_post_id(monkeypatch):
     monkeypatch.setenv("META_GRAPH_API_VERSION", "v23.0")
     monkeypatch.setattr(social_publishing, "_decrypt_token", lambda _: "page-token")
@@ -587,6 +548,7 @@ def test_facebook_publication_does_not_treat_photo_id_as_page_post_id(monkeypatc
         social_publishing._publish_facebook(account, report, "caption")
 
 
+@pytest.mark.skip(reason="Automatic Meta publishing has been removed.")
 def test_instagram_publishes_stored_poster_url(monkeypatch):
     monkeypatch.setenv("META_GRAPH_API_VERSION", "v23.0")
     account = SocialAccount(
@@ -645,6 +607,7 @@ def test_instagram_publishes_stored_poster_url(monkeypatch):
     assert requests[1][0].endswith("/media_publish")
 
 
+@pytest.mark.skip(reason="Automatic Meta publishing has been removed.")
 def test_instagram_waits_for_container_processing_before_publishing(monkeypatch):
     monkeypatch.setenv("META_GRAPH_API_VERSION", "v23.0")
     account = SocialAccount(
@@ -730,67 +693,34 @@ def test_meta_http_error_includes_operation_and_provider_diagnostics():
     assert "trace trace-123" in message
 
 
-def test_publication_worker_records_success(monkeypatch):
+def test_publication_worker_cancels_queued_jobs_without_meta_requests(monkeypatch):
     factory = _session_factory()
     monkeypatch.setattr(social_publishing, "SessionLocal", factory)
-    monkeypatch.setenv("APP_SECRET_KEY", "test-secret-key-that-is-long-enough")
-
+    monkeypatch.setattr(
+        social_publishing.httpx,
+        "request",
+        lambda *_args, **_kwargs: pytest.fail("Legacy queue cancellation must not call Meta"),
+    )
     with factory() as session:
-        report = LostItem(
-            id="lost-social-report",
-            created_by="report-owner",
-            title="Blue bag",
-            description="Private detail",
-            category="bag",
-            lat=0,
-            lng=0,
-            social_share_consent=True,
-            social_poster_url="https://storage.example.test/old-poster.jpg",
+        session.add(
+            SocialPublication(
+                id="publication-1",
+                report_id="lost-social-report",
+                report_type="lost",
+                provider="facebook",
+                status="pending",
+                next_attempt_at=0,
+            )
         )
-        account = SocialAccount(
-            provider="facebook",
-            account_id="page-id",
-            account_name="Fendly",
-            access_token_encrypted=social_publishing._encrypt_token("private-token"),
-        )
-        publication = SocialPublication(
-            id="publication-1",
-            report_id=report.id,
-            report_type="lost",
-            provider="facebook",
-            status="pending",
-            next_attempt_at=0,
-        )
-        session.add_all([report, account, publication])
         session.commit()
 
-    monkeypatch.setattr(
-        social_publishing,
-        "render_report_poster",
-        AsyncMock(return_value=b"poster-bytes"),
-    )
-    monkeypatch.setattr(
-        social_publishing,
-        "store_image",
-        AsyncMock(return_value="https://storage.example.test/generated-poster.jpg"),
-    )
-    published_poster_urls = []
-
-    def publish_facebook(_account, report, _caption):
-        published_poster_urls.append(report.social_poster_url)
-        return "external-post-1"
-
-    monkeypatch.setattr(social_publishing, "_publish_facebook", publish_facebook)
     social_publishing.process_due_publications()
 
     with factory() as session:
         saved = session.get(SocialPublication, "publication-1")
-        report = session.get(LostItem, "lost-social-report")
-        assert saved.status == "published"
-        assert saved.external_post_id == "external-post-1"
-        assert saved.attempt_count == 1
-        assert report.social_poster_url == "https://storage.example.test/generated-poster.jpg"
-    assert published_poster_urls == ["https://storage.example.test/generated-poster.jpg"]
+        assert saved.status == "cancelled"
+        assert saved.external_post_id is None
+        assert saved.attempt_count == 0
 
 
 def test_external_post_feed_refresh_uses_provider_edges_and_pagination(monkeypatch):
@@ -1860,54 +1790,36 @@ def test_legacy_post_search_matches_report_link_in_meta_feed(monkeypatch):
     assert requested["params"]["fields"] == "id,message"
 
 
-def test_publication_worker_does_not_retry_ambiguous_provider_failure(monkeypatch):
+def test_disabled_publication_worker_cancels_queued_jobs(monkeypatch):
     factory = _session_factory()
     monkeypatch.setattr(social_publishing, "SessionLocal", factory)
-    monkeypatch.setenv("APP_SECRET_KEY", "test-secret-key-that-is-long-enough")
     calls = []
 
     with factory() as session:
-        report = LostItem(
-            id="lost-social-report-failure",
-            created_by="report-owner",
-            title="Blue bag",
-            description="Private detail",
-            category="bag",
-            lat=0,
-            lng=0,
-            social_share_consent=True,
-        )
-        account = SocialAccount(
-            provider="facebook",
-            account_id="page-id",
-            account_name="Fendly",
-            access_token_encrypted=social_publishing._encrypt_token("private-token"),
-        )
         publication = SocialPublication(
             id="publication-failure",
-            report_id=report.id,
+            report_id="lost-social-report-failure",
             report_type="lost",
             provider="facebook",
             status="pending",
             next_attempt_at=0,
         )
-        session.add_all([report, account, publication])
+        session.add(publication)
         session.commit()
 
-    def fail_publication(*_):
-        calls.append("attempted")
-        raise RuntimeError("Provider response was lost")
-
-    monkeypatch.setattr(social_publishing, "_publish_facebook", fail_publication)
+    monkeypatch.setattr(
+        social_publishing,
+        "publish_publication",
+        lambda *_: calls.append("publisher-called"),
+    )
     social_publishing.process_due_publications()
     social_publishing.process_due_publications()
 
     with factory() as session:
         saved = session.get(SocialPublication, "publication-failure")
         assert saved is not None
-        assert saved.status == "failed"
-        assert saved.attempt_count == 1
+        assert saved.status == "cancelled"
+        assert saved.attempt_count == 0
         assert saved.next_attempt_at == 0
         assert saved.last_error is not None
-        assert "Not retried automatically" in saved.last_error
-        assert calls == ["attempted"]
+        assert calls == []

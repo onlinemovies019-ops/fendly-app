@@ -2,7 +2,7 @@ import asyncio
 import os
 from datetime import datetime, timezone
 from types import SimpleNamespace
-from unittest.mock import Mock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 from fastapi import HTTPException
@@ -16,7 +16,7 @@ from models import FoundItem, LostItem, User
 from routers import admin as admin_module
 from routers import items as items_module
 from routers.items import match_items
-from schemas import ItemCreate, ItemUpdate, MatchRequest, MatchResponse
+from schemas import ItemCreate, ItemUpdate, MatchRequest
 from translation import translate_report_fields, translate_report_fields_batch
 
 
@@ -429,12 +429,12 @@ async def test_report_update_refreshes_english_fields(monkeypatch):
 
     updated = await items_module.update_item("lost", "lost-1", payload, session=session, uid="user-1")
 
-    assert updated.title == "नवी पिशवी"
-    assert updated.title_en == "New bag"
-    assert updated.description_en == "New description"
-    assert updated.report_location_en == "Central station"
-    assert updated.category_en == "Bag"
-    assert updated.source_language == "mr"
+    assert updated["title"] == "नवी पिशवी"
+    assert updated["source_language"] == "mr"
+    assert report.title_en == "New bag"
+    assert report.description_en == "New description"
+    assert report.report_location_en == "Central station"
+    assert report.category_en == "Bag"
 
 
 @pytest.mark.asyncio
@@ -482,8 +482,8 @@ async def test_report_update_can_remove_all_saved_images(monkeypatch):
         uid="user-1",
     )
 
-    assert updated.image_urls == []
-    assert updated.image_url is None
+    assert updated["image_urls"] == []
+    assert updated["image_url"] is None
 
 
 @pytest.mark.asyncio
@@ -655,14 +655,29 @@ async def test_admin_alert_is_preserved_when_image_index_lookup_fails(monkeypatc
 
 
 def test_admin_alert_review_persists_decision_and_marks_alert_read(monkeypatch):
-    alert = SimpleNamespace(review_status="pending", is_read=False)
+    alert = SimpleNamespace(
+        id="alert-1",
+        review_status="pending",
+        is_read=False,
+        found_item_id="found-1",
+        lost_item_id="lost-1",
+        confidence=0.91,
+    )
+    found_item = SimpleNamespace(id="found-1")
+    lost_item = SimpleNamespace(id="lost-1", created_by="owner-1")
     session = Mock(spec=Session)
-    session.get.return_value = alert
+    session.get.side_effect = [alert, found_item, lost_item]
+    session.scalar.return_value = SimpleNamespace(id="notification-1")
     monkeypatch.setattr(admin_module, "_supabase_admin_alert_request", lambda *args, **kwargs: None)
+    monkeypatch.setattr(admin_module, "send_verified_match_push", lambda *args, **kwargs: 1)
 
     result = admin_module.review_match_alert(
         "alert-1",
-        admin_module.AlertReviewRequest(decision="confirmed"),
+        admin_module.AlertReviewRequest(
+            decision="confirmed",
+            proof_verified=True,
+            verification_notes="Compared the photo and identifying marks.",
+        ),
         session,
         "admin-1",
     )
@@ -875,9 +890,12 @@ def test_admin_uid_parser_rejects_wildcard_configuration(wildcard):
 
 @pytest.mark.asyncio
 async def test_report_matching_does_not_allow_reading_another_users_report(monkeypatch):
-    monkeypatch.setenv("ADMIN_FIREBASE_UIDS", "")
+    monkeypatch.setenv("ADMIN_FIREBASE_UIDS", "admin-user")
     session = Mock(spec=Session)
-    session.scalar.return_value = SimpleNamespace(created_by="report-owner")
+    session.scalar.return_value = SimpleNamespace(
+        created_by="report-owner",
+        email_verified=False,
+    )
 
     with pytest.raises(HTTPException) as exc:
         await items_module.match_items(
@@ -886,67 +904,22 @@ async def test_report_matching_does_not_allow_reading_another_users_report(monke
             uid="different-user",
         )
 
-    assert exc.value.status_code == 404
+    assert exc.value.status_code == 403
 
 
 @pytest.mark.asyncio
-async def test_cloudinary_image_match_returns_limited_report_preview(monkeypatch):
-    candidate = LostItem(
-        id="lost-image-1",
-        created_by="user-1",
-        title="Blue wallet",
-        description="Lost near the bus stop",
-        category="other",
-        lat=0,
-        lng=0,
-        image_url="https://res.cloudinary.com/fendly/image/upload/wallet.jpg",
-    )
+async def test_image_matching_no_longer_calls_external_matching_function(monkeypatch):
     session = Mock(spec=Session)
-    session.scalars.return_value.all.return_value = [candidate]
-    monkeypatch.setenv("IMAGE_MATCHING_FUNCTION_URL", "https://functions.example/matchReportImages")
-    monkeypatch.setenv("SUPABASE_SERVICE_ROLE_KEY", "server-only-key")
-    monkeypatch.setenv("ADMIN_FIREBASE_UIDS", "")
-    calls = {}
-
-    class FakeResponse:
-        def raise_for_status(self):
-            pass
-
-        def json(self):
-            return {"matches": [{"source_id": "lost-image-1", "similarity": 0.91}]}
-
-    class FakeAsyncClient:
-        def __init__(self, **kwargs):
-            calls["timeout"] = kwargs["timeout"]
-
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, *args):
-            pass
-
-        async def post(self, endpoint, **kwargs):
-            calls["endpoint"] = endpoint
-            calls["request"] = kwargs
-            return FakeResponse()
-
-    monkeypatch.setattr(items_module.httpx, "AsyncClient", FakeAsyncClient)
+    monkeypatch.setenv("ADMIN_FIREBASE_UIDS", "admin-user")
+    monkeypatch.setattr(items_module, "create_image_embedding", AsyncMock(return_value=None))
     results = await items_module.match_items(
-        MatchRequest(imageUrl="https://res.cloudinary.com/fendly/image/upload/wallet.jpg", targetType="lost"),
+        MatchRequest(imageUrl="https://images.example.test/report.jpg", targetType="lost"),
         session=session,
-        uid="user-1",
+        uid="admin-user",
     )
 
-    assert calls["endpoint"] == "https://functions.example/matchReportImages"
-    assert calls["request"]["headers"]["Authorization"] == "Bearer server-only-key"
-    assert results[0]["item"].title == "Blue wallet"
-    assert results[0]["item"].category == "other"
-    assert not hasattr(results[0]["item"], "description")
-    assert not hasattr(results[0]["item"], "created_by")
-    serialized = MatchResponse.model_validate(results[0]).model_dump(exclude_none=True)
-    assert set(serialized["item"]) == {"title", "category", "image_url"}
-    assert results[0]["score"] == 0.91
-    assert results[0]["matchType"] == "IMAGE"
+    assert results == []
+    assert not hasattr(items_module, "_find_cloudinary_image_matches")
 
 
 @pytest.mark.asyncio

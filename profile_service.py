@@ -3,6 +3,7 @@ import re
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from image_storage import private_image_reference
 from models import User
 from schemas import ProfileUpdate
 
@@ -36,7 +37,7 @@ def update_profile_record(session: Session, payload: ProfileUpdate, uid: str) ->
     if payload.city and payload.city.strip():
         user.city = payload.city.strip()
     if payload.profile_photo_url and payload.profile_photo_url.strip():
-        user.profile_photo_url = payload.profile_photo_url.strip()
+        user.profile_photo_url = private_image_reference(payload.profile_photo_url.strip())
     for field in ("instagram_url", "facebook_url"):
         value = getattr(payload, field)
         if value is not None:

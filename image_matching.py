@@ -7,6 +7,7 @@ from functools import lru_cache
 import httpx
 from PIL import Image
 
+from image_storage import refresh_private_image_url
 
 IMAGE_EMBEDDING_DIMENSIONS = 512
 _model_lock = threading.Lock()
@@ -42,6 +43,9 @@ async def create_image_embedding(image_url: str | None) -> list[float] | None:
     if os.getenv("USE_LOCAL_IMAGE_EMBEDDING_MODEL", "false").lower() != "true":
         return None
     try:
+        image_url = await asyncio.to_thread(refresh_private_image_url, image_url)
+        if not image_url:
+            return None
         from pathlib import Path
         upload_dir = Path(os.getenv("UPLOAD_DIR", "static/uploads"))
         filename = image_url.rstrip("/").split("/")[-1]

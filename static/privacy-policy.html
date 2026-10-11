@@ -17,7 +17,7 @@
 <body>
   <main>
     <h1>Fendly Privacy Policy</h1>
-    <p class="updated">Effective date: October 9, 2026</p>
+    <p class="updated">Effective date: October 11, 2026</p>
     <p>Fendly is operated by the developer of the Fendly app. Questions or
       privacy requests can be sent to
       <a href="mailto:info.fendly@gmail.com">info.fendly@gmail.com</a>.</p>
@@ -30,9 +30,8 @@
       <li><strong>Lost-and-found reports:</strong> report title, description,
         category, date, location (which may be precise), and item photos you
         submit. Reports are used to operate the service, show full reports to
-        authorized administrators, and identify possible matches. A limited
-        preview (title, category, date, and report photo) may be shown to the
-        owners of reports that the system identifies as a potential match.</li>
+        authorized administrators, and identify possible matches. Potential
+        match details are available only to authorized administrators.</li>
       <li><strong>Optional device IMEI:</strong> when submitting a lost-device
         report, you may provide its 15-digit IMEI to support SafeTrade checks.
         Fendly stores a keyed cryptographic hash of that number, not the raw
@@ -42,22 +41,17 @@
         device location to help add a location to a report. Fendly does not
         request background-location permission or continuously track location.</li>
       <li><strong>Notifications:</strong> a push-notification token and
-        notification delivery/read status may be stored to send match
-        notifications.</li>
+        notification delivery/read status may be stored. Match notifications
+        are created only after an administrator manually verifies a potential
+        match.</li>
       <li><strong>Payments:</strong> subscription status and a payment
         transaction identifier are stored by Fendly. Payment details are
         processed by Razorpay; Fendly does not receive or store your full card
         number or payment credentials through the app.</li>
-      <li><strong>Optional social publishing:</strong> when you explicitly
-        opt in on an individual report, Fendly may send that report's type
-        and title to Fendly's connected Facebook and Instagram accounts.
-        Facebook and Instagram receive a generated community-poster image
-        containing the report type, title, selected photo when available, and
-        a Fendly app link. The poster does not
-        include the report description, report date, location, contact
-        information, or IMEI. Instagram publishing requires a publicly
-        accessible generated JPEG poster. Standard photo/text posts are
-        supported; Reels are not currently published.</li>
+      <li><strong>Private reports:</strong> lost-and-found reports and their
+        images are visible to the report owner and authorized Fendly
+        administrators. Other users do not receive report details or
+        potential-match previews.</li>
     </ul>
 
     <h2>How information is used and shared</h2>
@@ -67,9 +61,10 @@
       reports when enabled, send notifications, process subscriptions, and
       respond to privacy requests. Authorized Fendly administrators can access
       report details, including report locations, to help coordinate recovery.
-      Users receive only a limited preview of potential matches; free-text
-      descriptions and precise locations are not included in that preview.
-      When an administrator opens a map link, the selected location is passed
+      Potential matches are visible only to authorized administrators. A
+      verified-match notification goes only to the owner of the lost report
+      and does not include either user's contact details. When an
+      administrator opens a map link, the selected location is passed
       to the mapping application or service.</p>
     <p>Depending on the services enabled for the deployment, information is
       processed by service providers that support Fendly, including Firebase
@@ -78,27 +73,16 @@
       Fendly API host); Resend for email verification codes; Fast2SMS for SMS
       verification; Razorpay for payments; and Brevo for administrator email
       alerts. Report text and submitted report images are sent to OpenAI for
-      safety moderation before they are published. When configured, report text may
-      also be sent to OpenAI or Google Gemini for translation or text matching.
-      Image matching may
-      process report images locally or through the configured matching
-      service, which may include Cloudinary. These providers process information
-      under their own terms and privacy notices.</p>
-    <p>If you opt in to social publishing for a report, Fendly sends the report
-      type, title, and Fendly app link to the applicable platform APIs.
-      Facebook and Instagram receive a generated poster image that may include
-      the selected report photo. The poster excludes the
-      report description, date, and location. Posts are published on Fendly's
-      brand accounts. Those posts are
-      public and are subject to Facebook and Instagram privacy terms and
-      retention. Fendly stores platform authorization tokens encrypted on its
-      server and limits connection management to authorized Fendly
-      administrators. Connecting your personal profile links does not itself
-      authorize publishing; publishing consent is requested separately for
-      each report.</p>
-    <p>Fendly no longer offers X publishing. Any posts published to X before
-      that feature was removed may remain public, are subject to X's policies,
-      and are not automatically removed when a Fendly account is deleted.</p>
+      safety moderation before storage. When configured, report text may also
+      be sent to OpenAI or Google Gemini for translation. These providers
+      process information under their own terms and privacy notices.</p>
+    <p>Fendly does not automatically publish reports to Facebook, Instagram,
+      or other social platforms. An owner may choose to generate a community
+      poster or alert card and share it using another app; information in
+      materials or messages the owner shares is then subject to the recipient
+      platform's terms and visibility settings. Fendly administrators may use
+      existing connected Meta accounts only to remove legacy posts created by
+      earlier versions of the app.</p>
     <p>SafeTrade's public IMEI verification endpoint returns only whether an
       exact IMEI has an active lost-device report; it does not disclose who
       filed the report or other report details. Lookups are rate-limited.
@@ -116,11 +100,10 @@
       Service-provider backups may retain deleted data until their normal
       backup-retention cycle expires. Push notifications already delivered to
       a device cannot be recalled. When your Fendly account is deleted, Fendly
-      removes queued social-publication jobs for its reports. A post already
-      published to a Fendly social account is a
-      public copy and is not automatically removed by deleting your Fendly
-      account; contact Fendly to request review and removal. Copies or caches
-      retained by a social platform are subject to that platform's policies.</p>
+      removes queued social-publication jobs for its reports. Public Meta
+      posts made by earlier app versions may remain until an administrator
+      confirms their removal; copies or caches retained by a social platform
+      are subject to that platform's policies.</p>
     <p>When account deletion completes, Fendly deletes the account's profiles,
       lost-and-found reports, report photos and generated community posters
       managed by Fendly, and related
@@ -142,17 +125,15 @@
       by services it controls. Deletion can fail temporarily if a required
       service is unavailable; the app will tell you to retry rather than
       report success. Pending social publication jobs and their Fendly-side
-      records are removed with the reports. Public posts already published
-      from Fendly's brand accounts are not automatically removed by account
-      deletion; contact
-      <a href="mailto:info.fendly@gmail.com">Fendly support</a> to request
-      review and removal.</p>
+      records are removed with the reports. Legacy public Meta posts may
+      require a separate administrator cleanup; social-platform copies or
+      caches are subject to that platform's policies.</p>
 
     <h2>Community content</h2>
-    <p>Fendly checks report text and images for safety before publication and
-      provides in-app options to report concerning reports and block their
-      authors. Administrators review submitted reports and may hide content
-      that violates the
+    <p>Fendly checks report text and images for safety before they are stored
+      and provides in-app options to report concerning reports and block their
+      authors. Reports are private to their owner and authorized
+      administrators. Administrators may remove content that violates the
       <a href="/static/community-guidelines.html">Community Guidelines</a>.</p>
 
     <h2>Security and your choices</h2>

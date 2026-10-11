@@ -8,7 +8,6 @@ from html import escape
 import firebase_admin
 from firebase_admin import credentials, messaging
 from sqlalchemy import select
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from models import AdminMatchAlert, DeviceToken, FoundItem, LostItem, UserNotification
@@ -29,33 +28,32 @@ def _firebase_app():
         return firebase_admin.initialize_app()
 
 
-def send_match_notifications(
+def send_verified_match_push(
     session: Session,
-    recipient_uids: set[str],
-    found_item_id: str,
-    score: float,
+    notification: UserNotification,
 ) -> int:
-    if not recipient_uids:
-        return 0
-
-    title = "Possible Fendly match"
-    body = f"A found item matches yours ({score:.0%} match)."
-    for recipient_uid in recipient_uids:
-        session.add(UserNotification(
-            firebase_uid=recipient_uid,
-            found_item_id=found_item_id,
-            title=title,
-            body=body,
-            score=score,
-        ))
-    try:
-        session.commit()
-    except Exception:
-        session.rollback()
-        logger.exception("Failed to persist user match notification")
+    if notification.notification_type != "match_verified" or not notification.match_alert_id:
+        raise ValueError("Only an admin-verified match notification can be sent")
+    persisted_notification = session.get(UserNotification, notification.id)
+    if persisted_notification is None:
+        raise ValueError("The match notification must be persisted before delivery")
+    alert = session.get(AdminMatchAlert, persisted_notification.match_alert_id)
+    if (
+        alert is None
+        or alert.review_status != "confirmed"
+        or not alert.verified_by
+        or alert.found_item_id != persisted_notification.found_item_id
+        or alert.lost_item_id != persisted_notification.lost_item_id
+    ):
+        raise ValueError("Only a persisted, admin-confirmed match can be delivered")
+    lost_item = session.get(LostItem, alert.lost_item_id)
+    if lost_item is None or lost_item.created_by != persisted_notification.firebase_uid:
+        raise ValueError("The match notification recipient is not the lost-report owner")
 
     tokens = session.scalars(
-        select(DeviceToken.token).where(DeviceToken.firebase_uid.in_(recipient_uids))
+        select(DeviceToken.token).where(
+            DeviceToken.firebase_uid == persisted_notification.firebase_uid
+        )
     ).all()
     if not tokens:
         return 0
@@ -66,10 +64,12 @@ def send_match_notifications(
             messaging.MulticastMessage(
                 tokens=tokens,
                 data={
-                    "title": title,
-                    "body": body,
-                    "found_item_id": found_item_id,
-                    "score": f"{score:.4f}",
+                    "title": persisted_notification.title,
+                    "body": persisted_notification.body,
+                    "notification_type": persisted_notification.notification_type,
+                    "match_alert_id": persisted_notification.match_alert_id,
+                    "found_item_id": persisted_notification.found_item_id,
+                    "lost_item_id": persisted_notification.lost_item_id or "",
                 },
                 android=messaging.AndroidConfig(priority="high"),
             )

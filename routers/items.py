@@ -6,15 +6,14 @@ import math
 import os
 import re
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
+
 from typing import Literal
-from urllib.parse import urlsplit
+from urllib.parse import unquote, urlsplit
 from uuid import uuid4
 
 import firebase_admin
 from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Response, UploadFile, status
 from firebase_admin import firestore
-import httpx
 from pydantic import BaseModel, Field
 from PIL import Image, UnidentifiedImageError
 from sqlalchemy import delete, or_, select
@@ -27,11 +26,16 @@ from image_matching import cosine_similarity, create_image_embedding
 from imei_security import imei_digest, validate_imei
 from moderation import moderate_content
 from models import AdminMatchAlert, FoundItem, LostItem
-from notifications import persist_admin_match_alert, send_admin_match_email, send_match_notifications
+from notifications import persist_admin_match_alert, send_admin_match_email
 from report_deletion import delete_report_from_app
+from image_storage import (
+    private_image_reference,
+    refresh_private_image_url,
+    store_image as store_private_image,
+)
 from routers.payments import require_lost_report_entitlement
-from schemas import ItemCreate, ItemResponse, ItemUpdate, MatchPreview, MatchRequest, MatchResponse
-from social_publishing import schedule_report_publications
+from schemas import ItemCreate, ItemResponse, ItemUpdate, MatchRequest, MatchResponse
+
 from translation import translate_report_fields
 
 router = APIRouter(prefix="/api", tags=["items"])
@@ -40,6 +44,18 @@ ALLOWED_IMAGE_TYPES = {"image/jpeg", "image/png", "image/webp"}
 WORD_PATTERN = re.compile(r"[a-z0-9]+")
 MATCH_ALERT_THRESHOLD = 0.85
 logger = logging.getLogger(__name__)
+
+
+def _report_image_fields(report: LostItem | FoundItem) -> dict[str, object]:
+    image_urls = report.image_urls or ([report.image_url] if report.image_url else [])
+    return {
+        "image_url": refresh_private_image_url(report.image_url),
+        "image_urls": [
+            refreshed_url
+            for image_url in image_urls
+            if (refreshed_url := refresh_private_image_url(image_url))
+        ],
+    }
 
 
 async def notify_admin_of_match(
@@ -127,55 +143,31 @@ async def notify_admin_of_match(
         print(f"[ERROR] Notification failed: {e}")
 
 
-async def _find_cloudinary_image_matches(
+async def _find_private_image_matches(
     image_url: str,
     target_type: str,
     session: Session,
 ) -> list[dict[str, object]]:
-    function_url = os.getenv(
-        "IMAGE_MATCHING_FUNCTION_URL",
-        "https://us-central1-fendly-6d746.cloudfunctions.net/matchReportImages",
-    )
-    service_role_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
-    if not service_role_key:
-        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "Image matching is not configured")
-
-    try:
-        async with httpx.AsyncClient(timeout=240) as client:
-            response = await client.post(
-                function_url,
-                json={"imageUrl": image_url, "targetType": target_type},
-                headers={"Authorization": f"Bearer {service_role_key}"},
-            )
-        response.raise_for_status()
-        matches = response.json().get("matches", [])
-    except (httpx.HTTPError, ValueError, TypeError) as error:
-        logger.exception("Cloudinary image matching request failed")
-        raise HTTPException(status.HTTP_502_BAD_GATEWAY, "Image matching is temporarily unavailable") from error
-
-    if not isinstance(matches, list):
-        raise HTTPException(status.HTTP_502_BAD_GATEWAY, "Image matcher returned an invalid response")
-
     model = LostItem if target_type == "lost" else FoundItem
-    source_ids = [str(match.get("source_id")) for match in matches if isinstance(match, dict) and match.get("source_id")]
-    if not source_ids:
+    query_embedding = await create_image_embedding(image_url)
+    if query_embedding is None:
         return []
-
-    records = session.scalars(select(model).where(model.id.in_(source_ids))).all()
-    records_by_id = {str(record.id): record for record in records}
-    results = []
-    for match in matches:
-        if not isinstance(match, dict):
+    records = session.scalars(
+        select(model).where(model.image_embedding.is_not(None))
+    ).all()
+    matches = []
+    for record in records:
+        score = cosine_similarity(query_embedding, record.image_embedding)
+        if score is None or score < 0.70:
             continue
-        record = records_by_id.get(str(match.get("source_id", "")))
-        if record is None:
-            continue
-        results.append({
-            "item": record,
-            "score": max(0.0, min(1.0, float(match.get("similarity", 0.0)))),
+        item_response = ItemResponse.model_validate(record).model_dump()
+        item_response.update(_report_image_fields(record))
+        matches.append({
+            "item": item_response,
+            "score": max(0.0, min(1.0, float(score))),
             "matchType": "IMAGE",
         })
-    return results
+    return sorted(matches, key=lambda result: float(result["score"]), reverse=True)[:25]
 
 
 class ItemSubmission(BaseModel):
@@ -190,7 +182,6 @@ class ItemSubmission(BaseModel):
     report_date: str | None = Field(default=None, max_length=32)
     report_location: str | None = Field(default=None, max_length=500)
     category: str = Field(default="other", min_length=1, max_length=80)
-    social_share_consent: bool = False
     community_guidelines_accepted: bool = False
     payment_id: str | None = Field(default=None, max_length=128)
     imei_number: str | None = Field(default=None, exclude=True)
@@ -219,8 +210,21 @@ def _validate_report_image_urls(image_urls: list[str]) -> None:
         if value
         for parsed in [urlsplit(value)]
     }
+    configured_bucket = os.getenv("SUPABASE_STORAGE_BUCKET", "uploads")
     for image_url in image_urls:
         parsed = urlsplit(image_url)
+        is_supabase_origin = bool(supabase_base) and (
+            (parsed.scheme, parsed.netloc)
+            == (urlsplit(supabase_base).scheme, urlsplit(supabase_base).netloc)
+        )
+        supabase_object_parts = parsed.path.removeprefix("/storage/v1/object/").split("/", 2)
+        is_supabase_signed_upload = (
+            is_supabase_origin
+            and len(supabase_object_parts) == 3
+            and supabase_object_parts[0] == "sign"
+            and unquote(supabase_object_parts[1]) == configured_bucket
+            and bool(parsed.query)
+        )
         is_local_http_upload = (
             not is_production
             and parsed.scheme == "http"
@@ -231,17 +235,18 @@ def _validate_report_image_urls(image_urls: list[str]) -> None:
             or not parsed.path
             or parsed.username
             or parsed.password
-            or parsed.query
+            or (parsed.query and not is_supabase_signed_upload)
             or parsed.fragment
         ):
             raise HTTPException(status.HTTP_400_BAD_REQUEST, "Report images must use a Fendly upload URL")
 
         is_fendly_upload = (parsed.scheme, parsed.netloc) in allowed_origins
-        is_supabase_upload = (
-            bool(supabase_base)
-            and (parsed.scheme, parsed.netloc) == (
-                urlsplit(supabase_base).scheme,
-                urlsplit(supabase_base).netloc,
+        is_supabase_upload = is_supabase_origin and (
+            parsed.path.startswith(
+                f"/storage/v1/object/sign/{configured_bucket}/"
+            )
+            or parsed.path.startswith(
+                f"/storage/v1/object/public/{configured_bucket}/"
             )
         )
         is_cloudinary_upload = (
@@ -385,7 +390,14 @@ async def _save_item(
         exclude={"payment_id", "imei_number", "community_guidelines_accepted"}
     )
     item_values["category"] = category
-    item_values["image_url"] = payload.image_url or (payload.image_urls[0] if payload.image_urls else None)
+    item_values["image_url"] = private_image_reference(
+        payload.image_url or (payload.image_urls[0] if payload.image_urls else None)
+    )
+    item_values["image_urls"] = [
+        reference
+        for image_url in report_image_urls
+        if (reference := private_image_reference(image_url))
+    ]
     if model is LostItem:
         item_values["status"] = "LOST"
         item_values["imei_hash"] = imei_digest(payload.imei_number) if payload.imei_number else None
@@ -399,12 +411,6 @@ async def _save_item(
 
     session.add(record)
     session.flush()
-    schedule_report_publications(
-        session,
-        record,
-        "lost" if model is LostItem else "found",
-        background_tasks,
-    )
     session.commit()
     session.refresh(record)
     return record
@@ -477,29 +483,7 @@ async def _process_created_report_background(report_id: str, report_type: str) -
 
 
 async def _store_image(data: bytes, filename: str, content_type: str) -> str:
-    supabase_url = os.getenv("SUPABASE_URL", "").rstrip("/")
-    service_role_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
-    bucket = os.getenv("SUPABASE_STORAGE_BUCKET", "uploads")
-    if supabase_url and service_role_key:
-        endpoint = f"{supabase_url}/storage/v1/object/{bucket}/{filename}"
-        headers = {
-            "Authorization": f"Bearer {service_role_key}",
-            "Content-Type": content_type,
-            "x-upsert": "false",
-        }
-        try:
-            async with httpx.AsyncClient(timeout=8) as client:
-                response = await client.post(endpoint, content=data, headers=headers)
-            if not response.is_error:
-                return f"{supabase_url}/storage/v1/object/public/{bucket}/{filename}"
-        except httpx.HTTPError:
-            pass
-
-    upload_dir = Path(os.getenv("UPLOAD_DIR", "static/uploads"))
-    upload_dir.mkdir(parents=True, exist_ok=True)
-    (upload_dir / filename).write_bytes(data)
-    base_url = os.getenv("PUBLIC_BASE_URL", "https://fendly-api.onrender.com").rstrip("/")
-    return f"{base_url}/static/uploads/{filename}"
+    return await store_private_image(data, filename, content_type)
 
 
 @router.post("/upload", status_code=status.HTTP_201_CREATED)
@@ -555,12 +539,14 @@ async def create_lost_item(
     background_tasks: BackgroundTasks,
     session: Session | None = Depends(get_db),
     uid: str = Depends(get_current_user),
-) -> LostItem:
+) -> dict[str, object]:
     try:
         session = _require_db_session(session)
         record = await _save_item(payload, session, uid, LostItem, background_tasks)
         background_tasks.add_task(_process_created_report_background, record.id, "lost")
-        return record
+        response = ItemResponse.model_validate(record).model_dump()
+        response.update(_report_image_fields(record))
+        return response
     except HTTPException:
         raise
     except Exception as exc:
@@ -573,12 +559,14 @@ async def create_found_item(
     background_tasks: BackgroundTasks,
     session: Session | None = Depends(get_db),
     uid: str = Depends(get_current_user),
-) -> FoundItem:
+) -> dict[str, object]:
     try:
         session = _require_db_session(session)
         record = await _save_item(payload, session, uid, FoundItem, background_tasks)
         background_tasks.add_task(_process_created_report_background, record.id, "found")
-        return record
+        response = ItemResponse.model_validate(record).model_dump()
+        response.update(_report_image_fields(record))
+        return response
     except HTTPException:
         raise
     except Exception as exc:
@@ -591,7 +579,7 @@ async def create_item_compat(
     background_tasks: BackgroundTasks,
     session: Session | None = Depends(get_db),
     uid: str = Depends(get_current_user),
-) -> LostItem | FoundItem:
+) -> dict[str, object]:
     """Create a lost/found report through the generic client API path."""
     try:
         session = _require_db_session(session)
@@ -601,7 +589,6 @@ async def create_item_compat(
             source_language=request.source_language,
             image_url=request.imageUrl,
             image_urls=request.imageUrls,
-            social_share_consent=request.social_share_consent,
             community_guidelines_accepted=request.community_guidelines_accepted,
             lat=request.lat,
             lng=request.lng,
@@ -618,7 +605,9 @@ async def create_item_compat(
             record.id,
             "lost" if model is LostItem else "found",
         )
-        return record
+        response = ItemResponse.model_validate(record).model_dump()
+        response.update(_report_image_fields(record))
+        return response
     except HTTPException:
         raise
     except Exception as exc:
@@ -649,7 +638,11 @@ async def get_community_poster(
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Report not found")
     from social_poster import render_report_poster
 
-    poster = await render_report_poster(report, item_type.strip().casefold())
+    poster = await render_report_poster(
+        report,
+        item_type.strip().casefold(),
+        image_url=refresh_private_image_url(report.image_url),
+    )
     return Response(
         content=poster,
         media_type="image/jpeg",
@@ -697,11 +690,12 @@ async def list_my_items(
         for alert in match_alerts:
             if alert.lost_item_id in recovered_lost_ids:
                 recovered_report_ids.add(alert.found_item_id)
-            if (alert.review_status or "").strip().lower() in {"pending", "confirmed"}:
+            if (alert.review_status or "").strip().lower() == "confirmed":
                 matched_report_ids.update((alert.lost_item_id, alert.found_item_id))
 
-    return [
-        {
+    results = []
+    for item_type, item in items:
+        result = {
             "id": item.id,
             "type": item_type,
             "title": item.title,
@@ -711,8 +705,7 @@ async def list_my_items(
             "lng": item.lng,
             "report_date": item.report_date or _stored_report_field(item.description, "Date"),
             "report_location": item.report_location or _stored_report_field(item.description, "Location"),
-            "image_url": item.image_url,
-            "image_urls": item.image_urls or ([item.image_url] if item.image_url else []),
+            **_report_image_fields(item),
             "edit_count": item.edit_count,
             "created_at": item.created_at,
             "can_delete": _within_user_report_deletion_window(item.created_at),
@@ -723,8 +716,8 @@ async def list_my_items(
                 else 2
             ),
         }
-        for item_type, item in items
-    ]
+        results.append(result)
+    return results
 
 
 def _within_user_report_deletion_window(created_at: datetime | None) -> bool:
@@ -744,7 +737,7 @@ async def update_item(
     payload: ItemUpdate,
     session: Session | None = Depends(get_db),
     uid: str = Depends(get_current_user),
-) -> LostItem | FoundItem:
+) -> dict[str, object]:
     session = _require_db_session(session)
     if not payload.community_guidelines_accepted:
         raise HTTPException(
@@ -802,8 +795,12 @@ async def update_item(
     record.lng = payload.lng
     record.report_date = payload.report_date
     record.report_location = payload.report_location
-    record.image_urls = report_image_urls
-    record.image_url = (
+    record.image_urls = [
+        reference
+        for image_url in report_image_urls
+        if (reference := private_image_reference(image_url))
+    ]
+    record.image_url = private_image_reference(
         payload.image_url
         if payload.image_url is not None
         else report_image_urls[0]
@@ -816,7 +813,9 @@ async def update_item(
     record.image_embedding = None
     session.commit()
     session.refresh(record)
-    return record
+    response = ItemResponse.model_validate(record).model_dump()
+    response.update(_report_image_fields(record))
+    return response
 
 
 @router.delete("/items/{item_type}/{item_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -841,10 +840,9 @@ def delete_item(
             "Reports can only be deleted within one hour of posting.",
         )
 
-    report.social_share_consent = False
-    session.commit()
-
     try:
+        report.social_share_consent = False
+        session.commit()
         from social_publishing import remove_report_publications
 
         platform_failures = remove_report_publications(
@@ -907,42 +905,19 @@ async def match_items(
     uid: str = Depends(get_current_user),
 ) -> list[dict[str, object]]:
     session = _require_db_session(session)
-    from routers.admin import _parse_admin_uids
+    from routers.admin import require_admin
 
-    is_admin = uid in _parse_admin_uids(os.getenv("ADMIN_FIREBASE_UIDS"))
+    require_admin(uid=uid, session=session)
 
     if request.imageUrl:
         target_type = (request.targetType or "").strip().lower()
         if target_type not in {"lost", "found"}:
             raise HTTPException(400, "targetType must be lost or found for image matching")
-        if not is_admin:
-            owned_image = False
-            for model in (LostItem, FoundItem):
-                owned_reports = session.scalars(
-                    select(model).where(model.created_by == uid)
-                ).all()
-                if any(
-                    item.image_url == request.imageUrl
-                    or (
-                        isinstance(item.image_urls, list)
-                        and request.imageUrl in item.image_urls
-                    )
-                    for item in owned_reports
-                ):
-                    owned_image = True
-                    break
-            if not owned_image:
-                raise HTTPException(404, "Report not found")
-        results = await _find_cloudinary_image_matches(request.imageUrl, target_type, session)
+        results = await _find_private_image_matches(request.imageUrl, target_type, session)
         return [
             {
                 **result,
-                "item": result["item"] if is_admin else MatchPreview(
-                    title=result["item"].title,
-                    category=result["item"].category,
-                    report_date=result["item"].report_date,
-                    image_url=result["item"].image_url,
-                ),
+                "item": result["item"],
             }
             for result in results
         ]
@@ -959,8 +934,6 @@ async def match_items(
         select(query_model).where(query_model.id == query_item_id)
     )
     if query_item is None:
-        raise HTTPException(404, "Report not found")
-    if not is_admin and query_item.created_by != uid:
         raise HTTPException(404, "Report not found")
 
     candidates = session.scalars(
@@ -994,18 +967,6 @@ async def match_items(
             score = semantic_score * 0.3 + image_score * 0.45 + keyword_score * 0.1 + location_score * 0.15
         results.append({"item": item, "score": round(score, 4)})
     ranked_results = sorted(results, key=lambda result: float(result["score"]), reverse=True)[:25]
-    notified_uids = {
-        item.created_by
-        for result in ranked_results
-        if float(result["score"]) >= 0.5
-        for item in [result["item"]]
-        if item.created_by != query_item.created_by
-    }
-    max_score = max((float(result["score"]) for result in ranked_results), default=0.0)
-    found_item_id = query_item.id if matching_found_item else (
-        ranked_results[0]["item"].id if ranked_results else ""
-    )
-    send_match_notifications(session, notified_uids, found_item_id, max_score)
     if ranked_results:
         await notify_admin_of_match(session, query_item_id, [result["item"] for result in ranked_results], "ITEM_MATCH")
     for result in ranked_results:
@@ -1016,15 +977,9 @@ async def match_items(
         found_item = query_item if matching_found_item else matched_item
         lost_item = matched_item if matching_found_item else query_item
         _notify_admin_for_match(session, found_item, lost_item, score, "SIMILARITY")
-    return [
-        {
-            **result,
-            "item": result["item"] if is_admin else MatchPreview(
-                title=result["item"].title,
-                category=result["item"].category,
-                report_date=result["item"].report_date,
-                image_url=result["item"].image_url,
-            ),
-        }
-        for result in ranked_results
-    ]
+    for result in ranked_results:
+        item = result["item"]
+        item_response = ItemResponse.model_validate(item).model_dump()
+        item_response.update(_report_image_fields(item))
+        result["item"] = item_response
+    return ranked_results

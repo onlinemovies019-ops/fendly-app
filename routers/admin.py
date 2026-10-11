@@ -5,9 +5,10 @@ import math
 import os
 import re
 import time
+from datetime import datetime, timezone
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy import desc, func, or_, select
 from sqlalchemy.orm import Session
@@ -16,6 +17,7 @@ from ai_matching import create_embedding, item_text
 from auth import get_current_user
 from database import get_db
 from image_matching import cosine_similarity, create_image_embedding
+from image_storage import refresh_private_image_url
 from models import (
     AdminMatchAlert,
     FoundItem,
@@ -23,7 +25,7 @@ from models import (
     User,
     UserNotification,
 )
-from notifications import persist_admin_match_alert, send_match_notifications
+from notifications import persist_admin_match_alert, send_verified_match_push
 from report_deletion import delete_report_from_app
 from schemas import ItemResponse
 from translation import translate_report_fields, translate_report_fields_batch
@@ -37,6 +39,18 @@ TEST_REPORT_MARKER = re.compile(
     r"^\s*(?:\[(?:test|dummy|sample)\]|(?:test|dummy|sample)(?:\s+(?:report|item|data)\b|[_:-]))",
     re.IGNORECASE,
 )
+
+
+def _report_image_fields(item: LostItem | FoundItem) -> dict[str, object]:
+    image_urls = item.image_urls or ([item.image_url] if item.image_url else [])
+    return {
+        "image_url": refresh_private_image_url(item.image_url),
+        "image_urls": [
+            refreshed_url
+            for image_url in image_urls
+            if (refreshed_url := refresh_private_image_url(image_url))
+        ],
+    }
 
 
 def _supabase_admin_alert_request(method: str, path: str, **kwargs):
@@ -64,13 +78,10 @@ def _supabase_admin_alert_request(method: str, path: str, **kwargs):
         raise HTTPException(503, "Admin notifications are temporarily unavailable") from error
 
 
-class NotifyRequest(BaseModel):
-    recipient_uid: str = Field(min_length=1, max_length=128)
-    score: float = Field(ge=0, le=1)
-
-
 class AlertReviewRequest(BaseModel):
     decision: str = Field(pattern="^(confirmed|rejected)$")
+    proof_verified: bool = False
+    verification_notes: str | None = Field(default=None, max_length=1000)
 
 
 class SubscriptionOverrideRequest(BaseModel):
@@ -310,8 +321,12 @@ async def _translate_alert_titles(alerts: list[dict[str, object]], session: Sess
         alert["lost_description"] = (
             (lost_item.description_en or lost_item.description) if lost_item else lost_indexed.get("description", "")
         )
-        alert["found_image_url"] = found_item.image_url if found_item else found_indexed.get("image_url", "")
-        alert["lost_image_url"] = lost_item.image_url if lost_item else lost_indexed.get("image_url", "")
+        alert["found_image_url"] = refresh_private_image_url(
+            found_item.image_url if found_item else found_indexed.get("image_url", "")
+        )
+        alert["lost_image_url"] = refresh_private_image_url(
+            lost_item.image_url if lost_item else lost_indexed.get("image_url", "")
+        )
         alert.setdefault("review_status", "pending")
         alert["reason"] = f"Found '{alert['found_title']}' may match lost report '{alert['lost_title']}'."
     return alerts
@@ -340,8 +355,7 @@ async def list_all_items(
             "lng": item.lng,
             "report_date": item.report_date,
             "original_report_location": item.report_location,
-            "image_url": item.image_url,
-            "image_urls": item.image_urls or ([item.image_url] if item.image_url else []),
+            **_report_image_fields(item),
             "created_by": item.created_by,
             "created_at": item.created_at,
         }
@@ -472,26 +486,82 @@ def review_match_alert(
     alert_id: str,
     payload: AlertReviewRequest,
     session: Session = Depends(get_db),
-    _: str = Depends(require_admin),
+    uid: str = Depends(require_admin),
 ) -> dict[str, str]:
+    alert = session.get(AdminMatchAlert, alert_id)
+    if alert is None:
+        raise HTTPException(404, "Alert not found")
+
+    verification_notes = (payload.verification_notes or "").strip()
+    if payload.decision == "confirmed":
+        if not payload.proof_verified:
+            raise HTTPException(400, "Confirm that the proof was manually verified")
+        if len(verification_notes) < 10:
+            raise HTTPException(
+                400,
+                "Add at least 10 characters describing the proof you verified",
+            )
+
+    should_notify = payload.decision == "confirmed" and (
+        alert.review_status != "confirmed" or not alert.verified_by
+    )
+    notification = None
+    if should_notify:
+        found_item = session.get(FoundItem, alert.found_item_id)
+        lost_item = session.get(LostItem, alert.lost_item_id)
+        if found_item is None or lost_item is None:
+            raise HTTPException(409, "The reports for this match are no longer available")
+
+        alert.verified_by = uid
+        alert.verification_notes = verification_notes
+        alert.reviewed_at = datetime.now(timezone.utc)
+        notification = session.scalar(
+            select(UserNotification).where(
+                UserNotification.match_alert_id == alert.id,
+                UserNotification.firebase_uid == lost_item.created_by,
+            )
+        )
+        if notification is None:
+            notification = UserNotification(
+                firebase_uid=lost_item.created_by,
+                found_item_id=found_item.id,
+                lost_item_id=lost_item.id,
+                match_alert_id=alert.id,
+                notification_type="match_verified",
+                title="Verified Fendly match",
+                body=(
+                    "Good news! A potential match for your lost item has been "
+                    "verified by the admin. Tap to view instructions."
+                ),
+                score=alert.confidence,
+            )
+            session.add(notification)
+    elif payload.decision == "rejected":
+        alert.verified_by = uid
+        alert.verification_notes = verification_notes or None
+        alert.reviewed_at = datetime.now(timezone.utc)
+
+    alert.review_status = payload.decision
+    alert.is_read = True
+
     response = _supabase_admin_alert_request(
         "PATCH",
         "admin_match_alerts",
         params={"id": f"eq.{alert_id}"},
-        json={"review_status": payload.decision, "is_read": True},
+        json={
+            "review_status": payload.decision,
+            "is_read": True,
+            "verified_by": alert.verified_by,
+            "verification_notes": alert.verification_notes,
+            "reviewed_at": alert.reviewed_at.isoformat() if alert.reviewed_at else None,
+        },
         headers={"Prefer": "return=representation"},
     )
-    if response is not None:
-        if not response.json():
-            raise HTTPException(404, "Alert not found")
-        return {"review_status": payload.decision}
-
-    alert = session.get(AdminMatchAlert, alert_id)
-    if alert is None:
+    if response is not None and not response.json():
         raise HTTPException(404, "Alert not found")
-    alert.review_status = payload.decision
-    alert.is_read = True
     session.commit()
+    if notification is not None:
+        send_verified_match_push(session, notification)
     return {"review_status": payload.decision}
 
 
@@ -597,8 +667,7 @@ async def search_users_and_reports(
             "lng": item.lng,
             "report_date": item.report_date,
             "original_report_location": item.report_location,
-            "image_url": item.image_url,
-            "image_urls": item.image_urls or ([item.image_url] if item.image_url else []),
+            **_report_image_fields(item),
             "created_at": item.created_at,
         } for item_type, item in report_items)
         reports.sort(key=lambda item: item["created_at"].timestamp() if item["created_at"] else 0, reverse=True)
@@ -654,8 +723,7 @@ async def search_admin_reports(
             "lng": item.lng,
             "report_date": item.report_date,
             "original_report_location": item.report_location,
-            "image_url": item.image_url,
-            "image_urls": item.image_urls or ([item.image_url] if item.image_url else []),
+            **_report_image_fields(item),
             "created_by": item.created_by,
             "created_at": item.created_at,
         }
@@ -708,18 +776,37 @@ async def find_matches(
         item = result["item"]
         item_response = ItemResponse.model_validate(item).model_dump()
         item_response.update(_english_report_fields(item))
+        item_response.update(_report_image_fields(item))
         result["item"] = item_response
     return ranked
 
 
-@router.post("/matches/{found_item_id}/notify")
-def notify_owner(
-    found_item_id: str,
-    payload: NotifyRequest,
+@router.post("/social/cleanup")
+def cleanup_legacy_social_posts(
+    limit: int = Query(default=100, ge=1, le=500),
     session: Session = Depends(get_db),
     _: str = Depends(require_admin),
-) -> dict[str, int]:
-    if session.get(FoundItem, found_item_id) is None:
-        raise HTTPException(404, "Found item not found")
-    count = send_match_notifications(session, {payload.recipient_uid}, found_item_id, payload.score)
-    return {"sent": count}
+) -> dict[str, object]:
+    from social_publishing import remove_legacy_social_posts
+
+    return remove_legacy_social_posts(session, limit=limit)
+
+
+@router.post("/private-images/migrate")
+async def migrate_legacy_private_images(
+    apply: bool = Query(default=False),
+    limit: int = Query(default=10, ge=1, le=25),
+    session: Session = Depends(get_db),
+    _: str = Depends(require_admin),
+) -> dict[str, object]:
+    from private_image_migration import migrate_private_images
+
+    try:
+        return await migrate_private_images(session, limit=limit, apply=apply)
+    except Exception as error:
+        session.rollback()
+        logger.exception("Private image migration failed")
+        raise HTTPException(
+            503,
+            "Private image migration is temporarily unavailable; no completion is reported.",
+        ) from error

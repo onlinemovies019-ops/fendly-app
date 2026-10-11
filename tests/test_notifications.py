@@ -15,7 +15,7 @@ from models import (
     User,
     UserNotification,
 )
-from notifications import send_match_notifications
+from notifications import send_verified_match_push
 from routers import admin as admin_module
 from routers import items as items_module
 from routers import users as users_module
@@ -34,15 +34,68 @@ def notification_session():
     engine.dispose()
 
 
-def test_user_match_ping_is_persisted_without_device_token(notification_session):
-    sent = send_match_notifications(notification_session, {"user-1"}, "found-1", 0.91)
+def test_only_admin_verified_match_is_persisted_for_user(notification_session, monkeypatch):
+    found_item = FoundItem(
+        id="found-1", created_by="user-2", title="Found wallet", description="Wallet", lat=0, lng=0,
+    )
+    lost_item = LostItem(
+        id="lost-1", created_by="user-1", title="Lost wallet", description="Wallet", lat=0, lng=0,
+    )
+    alert = AdminMatchAlert(
+        id="alert-1",
+        found_item_id=found_item.id,
+        lost_item_id=lost_item.id,
+        found_title=found_item.title,
+        lost_title=lost_item.title,
+        confidence=0.91,
+        reason="Potential match",
+    )
+    notification_session.add_all([found_item, lost_item, alert])
+    notification_session.commit()
+    monkeypatch.setattr(admin_module, "_supabase_admin_alert_request", lambda *args, **kwargs: None)
+    monkeypatch.setattr(admin_module, "send_verified_match_push", lambda *args, **kwargs: 0)
+
+    admin_module.review_match_alert(
+        "alert-1",
+        admin_module.AlertReviewRequest(
+            decision="confirmed",
+            proof_verified=True,
+            verification_notes="Photo details and identifying marks match.",
+        ),
+        session=notification_session,
+        uid="admin-uid",
+    )
 
     notifications = notification_session.scalars(select(UserNotification)).all()
-    assert sent == 0
     assert len(notifications) == 1
     assert notifications[0].firebase_uid == "user-1"
     assert notifications[0].found_item_id == "found-1"
+    assert notifications[0].lost_item_id == "lost-1"
+    assert notifications[0].match_alert_id == "alert-1"
+    assert notifications[0].notification_type == "match_verified"
+    assert notifications[0].body == (
+        "Good news! A potential match for your lost item has been verified by the admin. "
+        "Tap to view instructions."
+    )
     assert notifications[0].is_read is False
+
+
+def test_unverified_notification_cannot_trigger_push(notification_session):
+    notification = UserNotification(
+        firebase_uid="user-1",
+        found_item_id="found-1",
+        lost_item_id="lost-1",
+        match_alert_id="alert-1",
+        notification_type="match_verified",
+        title="Verified Fendly match",
+        body="Potential match verified.",
+        score=0.91,
+    )
+    notification_session.add(notification)
+    notification_session.commit()
+
+    with pytest.raises(ValueError, match="admin-confirmed"):
+        send_verified_match_push(notification_session, notification)
 
 
 def test_user_inbox_and_read_state_are_scoped_to_authenticated_uid(notification_session):
@@ -50,15 +103,21 @@ def test_user_inbox_and_read_state_are_scoped_to_authenticated_uid(notification_
         UserNotification(
             firebase_uid="user-1",
             found_item_id="found-1",
-            title="Possible Fendly match",
-            body="A found item matches yours (91% match).",
+            lost_item_id="lost-1",
+            match_alert_id="alert-1",
+            notification_type="match_verified",
+            title="Verified Fendly match",
+            body="A potential match has been verified.",
             score=0.91,
         ),
         UserNotification(
             firebase_uid="user-2",
             found_item_id="found-2",
-            title="Possible Fendly match",
-            body="A found item matches yours (83% match).",
+            lost_item_id="lost-2",
+            match_alert_id="alert-2",
+            notification_type="match_verified",
+            title="Verified Fendly match",
+            body="A potential match has been verified.",
             score=0.83,
         ),
     ])
@@ -171,8 +230,11 @@ async def test_admin_alert_list_does_not_include_user_inbox(notification_session
         UserNotification(
             firebase_uid="user-1",
             found_item_id="found-1",
-            title="Possible Fendly match",
-            body="A found item matches yours (91% match).",
+            lost_item_id="lost-1",
+            match_alert_id="alert-1",
+            notification_type="match_verified",
+            title="Verified Fendly match",
+            body="A potential match has been verified.",
             score=0.91,
         ),
     ])
@@ -250,8 +312,11 @@ def test_report_owner_can_delete_report_and_related_records(notification_session
         UserNotification(
             firebase_uid="user-2",
             found_item_id="found-1",
-            title="Possible Fendly match",
-            body="A found item matches yours.",
+            lost_item_id="lost-1",
+            match_alert_id="linked-alert",
+            notification_type="match_verified",
+            title="Verified Fendly match",
+            body="A potential match has been verified.",
             score=0.91,
         ),
         SocialPublication(

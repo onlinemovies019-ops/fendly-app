@@ -187,13 +187,18 @@ async def _load_report_photo(image_url: str) -> Image.Image:
         raise RuntimeError("Report photo is not a readable image") from error
 
 
-async def render_report_poster(report: LostItem | FoundItem, report_type: str) -> bytes:
+async def render_report_poster(
+    report: LostItem | FoundItem,
+    report_type: str,
+    image_url: str | None = None,
+) -> bytes:
     title = sanitize_public_title(report.title) or "Reported item"
     report_url = fendly_report_url(report.id)
     photo = None
-    if report.image_url:
+    poster_image_url = image_url if image_url is not None else report.image_url
+    if poster_image_url:
         try:
-            photo = await _load_report_photo(report.image_url)
+            photo = await _load_report_photo(poster_image_url)
         except (httpx.HTTPError, RuntimeError, ValueError, OSError):
             logger.exception("Could not load report photo for social poster %s", report.id)
     return await asyncio.to_thread(

@@ -10,6 +10,8 @@ import logging
 from fastapi import Depends, FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from starlette.exceptions import HTTPException as StarletteHTTPException
+from starlette.types import Scope
 from pydantic import BaseModel, EmailStr
 from sqlalchemy import delete, select, text
 from sqlalchemy.exc import SQLAlchemyError
@@ -18,6 +20,7 @@ from auth import router as auth_router, get_current_user
 from database import engine, get_db
 from models import Base, EmailOTPChallenge, PublicImeiLookupRateLimit, SmsOTPChallenge, SmsOTPRateLimit, User
 from routers.items import create_item_compat, match_items, router as items_router
+from routers.notifications import inbox_router as inbox_notifications_router
 from routers.notifications import router as notifications_router
 from routers.users import router as users_router
 from routers.admin import router as admin_router
@@ -25,7 +28,6 @@ from routers.payments import router as payments_router
 from routers.imei import router as imei_router
 from routers.vault import router as vault_router
 from schemas import ItemResponse, MatchResponse
-from social_publishing import process_due_publications, router as social_router
 
 logger = logging.getLogger(__name__)
 
@@ -205,14 +207,12 @@ async def lifespan(_: FastAPI):
                 )
             )
     cleanup_task = asyncio.create_task(_cleanup_expired_otp_challenges())
-    social_publication_task = asyncio.create_task(_process_social_publication_queue())
     try:
         yield
     finally:
         cleanup_task.cancel()
-        social_publication_task.cancel()
         try:
-            await asyncio.gather(cleanup_task, social_publication_task)
+            await asyncio.gather(cleanup_task)
         except asyncio.CancelledError:
             pass
 
@@ -247,15 +247,6 @@ async def _cleanup_expired_otp_challenges() -> None:
         await asyncio.sleep(3600)
 
 
-async def _process_social_publication_queue() -> None:
-    while True:
-        try:
-            await asyncio.to_thread(process_due_publications)
-        except Exception:
-            logger.exception("Social publication queue processing failed")
-        await asyncio.sleep(30)
-
-
 app = FastAPI(title="Fendly API", lifespan=lifespan)
 
 
@@ -285,7 +276,14 @@ app.add_middleware(
     allow_headers=["Authorization", "Content-Type", "Accept", "Origin"],
 )
 
-app.mount("/static", StaticFiles(directory="static"), name="static")
+class PublicStaticFiles(StaticFiles):
+    async def get_response(self, path: str, scope: Scope):
+        if path == "uploads" or path.startswith("uploads/"):
+            raise StarletteHTTPException(status_code=404)
+        return await super().get_response(path, scope)
+
+
+app.mount("/static", PublicStaticFiles(directory="static"), name="static")
 
 # --- ROUTER INCLUSIONS ---
 app.include_router(auth_router)
@@ -304,12 +302,12 @@ app.add_api_route(
     response_model=list[MatchResponse],
 )
 app.include_router(notifications_router)
+app.include_router(inbox_notifications_router)
 app.include_router(users_router)
 app.include_router(admin_router)
 app.include_router(payments_router)
 app.include_router(imei_router)
 app.include_router(vault_router)
-app.include_router(social_router)
 
 
 @app.get("/health")

@@ -1,4 +1,3 @@
-import asyncio
 import base64
 import hashlib
 import logging
@@ -9,22 +8,18 @@ import time
 from datetime import datetime, timezone
 from typing import Literal, cast
 from urllib.parse import quote, urlencode, urlsplit
-from uuid import uuid4
 
 import httpx
 from cryptography.fernet import Fernet, InvalidToken
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
 from fastapi.responses import HTMLResponse
-from sqlalchemy import delete, select, update
+from sqlalchemy import delete, or_, select, update
 from sqlalchemy.orm import Session
 
 from app_links import fendly_report_url
 from database import SessionLocal, get_db
 from models import FoundItem, LostItem, SocialAccount, SocialOAuthState, SocialPublication
 from routers.admin import require_admin
-from social_content import sanitize_public_title
-from social_poster import render_report_poster
-from image_storage import store_image
 
 router = APIRouter(prefix="/api/social", tags=["social publishing"])
 logger = logging.getLogger(__name__)
@@ -46,8 +41,6 @@ UNEXPECTED_PUBLISHING_FAILURE = (
     "Unexpected publishing error. Check the platform before retrying "
     "to avoid a duplicate public post."
 )
-INSTAGRAM_CONTAINER_TIMEOUT_SECONDS = 60
-INSTAGRAM_CONTAINER_POLL_INTERVAL_SECONDS = 2
 
 
 def _secret_box() -> Fernet:
@@ -130,52 +123,10 @@ def schedule_report_publications(
     report_type: str,
     background_tasks: BackgroundTasks | None,
 ) -> None:
-    if not report.social_share_consent:
-        return
-
-    connected = [
-        str(provider)
-        for provider in session.scalars(
-            select(SocialAccount.provider).where(SocialAccount.provider.in_(PROVIDER_NAMES))
-        ).all()
-    ]
-    if not connected:
-        raise HTTPException(
-            status.HTTP_503_SERVICE_UNAVAILABLE,
-            "Social publishing is not connected yet. Uncheck social sharing or try again later.",
-        )
-
-    now = int(time.time())
-    queued_ids: list[SocialPublication] = []
-    for provider in connected:
-        job = SocialPublication(
-            report_id=report.id,
-            report_type=report_type.lower(),
-            provider=provider,
-            status="pending",
-            next_attempt_at=now,
-        )
-        session.add(job)
-        if job.status == "pending":
-            queued_ids.append(job)
-    session.flush()
-    if background_tasks is not None:
-        for job in queued_ids:
-            background_tasks.add_task(publish_publication, job.id)
-
-
-def _safe_caption(report: LostItem | FoundItem, report_type: str) -> str:
-    title = sanitize_public_title(report.title, max_length=80)
-    report_url = fendly_report_url(report.id)
-    return (
-        f"Fendly community alert: {report_type.upper()} — {title or 'reported item'}.\n"
-        f"Help reunite it with its owner.\nFendly: {report_url}"
+    raise HTTPException(
+        status.HTTP_410_GONE,
+        "Automatic social-media publication has been permanently disabled.",
     )
-
-
-async def _generate_and_store_poster(report: LostItem | FoundItem, report_type: str) -> str:
-    poster_bytes = await render_report_poster(report, report_type)
-    return await store_image(poster_bytes, f"{uuid4().hex}.jpg", "image/jpeg")
 
 
 def _provider_response(
@@ -213,220 +164,16 @@ def _provider_response(
     return _response_object(result)
 
 
-def _publish_facebook(
-    account: SocialAccount,
-    report: LostItem | FoundItem,
-    caption: str,
-) -> str:
-    token = _decrypt_token(account.access_token_encrypted)
-    if not report.social_poster_url:
-        raise RuntimeError("Fendly community poster is not available; the report photo was not published.")
-    result = _provider_response(
-        httpx.post(
-            _graph_url(f"{account.account_id}/photos"),
-            data={"url": report.social_poster_url, "caption": caption, "access_token": token},
-            timeout=30,
-        ),
-        "Facebook photo upload",
-    )
-    post_id = result.get("post_id")
-    if not isinstance(post_id, str) or not post_id:
-        raise RuntimeError(
-            "Facebook did not return a Page post ID; the photo ID cannot be used "
-            "to confirm or remove the published Page post."
-        )
-    return post_id
-
-
-def _publish_instagram(
-    account: SocialAccount,
-    report: LostItem | FoundItem,
-    caption: str,
-) -> str:
-    if not report.social_poster_url:
-        raise RuntimeError("Fendly community poster is not available; Instagram requires a generated poster.")
-    token = _decrypt_token(account.access_token_encrypted)
-    created = _instagram_publish_response(
-        httpx.post(
-            _graph_url(f"{account.account_id}/media"),
-            data={"image_url": report.social_poster_url, "caption": caption, "access_token": token},
-            timeout=30,
-        ),
-        "Instagram media container creation",
-    )
-    creation_id = created.get("id")
-    if not isinstance(creation_id, str) or not creation_id:
-        raise RuntimeError("Instagram did not return a media identifier")
-    _wait_for_instagram_container(token, creation_id)
-    published = _instagram_publish_response(
-        httpx.post(
-            _graph_url(f"{account.account_id}/media_publish"),
-            data={"creation_id": creation_id, "access_token": token},
-            timeout=30,
-        ),
-        "Instagram media publishing",
-    )
-    post_id = published.get("id")
-    if not isinstance(post_id, str) or not post_id:
-        raise RuntimeError("Instagram did not return a published media identifier")
-    return post_id
-
-
-def _instagram_publish_response(
-    response: httpx.Response,
-    operation: str,
-) -> dict[str, object]:
-    try:
-        return _provider_response(response, operation)
-    except RuntimeError as error:
-        error_text = str(error)
-        if "permission" in error_text.casefold() or "code 10" in error_text.casefold():
-            raise RuntimeError(
-                f"{error_text}. Instagram publishing requires Meta's "
-                "instagram_content_publish permission. Verify it is enabled in "
-                "the Meta Login for Business configuration and approved for the app, "
-                "then reconnect Meta."
-            ) from error
-        raise
-
-
-def _wait_for_instagram_container(
-    token: str,
-    creation_id: str,
-) -> None:
-    deadline = time.monotonic() + INSTAGRAM_CONTAINER_TIMEOUT_SECONDS
-    while True:
-        result = _instagram_publish_response(
-            httpx.get(
-                _graph_url(quote(creation_id, safe="")),
-                params={
-                    "fields": "status_code,status",
-                    "access_token": token,
-                },
-                timeout=30,
-            ),
-            "Instagram media processing status",
-        )
-        status_code = result.get("status_code")
-        if status_code == "FINISHED":
-            return
-        if status_code == "ERROR":
-            status_message = result.get("status")
-            detail = f": {status_message}" if isinstance(status_message, str) and status_message else ""
-            raise RuntimeError(f"Instagram could not process the poster{detail}")
-        if status_code != "IN_PROGRESS":
-            raise RuntimeError(
-                f"Instagram returned an unexpected media processing status: {status_code!r}"
-            )
-
-        remaining = deadline - time.monotonic()
-        if remaining <= 0:
-            raise RuntimeError(
-                "Instagram is still processing the poster after "
-                f"{INSTAGRAM_CONTAINER_TIMEOUT_SECONDS} seconds"
-            )
-        time.sleep(min(INSTAGRAM_CONTAINER_POLL_INTERVAL_SECONDS, remaining))
-
-
 def publish_publication(publication_id: str) -> None:
-    now = int(time.time())
     with SessionLocal() as session:
-        claimed = session.execute(
-            update(SocialPublication)
-            .where(
-                SocialPublication.id == publication_id,
-                SocialPublication.status == "pending",
-                SocialPublication.next_attempt_at <= now,
-            )
-            .values(
-                status="processing",
-                attempt_count=SocialPublication.attempt_count + 1,
-                updated_at=datetime.now(timezone.utc),
-            )
-        )
-        session.commit()
-        if claimed.rowcount != 1:
-            return
-
         publication = session.get(SocialPublication, publication_id)
         if publication is None:
             return
-        account = session.get(SocialAccount, publication.provider)
-        model = LostItem if publication.report_type == "lost" else FoundItem
-        report = session.get(model, publication.report_id)
-        try:
-            if account is None:
-                raise RuntimeError("Fendly's social account is disconnected")
-            if report is None or not report.social_share_consent:
-                publication.status = "skipped"
-                publication.last_error = "The report no longer exists or social-sharing consent was withdrawn."
-                session.commit()
-                return
-            report.social_poster_url = asyncio.run(
-                _generate_and_store_poster(report, publication.report_type)
-            )
-            session.commit()
-            caption = _safe_caption(report, publication.report_type)
-            if publication.provider == "facebook":
-                post_id = _publish_facebook(account, report, caption)
-            elif publication.provider == "instagram":
-                post_id = _publish_instagram(account, report, caption)
-            else:
-                raise RuntimeError("Unsupported social platform")
-            session.refresh(report)
-            if not report.social_share_consent:
-                try:
-                    _delete_meta_post(account, publication.provider, post_id)
-                except (httpx.HTTPError, RuntimeError, ValueError, TypeError, HTTPException) as error:
-                    publication.status = "failed"
-                    publication.external_post_id = post_id
-                    publication.last_error = (
-                        "Admin moderation stopped sharing, but the post could not be removed: "
-                        f"{str(error)[:350]}"
-                    )[:500]
-                    publication.next_attempt_at = 0
-                    session.commit()
-                    return
-                publication.status = "skipped"
-                publication.external_post_id = None
-                publication.last_error = "Sharing was disabled during publication; the post was removed."
-                session.commit()
-                return
-            publication.status = "published"
-            publication.external_post_id = post_id
-            publication.last_error = None
-            publication.published_at = datetime.now(timezone.utc)
-            session.commit()
-        except (httpx.HTTPError, RuntimeError, ValueError, TypeError) as error:
-            session.rollback()
-            publication = session.get(SocialPublication, publication_id)
-            if publication is None:
-                logger.error("Social publication %s disappeared after provider failure", publication_id)
-                return
-            error_text = str(error)[:400] or type(error).__name__
-            publication.status = "failed"
+        if publication.status in {"pending", "processing"}:
+            publication.status = "cancelled"
             publication.next_attempt_at = 0
-            error_text = (
-                f"{error_text}. Not retried automatically to avoid duplicate public posts."
-            )[:500]
-            publication.last_error = error_text
+            publication.last_error = "Automatic social-media publication has been disabled."
             session.commit()
-            logger.error(
-                "Social publication failed: provider=%s report_id=%s attempt=%s error=%s",
-                publication.provider,
-                publication.report_id,
-                publication.attempt_count,
-                error_text,
-            )
-        except Exception:
-            session.rollback()
-            logger.exception("Unexpected social publication failure for %s", publication_id)
-            publication = session.get(SocialPublication, publication_id)
-            if publication is not None:
-                publication.status = "failed"
-                publication.last_error = UNEXPECTED_PUBLISHING_FAILURE
-                publication.next_attempt_at = 0
-                session.commit()
 
 
 def remove_report_publications(
@@ -611,6 +358,91 @@ def remove_report_publications(
     return failures
 
 
+def _legacy_social_report_pairs(session: Session) -> list[tuple[str, str]]:
+    pairs = {
+        (str(report_id), str(report_type).lower())
+        for report_id, report_type in session.execute(
+            select(SocialPublication.report_id, SocialPublication.report_type).distinct()
+        ).all()
+    }
+    pairs.update(
+        (str(report_id), "lost")
+        for report_id in session.scalars(
+            select(LostItem.id).where(
+                or_(LostItem.social_share_consent.is_(True), LostItem.social_poster_url.is_not(None))
+            )
+        ).all()
+    )
+    pairs.update(
+        (str(report_id), "found")
+        for report_id in session.scalars(
+            select(FoundItem.id).where(
+                or_(FoundItem.social_share_consent.is_(True), FoundItem.social_poster_url.is_not(None))
+            )
+        ).all()
+    )
+    return sorted(pairs)
+
+
+def remove_legacy_social_posts(
+    session: Session,
+    *,
+    limit: int = 100,
+) -> dict[str, object]:
+    pending_pairs = _legacy_social_report_pairs(session)
+    batch = pending_pairs[:limit]
+    accounts = session.scalars(
+        select(SocialAccount).where(SocialAccount.provider.in_(PROVIDER_NAMES))
+    ).all()
+    failures: list[dict[str, str]] = []
+    removed = 0
+
+    for report_id, report_type in batch:
+        report_failures = remove_report_publications(session, report_id, report_type)
+        if not report_failures and not accounts:
+            report_failures.append(
+                "No connected Meta account is available to verify and remove legacy posts."
+            )
+        if not report_failures:
+            for account in accounts:
+                post_ids, feed_complete = _find_report_publication_post_ids(account, report_id)
+                if not feed_complete:
+                    report_failures.append(
+                        f"{account.provider} feed could not be fully checked for report {report_id}."
+                    )
+                    continue
+                removal_error = _remove_meta_posts_for_report_link(
+                    account,
+                    account.provider,
+                    report_id,
+                    post_ids,
+                )
+                if removal_error:
+                    report_failures.append(removal_error)
+
+        if report_failures:
+            failures.extend(
+                {"report_id": report_id, "error": failure}
+                for failure in report_failures
+            )
+            continue
+
+        model = LostItem if report_type == "lost" else FoundItem
+        report = session.get(model, report_id)
+        if report is not None:
+            report.social_share_consent = False
+        removed += 1
+
+    session.commit()
+    remaining = len(_legacy_social_report_pairs(session))
+    return {
+        "processed": len(batch),
+        "removed": removed,
+        "remaining": remaining,
+        "failures": failures,
+    }
+
+
 def _meta_post_is_unavailable(account: SocialAccount, external_post_id: str) -> bool:
     post_ids, feed_complete = _list_external_post_ids(account, {external_post_id})
     if feed_complete:
@@ -710,59 +542,17 @@ def _remove_meta_posts_for_report_link(
 
 
 def process_due_publications() -> None:
-    now = int(time.time())
-    stale_before = datetime.fromtimestamp(now - 900, timezone.utc)
     with SessionLocal() as session:
-        failed_before_provider = session.scalars(
-            select(SocialPublication).where(
-                SocialPublication.status == "failed",
-                SocialPublication.last_error.in_(
-                    (LEGACY_POSTER_FAILURE, UNEXPECTED_PUBLISHING_FAILURE)
-                ),
-            ).limit(50)
-        ).all()
-        requeued = False
-        for publication in failed_before_provider:
-            model = LostItem if publication.report_type == "lost" else FoundItem
-            report = session.get(model, publication.report_id)
-            if report is not None and report.social_share_consent and not report.social_poster_url:
-                publication.status = "pending"
-                publication.next_attempt_at = now
-                publication.last_error = None
-                requeued = True
-        if requeued:
-            session.commit()
-        stale_ids = session.scalars(
-            select(SocialPublication.id).where(
-                SocialPublication.status == "processing",
-                SocialPublication.updated_at <= stale_before,
-            ).limit(20)
-        ).all()
-        if stale_ids:
-            session.execute(
-                update(SocialPublication)
-                .where(SocialPublication.id.in_(stale_ids))
-                .values(
-                    status="failed",
-                    next_attempt_at=0,
-                    last_error=(
-                        "Worker stopped during publication. Check the platform before "
-                        "retrying to avoid a duplicate public post."
-                    ),
-                )
+        session.execute(
+            update(SocialPublication)
+            .where(SocialPublication.status.in_(("pending", "processing")))
+            .values(
+                status="cancelled",
+                next_attempt_at=0,
+                last_error="Automatic social-media publication has been disabled.",
             )
-            session.commit()
-        due_ids = session.scalars(
-            select(SocialPublication.id)
-            .where(
-                SocialPublication.status == "pending",
-                SocialPublication.next_attempt_at <= now,
-            )
-            .order_by(SocialPublication.created_at)
-            .limit(20)
-        ).all()
-    for publication_id in due_ids:
-        publish_publication(publication_id)
+        )
+        session.commit()
 
 
 def _delete_meta_post(

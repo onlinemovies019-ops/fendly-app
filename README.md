@@ -27,9 +27,9 @@ Required environment variables:
 	verification challenges, rate-limit identifiers, and SafeTrade IMEI hashes.
 	Keep this value stable: changing it makes existing SafeTrade IMEI hashes
 	impossible to compare with new lookups.
-- `PUBLIC_BASE_URL`: Public API URL used in uploaded image URLs.
+- `PUBLIC_BASE_URL`: Public API URL used for Fendly link generation.
 - `OPENAI_API_KEY`: Required in production for fail-closed moderation of report
-  text and report images before upload/publication. Moderation uses
+  text and report images before storage. Moderation uses
   `OPENAI_MODERATION_MODEL` (default `omni-moderation-latest`) and
   `OPENAI_MODERATION_URL` (default OpenAI's moderation endpoint). If the key is
   missing or the provider is unavailable, submissions are rejected with a
@@ -38,22 +38,16 @@ Required environment variables:
   Defaults to the production API origin; wildcard entries are ignored in
   production and logged. Bearer-token authentication is used instead of cookies.
 - `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, and `SUPABASE_STORAGE_BUCKET`:
-	configure these to store uploads permanently in a public Supabase Storage
-	bucket and clean up matching-index data when deleting reports. The
-	service-role key must remain server-side only; report-bearing account
-	deletion fails safely if the cleanup credentials are unavailable.
+	configure these to store report and profile images in a private Supabase
+	Storage bucket and clean up matching-index data when deleting reports. The
+	service-role key must remain server-side only. Apply the private-workflow
+	migration before deployment; clients receive short-lived signed image URLs.
 - `CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_API_KEY`, and `CLOUDINARY_API_SECRET`
 	enable deletion of Fendly-managed Cloudinary images during account/report
 	cleanup. Keep the API secret server-side only.
-- Optional brand-account publishing uses `META_APP_ID`, `META_APP_SECRET`,
-	`META_LOGIN_CONFIG_ID`, `META_GRAPH_API_VERSION`, and `META_REDIRECT_URI`.
-	Keep every secret in
-	the backend host's secret store. Social access tokens are encrypted using
-	`APP_SECRET_KEY`; keep that key stable or reconnect the social accounts
-	after rotating it.
-- `IMAGE_MATCHING_FUNCTION_URL` points the API to the authenticated Firebase
-  Cloud Function that indexes Cloudinary report images and performs CLIP visual
-  matching. Deploy it with `firebase deploy --only functions:matchReportImages`.
+- Meta credentials are used only by the administrator's legacy-post cleanup
+	workflow. Report creation does not publish to Meta or any other social
+	platform.
 - Set `FAST2SMS_API_KEY` to enable Indian SMS verification through Fast2SMS.
   Keep the key server-side in `.env` locally and in the deployment environment.
   Fendly sends OTPs through Fast2SMS Quick SMS (`q`) by default. To use the DLT
@@ -77,8 +71,9 @@ Required environment variables:
 	usage may incur charges. Without a working key, admins see an explicit
 	translation-unavailable message instead of untranslated text.
 
-Uploads use Supabase Storage when configured. Without those variables, local
-development writes to `static/uploads`; Render's free filesystem is ephemeral.
+Uploads require Supabase Storage. The API blocks public access to legacy
+`/static/uploads` files; old local uploads must be migrated to the private
+bucket before their images can be viewed.
 
 ## API
 
@@ -92,19 +87,18 @@ development writes to `static/uploads`; Render's free filesystem is ephemeral.
 - `GET /api/v1/imei/verify/{imei_number}` (public; limited to 10 lookups per
   client IP per minute; returns only CLEAN/FLAGGED and a generic message).
   Access logging is disabled because the IMEI is part of the URL path.
-- `GET /api/items/mine`
-- `POST /api/items/match` (report owners can match their own reports; ordinary
-  accounts receive a limited potential-match preview, while explicitly listed
-  admins can access full report details)
+- `GET /api/items/mine` (authenticated owner-only reports)
+- `POST /api/items/match` (admin-only matching)
+- `GET /api/notifications` and `POST /api/notifications/read` (owner-scoped
+  in-app notification inbox)
+- `GET /api/admin/alerts` and `POST /api/admin/alerts/{alert_id}/review`
+  (admin-only match review; confirmation requires manually verified proof)
+- `POST /api/admin/private-images/migrate?apply=false&limit=10` (admin-only
+  legacy-image migration; preview first, then repeat with `apply=true` until
+  `remaining_assets` and `pending_source_cleanup` are zero)
+- `POST /api/admin/social/cleanup` (admin-only, batched removal of legacy
+  Facebook/Instagram posts; no new posts are published)
 - `DELETE /api/users/account` (deletes account data and its reports)
-- `GET /api/social/status`, `GET /api/social/publications`, and
-  `POST /api/social/publications/refresh` (admin-only; refresh checks recent
-  published post IDs against Meta and reports whether each post is available,
-  missing/inaccessible, or could not be checked)
-- `POST /api/social/connect/meta` (admin-only;
-  return the platform authorization URL)
-- `DELETE /api/social/account/{provider}` (admin-only; removes
-  Fendly's stored authorization)
 - `/static/delete-account.html` (external account-deletion request page)
 - `GET /api/users/username/{username}`
 - `POST /api/users/username`
@@ -126,126 +120,39 @@ Apply `supabase/migrations/20261004090000_safetrade_imei_verification.sql`
 before deploying SafeTrade. It adds a status and keyed-IMEI-hash index for
 lost reports and the persistent public lookup rate-limit table.
 
-## Optional social publishing
+Apply `supabase/migrations/20261011000000_private_match_workflow.sql` before
+using the private-image migration endpoint. It denies client-role access to
+report tables and the `uploads` bucket. From the authenticated admin app,
+preview and confirm **Move old report images to private storage**; repeat
+until no supported assets or source-cleanup tasks remain. The endpoint copies
+legacy Cloudinary and local-upload images before updating database references,
+then removes the old source only after no report/profile record references it.
+Unsupported external image references and failed source removals are reported
+for manual review. Run the admin Meta cleanup action separately; it reports
+any post that Meta did not confirm deleting.
 
-Social publishing is disabled until the Fendly administrators connect brand
-accounts. Set the provider app credentials and exact HTTPS callback URLs in
-the backend environment. Register these callback URLs with the providers:
+## Private reports and verified matches
 
-- `https://<your-api-host>/api/social/callback/meta`
+Report APIs require Firebase authentication and scope user list, edit, and
+delete operations to the report owner. Potential Lost/Found matches are
+available only to configured administrators. An admin must confirm that proof
+was manually reviewed and enter verification notes before Fendly creates an
+owner-scoped in-app notification and attempts an FCM push. Contact details are
+not included in match notifications.
 
-For Meta, create a Login for Business configuration that grants access to the
-Fendly Facebook Page and its connected Instagram professional account. Its
-Facebook Login for Business permissions need `pages_show_list`,
-`pages_read_engagement`, `pages_manage_posts`, `instagram_basic`, and
-`instagram_content_publish` (singular). To allow Fendly to delete published
-Instagram media during report removal, Meta's error message requests
-`instagram_manage_contents`. Meta's IG Media deletion endpoint uses a Facebook
-User access token and requires `instagram_basic` and
-`instagram_manage_contents`.
-Fendly includes these permissions in the Meta OAuth `scope` parameter as a
-comma-separated list and checks the exchanged token's granted scopes through
-Meta's `debug_token` endpoint. A missing `pages_manage_posts` permission blocks
-the connection because Facebook deletion depends on it. If Meta does not grant
-`instagram_manage_contents`, Fendly connects but displays a warning; Instagram
-deletion remains unavailable, and report removal will fail closed. Fendly keeps
-the Facebook Page token for Instagram publishing and separately stores the
-encrypted Facebook User token for Instagram media deletion, as required by the
-Meta endpoint.
-Set its configuration ID as
-`META_LOGIN_CONFIG_ID`, set the currently supported Graph API version in
-`META_GRAPH_API_VERSION`, and register the Meta callback URL above. If the
-authorized Meta user manages multiple Pages, set `META_PAGE_ID` to the Fendly
-Page's ID. Fendly's Meta app must be in a mode and have permissions approved
-for the people who will authorize it; development or testing access is not
-production approval. The Meta app must be a business-type app. Access to
-assets managed by people outside the app's roles requires Advanced Access
-through Meta App Review. An Instagram professional account must be linked to
-the selected Page, and the Page must meet Meta's publishing authorization
-requirements. If the Page is assigned through Business Manager, Meta may also
-require `ads_read` and `ads_management` for Instagram publishing.
-When Meta authorization completes, Fendly verifies the deletion permissions
-were actually granted and does not replace the saved connection if they are
-missing. Facebook deletion also requires the authorized user to have a
-content-management task on the selected Page. A Facebook `code 100`, `subcode
-33` deletion error is not proof that the post is already deleted: verify the
-Page permissions/tasks, that the publication belongs to the selected Page, and
-that the saved identifier is the Page post ID rather than a photo ID.
+Supabase report and profile images are stored in the private `uploads` bucket.
+The backend signs image URLs for short-lived access and stores stable object
+references. Direct `anon` and `authenticated` table/storage access is denied by
+`supabase/migrations/20261011000000_private_match_workflow.sql`. Apply that
+migration before deploying the API. The migration also cancels queued social
+publication jobs and makes the `uploads` bucket private. Static files under
+`/static/uploads` are no longer served.
 
-The admin publication refresh reconciles saved Facebook post IDs against the
-Page's `published_posts` feed and Instagram media IDs against the account's
-`media` feed, including Graph API pagination. A completed feed check removes
-jobs whose posts are no longer listed. If feed access or pagination is
-inconclusive, Fendly checks each missing post ID directly. If Meta still cannot
-confirm the post's status, the job remains unknown and is not treated as
-deleted; check the connection and Meta permissions before relying on the result.
-
-After configuring secrets and deploying the backend, an authorized Fendly
-administrator can call `POST /api/social/connect/meta` with a Fendly bearer
-token, open the returned
-`authorization_url`, and approve the brand account. Use the status and
-publication endpoints to verify connections and review failed jobs. Refresh
-can identify Meta posts that are no longer available, but Meta may not
-distinguish deletion from changed access permissions. Deleting
-or disconnecting an authorization in Fendly does not revoke it in Meta; also
-revoke Fendly from the provider's app settings.
-
-Admin removal of a fake report disables any queued sharing and requests
-deletion of each linked Facebook and Instagram post before deleting the report
-from Fendly. Fendly treats a post as already deleted only when a complete,
-successful platform feed check confirms that its ID is absent. If a legacy
-publication has no saved ID, or its saved ID is no longer in the feed, Fendly
-searches the connected account's feed for the exact report link and removes
-matching posts before deleting the report. If a post is still publishing, the
-account is disconnected, or feed access and deletion are inconclusive, the
-report remains in Fendly and the admin must resolve the listed issue and retry. Keep
-the Meta account connected with
-the required Page and Instagram publishing permissions for this moderation
-workflow. Users may delete their own reports only during the first hour after
-posting; that endpoint uses the same social-post deletion and confirmation
-requirements as admin removal. If Meta makes `instagram_manage_contents` available for this integration, add
-it to the configuration and reconnect so the stored token receives the grant.
-Meta App Review/Advanced Access may be required before the permission is
-granted outside app roles.
-
-Each report has an unchecked opt-in. A consented report publishes its type and
-title plus a link to that specific report (`FENDLY_APP_URL/item/{report_id}`;
-the base defaults to `https://fendly.app`). Facebook and Instagram receive a generated JPEG
-community poster containing the title, report type, optional selected photo,
-and report link. Photos fit inside a square frame without cropping; the report
-label sits beside the QR code below the photo. The caption ends with
-`Fendly: <report URL>`. The description,
-date, location, contact
-details, and IMEI are not included. The poster is stored with report media and
-is removed during account deletion when no other report references it. This
-version creates standard photo posts, not Reels, because reports have no video
-source. Poster generation and provider publishing run after the report is saved;
-use the status and publication endpoints to track progress or inspect failures.
-Jobs previously failed only because a poster was unavailable are safely queued
-again by the publication worker.
-Already published posts are public copies on
-Fendly's brand accounts and are not automatically removed when the reporter
-deletes their Fendly account. The privacy policy and account-deletion page
-describe this and provide the support contact for removal requests.
-
-Before deploying social publishing, apply
-`supabase/migrations/20261008000000_social_publishing.sql` to the production
-Supabase database. This adds the consent columns and social tables, enables
-row-level security, and removes direct access for `anon` and `authenticated`.
-Apply `supabase/migrations/20261008213000_social_poster_urls.sql` as well to
-store generated poster URLs. Set `FENDLY_APP_URL` to the public app/download
-landing page once that URL is confirmed.
-Apply the migration before deploying the API version that reads or writes these
-columns. Publishing attempts that fail or are interrupted are not automatically
-retried because the provider may already have created a public post; check the
-provider account before taking any manual retry action.
-
-To permanently remove legacy X data left by older versions, apply
-`supabase/migrations/20261009000000_remove_x_social_data.sql`. It deletes X
-authorization, OAuth-state, and publication-history rows and drops the old
-`users.x_url` column. This does not remove posts already published on X; those
-remain controlled by the X account. Remove any leftover X API credentials from
-the production hosting environment separately.
+An admin can remove old Facebook and Instagram posts in batches using
+`POST /api/admin/social/cleanup` after Meta's deletion credentials are
+configured. The cleanup call is explicit and never runs as part of report
+creation. It must be run after deployment; code changes alone do not remove
+already published posts.
 
 ## Purge reports retained for previously deleted accounts
 

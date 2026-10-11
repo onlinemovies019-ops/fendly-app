@@ -21,6 +21,7 @@ from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from database import get_db
+from image_storage import refresh_private_image_url
 from models import EmailOTPChallenge, SmsOTPChallenge, SmsOTPRateLimit, User, UsernameReservation
 from profile_service import update_profile_record
 from schemas import ProfileUpdate
@@ -154,7 +155,9 @@ def get_profile_compat(
             "mobile": getattr(user, "mobile", None) or "",
             "state": getattr(user, "state", None) or "",
             "city": getattr(user, "city", None) or "",
-            "profile_photo_url": normalize_profile_photo(getattr(user, "profile_photo_url", None)),
+            "profile_photo_url": refresh_private_image_url(
+                normalize_profile_photo(getattr(user, "profile_photo_url", None))
+            ) or "",
             "instagram_url": getattr(user, "instagram_url", None) or "",
             "facebook_url": getattr(user, "facebook_url", None) or "",
             "email_verified": bool(getattr(user, "email_verified", False)),
