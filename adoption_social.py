@@ -47,11 +47,6 @@ def _connection_credentials(
     provider: str,
     account: SocialAccount | None,
 ) -> tuple[str, str] | None:
-    if account is not None and account.account_id and account.access_token_encrypted:
-        if not GRAPH_ID_PATTERN.fullmatch(account.account_id):
-            raise RuntimeError(f"The saved {provider.title()} account ID is invalid; reconnect Meta")
-        return account.account_id, _decrypt_connected_token(account.access_token_encrypted)
-
     id_environment_name = (
         "META_FACEBOOK_PAGE_ID" if provider == "facebook" else "META_INSTAGRAM_ACCOUNT_ID"
     )
@@ -59,35 +54,49 @@ def _connection_credentials(
     if provider == "facebook" and not direct_id:
         direct_id = os.getenv("META_PAGE_ID", "").strip()
     direct_token = os.getenv("META_PAGE_ACCESS_TOKEN", "").strip()
-    if provider == "facebook" and direct_id and direct_token:
-        if not GRAPH_ID_PATTERN.fullmatch(direct_id):
-            raise RuntimeError(
-                f"{id_environment_name} must be the numeric Facebook Page ID, "
-                "not an access token"
-            )
-        return direct_id, direct_token
-    if provider == "instagram" and direct_token:
-        if direct_id and GRAPH_ID_PATTERN.fullmatch(direct_id):
+    if direct_token:
+        if provider == "facebook" and not direct_id and account is not None:
+            direct_id = account.account_id
+        if provider == "facebook" and direct_id:
+            if not GRAPH_ID_PATTERN.fullmatch(direct_id):
+                raise RuntimeError(
+                    f"{id_environment_name} must be the numeric Facebook Page ID, "
+                    "not an access token"
+                )
             return direct_id, direct_token
-        page_id = (
-            os.getenv("META_FACEBOOK_PAGE_ID", "").strip()
-            or os.getenv("META_PAGE_ID", "").strip()
-        )
-        if page_id and GRAPH_ID_PATTERN.fullmatch(page_id):
-            return _instagram_account_for_page(page_id, direct_token), direct_token
+        if provider == "instagram" and direct_id and GRAPH_ID_PATTERN.fullmatch(direct_id):
+            return direct_id, direct_token
+        if provider == "instagram":
+            page_id = (
+                os.getenv("META_FACEBOOK_PAGE_ID", "").strip()
+                or os.getenv("META_PAGE_ID", "").strip()
+            )
+            if page_id and GRAPH_ID_PATTERN.fullmatch(page_id):
+                return _instagram_account_for_page(page_id, direct_token), direct_token
+            if account is not None and GRAPH_ID_PATTERN.fullmatch(account.account_id):
+                return account.account_id, direct_token
+            if direct_id:
+                raise RuntimeError(
+                    "META_INSTAGRAM_ACCOUNT_ID must be the numeric Instagram account ID, "
+                    "not an access token; configure META_PAGE_ID to discover the linked account"
+                )
         if direct_id:
+            raise RuntimeError(f"{id_environment_name} is required as a numeric ID")
+        if account is None or not account.account_id:
             raise RuntimeError(
-                "META_INSTAGRAM_ACCOUNT_ID must be the numeric Instagram account ID, "
-                "not an access token; configure META_PAGE_ID to discover the linked account"
+                f"{id_environment_name} or a saved Meta account is required with "
+                "META_PAGE_ACCESS_TOKEN"
             )
-    if account is None or not account.account_id or not account.access_token_encrypted:
-        if direct_id and not direct_token:
+    if account is not None and account.account_id and account.access_token_encrypted:
+        if not GRAPH_ID_PATTERN.fullmatch(account.account_id):
             raise RuntimeError(
-                "META_PAGE_ACCESS_TOKEN is required with the configured Meta account ID"
+                f"The saved {provider.title()} account ID is invalid; reconnect Meta"
             )
-        if direct_token and not direct_id:
-            raise RuntimeError(f"{id_environment_name} is required with META_PAGE_ACCESS_TOKEN")
-        return None
+        return account.account_id, _decrypt_connected_token(account.access_token_encrypted)
+    if direct_id and not direct_token:
+        raise RuntimeError(
+            "META_PAGE_ACCESS_TOKEN is required with the configured Meta account ID"
+        )
     return None
 
 

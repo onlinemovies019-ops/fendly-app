@@ -10,7 +10,7 @@ from adoption_social import publish_adoption_listing
 from models import AdoptionListing, SocialAccount
 
 
-def test_opted_in_listing_reuses_connected_meta_accounts_for_both_publications(monkeypatch):
+def test_direct_meta_credentials_override_saved_accounts_for_both_publications(monkeypatch):
     secret = "test-adoption-social-secret-that-is-long-enough"
     monkeypatch.setenv("APP_SECRET_KEY", secret)
     monkeypatch.delenv("META_FACEBOOK_PAGE_ID", raising=False)
@@ -77,10 +77,10 @@ def test_opted_in_listing_reuses_connected_meta_accounts_for_both_publications(m
     ]
     assert len(requests) == 3
     assert all("Milo" in request[1].get("caption", "") for request in requests[:2])
-    assert requests[0][0].endswith("/1234567890/photos")
-    assert requests[0][1]["access_token"] == "page-token"
-    assert requests[1][0].endswith("/9876543210/media")
-    assert requests[1][1]["access_token"] == "page-token"
+    assert requests[0][0].endswith("/1111111111/photos")
+    assert requests[0][1]["access_token"] == "incorrect-direct-token"
+    assert requests[1][0].endswith("/2222222222/media")
+    assert requests[1][1]["access_token"] == "incorrect-direct-token"
     assert requests[0][1]["url"] == "https://storage.example/pet.jpg"
     assert requests[1][1]["image_url"] == "https://storage.example/pet.jpg"
     assert requests[2][1]["creation_id"] == "instagram-container"

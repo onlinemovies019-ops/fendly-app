@@ -126,14 +126,15 @@ where identifiable.
 Apply `supabase/migrations/20261011150000_add_adoption_module.sql` before
 deploying the adoption feature. It creates API-only adoption tables and the
 public `adoption-images` bucket; Lost/Found photos remain private in
-`report-images`. Adoption auto-posting reuses the Facebook Page and Instagram
-account connection previously saved by Fendly's Meta OAuth flow in
-`social_accounts` before using direct environment credentials; it decrypts the
-saved Page token with the existing `APP_SECRET_KEY`. The Graph API version defaults to `v23.0`; set
+`report-images`. Adoption auto-posting uses direct Render environment
+credentials when configured; these override any older saved Meta connection.
+Otherwise, it reuses the Facebook Page and Instagram account connection saved
+by Fendly's Meta OAuth flow in `social_accounts`, decrypting the Page token
+with the existing `APP_SECRET_KEY`. The Graph API version defaults to
+`v23.0`; set
 `APP_DOWNLOAD_URL` only if the app's Play Store link differs from the default.
-For deployments without saved Meta account rows, the optional direct
-configuration is `META_FACEBOOK_PAGE_ID` (or its `META_PAGE_ID` alias),
-and `META_PAGE_ACCESS_TOKEN`. `META_INSTAGRAM_ACCOUNT_ID` may be set to the
+For direct configuration, set `META_FACEBOOK_PAGE_ID` (or its `META_PAGE_ID`
+alias) and `META_PAGE_ACCESS_TOKEN`. `META_INSTAGRAM_ACCOUNT_ID` may be set to the
 numeric Instagram professional account ID; when it is missing or malformed,
 the API discovers the account linked to `META_PAGE_ID`. Never put an access
 token in either ID variable. The Page token and Meta app must have the
