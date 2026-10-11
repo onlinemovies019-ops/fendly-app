@@ -9,6 +9,7 @@ from sqlalchemy.pool import StaticPool
 import database
 import main
 from models import AdoptionApplication, AdoptionListing, Base, User, UserNotification
+from routers import admin as admin_module
 from routers import adoptions as adoptions_module
 
 
@@ -35,6 +36,7 @@ def adoption_client(monkeypatch):
     current_uid = ["lister"]
     main.app.dependency_overrides[database.get_db] = override_get_db
     main.app.dependency_overrides[adoptions_module.get_current_user] = lambda: current_uid[0]
+    main.app.dependency_overrides[admin_module.get_current_user] = lambda: current_uid[0]
     monkeypatch.setattr(adoptions_module, "moderate_content", allow_content)
     monkeypatch.setattr(adoptions_module, "_check_image", lambda data, mime_type: "jpg")
     monkeypatch.setattr(adoptions_module, "store_adoption_image", store_image)
@@ -50,6 +52,7 @@ def adoption_client(monkeypatch):
     client.close()
     main.app.dependency_overrides.pop(database.get_db, None)
     main.app.dependency_overrides.pop(adoptions_module.get_current_user, None)
+    main.app.dependency_overrides.pop(admin_module.get_current_user, None)
     engine.dispose()
 
 
@@ -154,6 +157,113 @@ def test_lister_can_edit_and_delete_listing_but_other_users_cannot(adoption_clie
                 UserNotification.adoption_listing_id == listing_id
             )
         ) is None
+
+
+def test_admin_can_list_and_delete_adoption_with_meta_posts(
+    adoption_client,
+    monkeypatch,
+):
+    client, session_factory, current_uid = adoption_client
+    monkeypatch.setenv("ADMIN_FIREBASE_UIDS", "lister")
+    deleted_images = []
+    monkeypatch.setattr(admin_module, "delete_adoption_image", deleted_images.append)
+
+    created = _create_listing(client, auto_post_social="true")
+    assert created.status_code == 201, created.text
+    listing_id = created.json()["id"]
+    with Session(session_factory.kw["bind"]) as session:
+        listing = session.get(AdoptionListing, listing_id)
+        listing.facebook_post_id = "facebook-post-id"
+        listing.instagram_post_id = "instagram-post-id"
+        session.add(
+            AdoptionApplication(
+                id="admin-delete-application",
+                listing_id=listing_id,
+                applicant_user_id="applicant",
+                home_type="House",
+                pet_experience="Experienced",
+                contact_phone="+911234567890",
+                status="submitted",
+            )
+        )
+        session.add(
+            UserNotification(
+                firebase_uid="applicant",
+                found_item_id=None,
+                adoption_listing_id=listing_id,
+                notification_type="adoption_application_update",
+                title="Application update",
+                body="Test notification",
+                score=0.0,
+            )
+        )
+        session.commit()
+        expected_image_urls = list(listing.images)
+
+    current_uid[0] = "not-admin"
+    assert client.get("/api/admin/adoptions").status_code == 403
+    assert client.delete(f"/api/admin/adoptions/{listing_id}").status_code == 403
+    current_uid[0] = "lister"
+
+    listed = client.get("/api/admin/adoptions")
+    assert listed.status_code == 200, listed.text
+    assert listed.json()[0]["facebook_post_id"] == "facebook-post-id"
+    assert listed.json()[0]["instagram_post_id"] == "instagram-post-id"
+
+    calls = []
+
+    def remove_meta_posts(listing, on_deletion, **accounts):
+        calls.append((listing.id, listing.facebook_post_id, listing.instagram_post_id))
+        on_deletion("facebook")
+        on_deletion("instagram")
+        return []
+
+    monkeypatch.setattr(admin_module, "delete_adoption_publications", remove_meta_posts)
+
+    deleted = client.delete(f"/api/admin/adoptions/{listing_id}")
+
+    assert deleted.status_code == 200, deleted.text
+    assert deleted.json() == {"status": "deleted", "platform_failures": []}
+    assert calls == [(listing_id, "facebook-post-id", "instagram-post-id")]
+    assert deleted_images == expected_image_urls
+    with Session(session_factory.kw["bind"]) as session:
+        assert session.get(AdoptionListing, listing_id) is None
+        assert session.get(AdoptionApplication, "admin-delete-application") is None
+        assert session.scalar(
+            select(UserNotification).where(
+                UserNotification.adoption_listing_id == listing_id
+            )
+        ) is None
+
+
+def test_admin_keeps_listing_when_meta_post_removal_fails(adoption_client, monkeypatch):
+    client, session_factory, _ = adoption_client
+    monkeypatch.setenv("ADMIN_FIREBASE_UIDS", "lister")
+
+    created = _create_listing(client)
+    listing_id = created.json()["id"]
+    with Session(session_factory.kw["bind"]) as session:
+        listing = session.get(AdoptionListing, listing_id)
+        listing.facebook_post_id = "facebook-post-id"
+        session.commit()
+
+    monkeypatch.setattr(
+        admin_module,
+        "delete_adoption_publications",
+        lambda *_args, **_kwargs: ["Facebook: permission denied"],
+    )
+    deleted_images = []
+    monkeypatch.setattr(admin_module, "delete_adoption_image", deleted_images.append)
+
+    response = client.delete(f"/api/admin/adoptions/{listing_id}")
+
+    assert response.status_code == 503
+    assert response.json()["detail"]["platform_failures"] == [
+        "Facebook: permission denied"
+    ]
+    assert deleted_images == []
+    with Session(session_factory.kw["bind"]) as session:
+        assert session.get(AdoptionListing, listing_id) is not None
 
 
 def test_public_feed_filters_and_hides_owner_and_social_fields(adoption_client):

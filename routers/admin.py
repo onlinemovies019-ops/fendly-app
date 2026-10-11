@@ -14,14 +14,19 @@ from sqlalchemy import desc, func, or_, select
 from sqlalchemy.orm import Session
 
 from ai_matching import create_embedding, item_text
+from adoption_social import delete_adoption_publications
+from adoption_storage import delete_adoption_image
 from auth import get_current_user
 from database import get_db
 from image_matching import cosine_similarity, create_image_embedding
 from image_storage import refresh_private_image_url
 from models import (
     AdminMatchAlert,
+    AdoptionApplication,
+    AdoptionListing,
     FoundItem,
     LostItem,
+    SocialAccount,
     User,
     UserNotification,
 )
@@ -397,6 +402,100 @@ def list_opted_in_success_stories(
         }
         for item_type, report in reports
     ]
+
+
+@router.get("/adoptions")
+def list_admin_adoptions(
+    session: Session = Depends(get_db),
+    _: str = Depends(require_admin),
+) -> list[dict[str, object]]:
+    listings = session.scalars(
+        select(AdoptionListing).order_by(desc(AdoptionListing.created_at)).limit(200)
+    ).all()
+    return [
+        {
+            "id": listing.id,
+            "pet_name": listing.pet_name,
+            "species": listing.species,
+            "breed": listing.breed,
+            "age_months": listing.age_months,
+            "location_city": listing.location_city,
+            "status": listing.status,
+            "images": listing.images or [],
+            "auto_post_social": listing.auto_post_social,
+            "social_post_status": listing.social_post_status,
+            "social_post_error": listing.social_post_error,
+            "facebook_post_id": listing.facebook_post_id,
+            "instagram_post_id": listing.instagram_post_id,
+            "lister_user_id": listing.lister_user_id,
+            "created_at": listing.created_at,
+        }
+        for listing in listings
+    ]
+
+
+@router.delete("/adoptions/{listing_id}")
+def delete_admin_adoption(
+    listing_id: str,
+    session: Session = Depends(get_db),
+    _: str = Depends(require_admin),
+) -> dict[str, object]:
+    listing = session.get(AdoptionListing, listing_id)
+    if listing is None:
+        raise HTTPException(404, "Adoption listing not found")
+
+    accounts = {
+        account.provider: account
+        for account in session.scalars(
+            select(SocialAccount).where(
+                SocialAccount.provider.in_(("facebook", "instagram"))
+            )
+        ).all()
+    }
+
+    def record_post_deletion(provider: str) -> None:
+        if provider == "facebook":
+            listing.facebook_post_id = None
+        elif provider == "instagram":
+            listing.instagram_post_id = None
+        session.commit()
+
+    failures = delete_adoption_publications(
+        listing,
+        record_post_deletion,
+        facebook_account=accounts.get("facebook"),
+        instagram_account=accounts.get("instagram"),
+    )
+    if failures:
+        raise HTTPException(
+            503,
+            detail={
+                "message": "Adoption listing was kept because Meta post cleanup did not complete.",
+                "platform_failures": failures,
+            },
+        )
+
+    image_urls = list(listing.images or [])
+    session.query(AdoptionApplication).filter(
+        AdoptionApplication.listing_id == listing.id
+    ).delete(synchronize_session=False)
+    session.query(UserNotification).filter(
+        UserNotification.adoption_listing_id == listing.id
+    ).delete(synchronize_session=False)
+    session.delete(listing)
+    try:
+        session.commit()
+    except Exception as exc:
+        session.rollback()
+        logger.exception("Admin adoption listing deletion failed")
+        raise HTTPException(503, "Adoption listing could not be deleted") from exc
+
+    for image_url in image_urls:
+        try:
+            delete_adoption_image(image_url)
+        except Exception:
+            logger.exception("Could not delete adoption image after admin listing deletion")
+    return {"status": "deleted", "platform_failures": []}
 
 
 @router.delete("/items/{item_type}/{item_id}")

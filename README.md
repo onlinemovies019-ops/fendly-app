@@ -100,6 +100,7 @@ upload to private Supabase Storage.
 - `GET /api/users/username/{username}`
 - `POST /api/users/username`
 - `GET /api/admin/items`
+- `GET /api/admin/adoptions` and `DELETE /api/admin/adoptions/{listing_id}`
 - `GET /api/admin/matches/{found_item_id}`
 - `POST /api/admin/matches/{found_item_id}/notify`
 - `POST /api/devices/fcm-token`
@@ -116,6 +117,9 @@ requires an explicit Firebase UID in `ADMIN_FIREBASE_UIDS`; wildcard
 configuration is not accepted. Alternatively, configure `ADMIN_EMAIL` for a
 verified Fendly profile. Content moderation fails closed unless the production
 moderation provider is configured and responds successfully.
+Admin adoption deletion removes the recorded Facebook and Instagram posts
+before deleting the listing; if Meta refuses either deletion, the listing is
+retained so an administrator can resolve the issue and retry.
 
 As a coordinated release, apply
 `supabase/migrations/20261011133500_retire_imei_collection.sql` and deploy the

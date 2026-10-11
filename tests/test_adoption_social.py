@@ -6,7 +6,7 @@ from types import SimpleNamespace
 from cryptography.fernet import Fernet
 import httpx
 
-from adoption_social import publish_adoption_listing
+from adoption_social import delete_adoption_publications, publish_adoption_listing
 from models import AdoptionListing, SocialAccount
 
 
@@ -22,10 +22,15 @@ def test_direct_meta_credentials_override_saved_accounts_for_both_publications(m
     monkeypatch.setenv("META_PAGE_ACCESS_TOKEN", "incorrect-direct-token")
     monkeypatch.setenv("META_GRAPH_API_VERSION", "v23.0")
     requests = []
-    response_ids = iter(("facebook-publication", "instagram-container", "instagram-publication"))
+    response_ids = iter(("instagram-container", "instagram-publication"))
 
     def fake_post(endpoint, *, data, timeout):
         requests.append((endpoint, data, timeout))
+        if endpoint.endswith("/photos"):
+            return SimpleNamespace(
+                raise_for_status=lambda: None,
+                json=lambda: {"id": "facebook-photo", "post_id": "facebook-publication"},
+            )
         return SimpleNamespace(raise_for_status=lambda: None, json=lambda: {"id": next(response_ids)})
 
     monkeypatch.setattr("adoption_social.httpx.post", fake_post)
@@ -287,3 +292,132 @@ def test_facebook_deprecated_publish_actions_error_is_actionable(monkeypatch):
         "Facebook: Meta rejected Facebook publishing because publish_actions is deprecated. "
         "Use a Facebook Page access token with pages_manage_posts granted to the Meta app and the Page task."
     )
+
+
+def test_delete_adoption_publications_removes_both_meta_posts(monkeypatch):
+    monkeypatch.setenv("META_PAGE_ID", "1234567890")
+    monkeypatch.setenv("META_FACEBOOK_PAGE_ID", "1234567890")
+    monkeypatch.setenv("META_INSTAGRAM_ACCOUNT_ID", "9876543210")
+    monkeypatch.setenv("META_PAGE_ACCESS_TOKEN", "page-token")
+    deleted = []
+
+    def fake_delete(endpoint, *, params, timeout):
+        deleted.append((endpoint, params, timeout))
+        return SimpleNamespace(
+            raise_for_status=lambda: None,
+            json=lambda: {"success": True},
+        )
+
+    monkeypatch.setattr("adoption_social.httpx.delete", fake_delete)
+    listing = AdoptionListing(
+        id="listing-delete",
+        lister_user_id="owner",
+        pet_name="Milo",
+        species="dog",
+        age_months=18,
+        gender="male",
+        health_status="Healthy",
+        description="Friendly",
+        location_city="Pune",
+        images=["https://storage.example/pet.jpg"],
+        facebook_post_id="facebook-post-id",
+        instagram_post_id="instagram-post-id",
+        auto_post_social=True,
+    )
+
+    removed = []
+    errors = delete_adoption_publications(listing, removed.append)
+
+    assert errors == []
+    assert removed == ["facebook", "instagram"]
+    assert [request[0].rsplit("/", 1)[-1] for request in deleted] == [
+        "facebook-post-id",
+        "instagram-post-id",
+    ]
+    assert all(request[1] == {"access_token": "page-token"} for request in deleted)
+
+
+def test_instagram_deletion_prefers_saved_deletion_token_over_page_token(monkeypatch):
+    secret = "test-adoption-social-secret-that-is-long-enough"
+    monkeypatch.setenv("APP_SECRET_KEY", secret)
+    monkeypatch.setenv("META_INSTAGRAM_ACCOUNT_ID", "9876543210")
+    monkeypatch.setenv("META_PAGE_ACCESS_TOKEN", "page-token")
+    key = base64.urlsafe_b64encode(hashlib.sha256(secret.encode("utf-8")).digest())
+    deletion_token = Fernet(key).encrypt(b"instagram-deletion-token").decode("ascii")
+    account = SocialAccount(
+        provider="instagram",
+        account_id="9876543210",
+        account_name="Fendly Instagram",
+        access_token_encrypted="saved-access-token",
+        deletion_access_token_encrypted=deletion_token,
+    )
+    requests = []
+
+    def fake_delete(endpoint, *, params, timeout):
+        requests.append((endpoint, params, timeout))
+        return SimpleNamespace(
+            raise_for_status=lambda: None,
+            json=lambda: {"success": True},
+        )
+
+    monkeypatch.setattr("adoption_social.httpx.delete", fake_delete)
+    listing = AdoptionListing(
+        id="listing-instagram-delete",
+        lister_user_id="owner",
+        pet_name="Milo",
+        species="dog",
+        age_months=18,
+        gender="male",
+        health_status="Healthy",
+        description="Friendly",
+        location_city="Pune",
+        images=["https://storage.example/pet.jpg"],
+        instagram_post_id="instagram-post-id",
+        auto_post_social=True,
+    )
+
+    errors = delete_adoption_publications(
+        listing,
+        lambda *_: None,
+        instagram_account=account,
+    )
+
+    assert errors == []
+    assert requests[0][1] == {"access_token": "instagram-deletion-token"}
+
+
+def test_delete_adoption_publications_redacts_token_and_reports_unconfirmed_delete(monkeypatch):
+    access_token = "EAA-secret-token-not-for-logs"
+    monkeypatch.setenv("META_FACEBOOK_PAGE_ID", "1234567890")
+    monkeypatch.setenv("META_PAGE_ACCESS_TOKEN", access_token)
+
+    def fail_delete(endpoint, *, params, timeout):
+        request = httpx.Request("DELETE", endpoint)
+        response = httpx.Response(
+            400,
+            request=request,
+            json={"error": {"message": f"Invalid object {access_token}"}},
+        )
+        raise httpx.HTTPStatusError("Meta delete failed", request=request, response=response)
+
+    monkeypatch.setattr("adoption_social.httpx.delete", fail_delete)
+    listing = AdoptionListing(
+        id="listing-delete-failed",
+        lister_user_id="owner",
+        pet_name="Milo",
+        species="dog",
+        age_months=18,
+        gender="male",
+        health_status="Healthy",
+        description="Friendly",
+        location_city="Pune",
+        images=["https://storage.example/pet.jpg"],
+        facebook_post_id="facebook-post-id",
+        auto_post_social=True,
+    )
+
+    errors = delete_adoption_publications(listing, lambda *_: None)
+
+    assert len(errors) == 1
+    assert "Facebook: Invalid object [redacted Meta access token]" == errors[0]
+    assert access_token not in " ".join(errors)

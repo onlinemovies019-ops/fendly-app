@@ -10527,6 +10527,21 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             }
         });
 
+        TextView adoptionListingsButton = actionButton("Adoption listings", false);
+        root.addView(adoptionListingsButton, contentParams(-1, dp(44), dp(10)));
+        LinearLayout adoptionListings = new LinearLayout(this);
+        adoptionListings.setOrientation(LinearLayout.VERTICAL);
+        root.addView(adoptionListings, contentParams(-1, -2, 0));
+        adoptionListings.setVisibility(View.GONE);
+        boolean[] adoptionListingsLoaded = {false};
+        adoptionListingsButton.setOnClickListener(view -> {
+            boolean show = adoptionListings.getVisibility() != View.VISIBLE;
+            adoptionListings.setVisibility(show ? View.VISIBLE : View.GONE);
+            if (show && !adoptionListingsLoaded[0]) {
+                loadAdminAdoptions(adoptionListings, adoptionListingsLoaded);
+            }
+        });
+
         LinearLayout overview = new LinearLayout(this);
         overview.setOrientation(LinearLayout.HORIZONTAL);
         TextView lostCount = adminSummary("LOST", LOST_GREEN);
@@ -10698,6 +10713,146 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                     Log.e("ADMIN_SUCCESS_STORIES", "Could not read success stories", error);
                     Toast.makeText(this, "Reunion stories could not be read.", Toast.LENGTH_LONG).show();
                 }
+            });
+        })).addOnFailureListener(error -> Toast.makeText(
+                this, "Could not verify your Fendly sign-in.", Toast.LENGTH_LONG).show());
+    }
+
+    private void loadAdminAdoptions(LinearLayout listings, boolean[] loaded) {
+        FirebaseUser adminUser = FirebaseAuth.getInstance().getCurrentUser();
+        if (adminUser == null) {
+            Toast.makeText(this, "Sign in to manage adoption listings.", Toast.LENGTH_LONG).show();
+            return;
+        }
+        adminUser.getIdToken(false).addOnSuccessListener(token -> network.execute(() -> {
+            AuthorizedResponse response = authorizedRequest(
+                    "GET",
+                    "/api/admin/adoptions",
+                    token.getToken()
+            );
+            runOnUiThread(() -> {
+                if (response.statusCode < 200 || response.statusCode >= 300) {
+                    Toast.makeText(
+                            this,
+                            "Could not load adoption listings. " + authorizedRequestError(response),
+                            Toast.LENGTH_LONG
+                    ).show();
+                    return;
+                }
+                try {
+                    JSONArray result = new JSONArray(response.body);
+                    listings.removeAllViews();
+                    if (result.length() == 0) {
+                        listings.addView(text(
+                                "No adoption listings.",
+                                14,
+                                secondaryTextColor(),
+                                Typeface.NORMAL
+                        ), contentParams(-1, -2, dp(6)));
+                    }
+                    for (int index = 0; index < result.length(); index++) {
+                        JSONObject listing = result.optJSONObject(index);
+                        if (listing == null) continue;
+                        String petName = listing.optString("pet_name", "Pet");
+                        String status = listing.optString("social_post_status", "not opted in");
+                        boolean facebookPublished = !listing.optString("facebook_post_id", "").isEmpty();
+                        boolean instagramPublished = !listing.optString("instagram_post_id", "").isEmpty();
+                        String summary = petName + " · "
+                                + listing.optString("species", "pet") + " · "
+                                + listing.optString("location_city", "")
+                                + "\nListing status: " + listing.optString("status", "")
+                                + "\nSocial posts: " + status
+                                + " (Facebook " + (facebookPublished ? "posted" : "not posted")
+                                + ", Instagram " + (instagramPublished ? "posted" : "not posted") + ")";
+                        LinearLayout card = new LinearLayout(this);
+                        card.setOrientation(LinearLayout.VERTICAL);
+                        card.setPadding(dp(12), dp(10), dp(12), dp(10));
+                        card.setBackground(roundWithStroke(surfaceColor(), 14, borderColor()));
+                        LinearLayout.LayoutParams cardParams = new LinearLayout.LayoutParams(-1, -2);
+                        cardParams.setMargins(0, 0, 0, dp(10));
+                        listings.addView(card, cardParams);
+                        card.addView(text(
+                                summary,
+                                13,
+                                primaryTextColor(),
+                                Typeface.NORMAL
+                        ), new LinearLayout.LayoutParams(-1, -2));
+                        TextView delete = actionButton("Delete listing and Meta posts", false);
+                        delete.setTextColor(Color.rgb(190, 45, 55));
+                        LinearLayout.LayoutParams deleteParams =
+                                new LinearLayout.LayoutParams(-1, dp(40));
+                        deleteParams.setMargins(0, dp(8), 0, 0);
+                        card.addView(delete, deleteParams);
+                        delete.setOnClickListener(v ->
+                                confirmAdminAdoptionRemoval(listing, listings, loaded));
+                    }
+                    loaded[0] = true;
+                } catch (Exception error) {
+                    Log.e("ADMIN_ADOPTIONS", "Could not read adoption listings", error);
+                    Toast.makeText(this, "Adoption listings could not be read.", Toast.LENGTH_LONG).show();
+                }
+            });
+        })).addOnFailureListener(error -> Toast.makeText(
+                this, "Could not verify your Fendly sign-in.", Toast.LENGTH_LONG).show());
+    }
+
+    private void confirmAdminAdoptionRemoval(
+            JSONObject listing,
+            LinearLayout listings,
+            boolean[] loaded
+    ) {
+        String listingId = listing.optString("id", "").trim();
+        if (listingId.isEmpty()) {
+            Toast.makeText(this, "This adoption listing cannot be deleted.", Toast.LENGTH_LONG).show();
+            return;
+        }
+        new AlertDialog.Builder(this)
+                .setTitle("Delete adoption listing?")
+                .setMessage(
+                        "Fendly will remove its recorded Facebook and Instagram posts first. "
+                                + "If Meta refuses either removal, the listing stays in Fendly "
+                                + "so an administrator can resolve the issue and retry."
+                )
+                .setNegativeButton("Cancel", null)
+                .setPositiveButton("Delete", (dialog, which) ->
+                        deleteAdminAdoption(listingId, listings, loaded))
+                .show();
+    }
+
+    private void deleteAdminAdoption(
+            String listingId,
+            LinearLayout listings,
+            boolean[] loaded
+    ) {
+        FirebaseUser adminUser = FirebaseAuth.getInstance().getCurrentUser();
+        if (adminUser == null) {
+            Toast.makeText(this, "Sign in as an administrator to delete listings.", Toast.LENGTH_LONG).show();
+            return;
+        }
+        adminUser.getIdToken(false).addOnSuccessListener(token -> network.execute(() -> {
+            AuthorizedResponse response = authorizedRequest(
+                    "DELETE",
+                    "/api/admin/adoptions/" + Uri.encode(listingId),
+                    token.getToken()
+            );
+            runOnUiThread(() -> {
+                if (response.statusCode < 200 || response.statusCode >= 300) {
+                    Toast.makeText(
+                            this,
+                            "Adoption listing was not deleted. "
+                                    + authorizedRequestError(response),
+                            Toast.LENGTH_LONG
+                    ).show();
+                    return;
+                }
+                loaded[0] = false;
+                listings.removeAllViews();
+                loadAdminAdoptions(listings, loaded);
+                Toast.makeText(
+                        this,
+                        "Adoption listing and its Meta posts were deleted.",
+                        Toast.LENGTH_LONG
+                ).show();
             });
         })).addOnFailureListener(error -> Toast.makeText(
                 this, "Could not verify your Fendly sign-in.", Toast.LENGTH_LONG).show());

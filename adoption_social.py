@@ -4,7 +4,7 @@ import logging
 import os
 import re
 from collections.abc import Callable
-from urllib.parse import urlsplit
+from urllib.parse import quote, urlsplit
 
 from cryptography.fernet import Fernet, InvalidToken
 import httpx
@@ -140,7 +140,12 @@ def _instagram_account_for_page(page_id: str, access_token: str) -> str:
     return instagram_id
 
 
-def _graph_post(endpoint: str, payload: dict[str, str]) -> str:
+def _graph_post(
+    endpoint: str,
+    payload: dict[str, str],
+    *,
+    prefer_page_post_id: bool = False,
+) -> str:
     try:
         response = httpx.post(endpoint, data=payload, timeout=30.0)
         response.raise_for_status()
@@ -162,10 +167,83 @@ def _graph_post(endpoint: str, payload: dict[str, str]) -> str:
         raise RuntimeError(message[:400]) from exc
     except (httpx.HTTPError, ValueError) as exc:
         raise RuntimeError("Meta Graph API request failed") from exc
-    identifier = result.get("id") if isinstance(result, dict) else None
+    identifier = None
+    if isinstance(result, dict):
+        identifier = result.get("post_id") if prefer_page_post_id else None
+        identifier = identifier or result.get("id")
     if not isinstance(identifier, str) or not identifier:
         raise RuntimeError("Meta Graph API did not return a publication ID")
     return identifier
+
+
+def _graph_delete(endpoint: str, access_token: str) -> None:
+    try:
+        response = httpx.delete(
+            endpoint,
+            params={"access_token": access_token},
+            timeout=20.0,
+        )
+        response.raise_for_status()
+        result = response.json()
+    except httpx.HTTPStatusError as exc:
+        try:
+            graph_error = exc.response.json().get("error", {}).get("message", "")
+        except (ValueError, AttributeError):
+            graph_error = ""
+        message = graph_error or f"Meta Graph API returned HTTP {exc.response.status_code}"
+        raise RuntimeError(_redact_meta_error(message[:400], access_token)) from exc
+    except (httpx.HTTPError, ValueError) as exc:
+        raise RuntimeError("Meta Graph API deletion request failed") from exc
+    if not isinstance(result, dict) or result.get("success") is not True:
+        raise RuntimeError("Meta did not confirm removal of the published post")
+
+
+def delete_adoption_publications(
+    listing: AdoptionListing,
+    on_deletion: Callable[[str], None],
+    *,
+    facebook_account: SocialAccount | None = None,
+    instagram_account: SocialAccount | None = None,
+) -> list[str]:
+    errors = []
+    try:
+        _, graph_version = _graph_configuration()
+    except ValueError as exc:
+        return [str(exc)]
+    for provider, post_id, account in (
+        ("facebook", listing.facebook_post_id, facebook_account),
+        ("instagram", listing.instagram_post_id, instagram_account),
+    ):
+        if not post_id:
+            continue
+        try:
+            credentials = _connection_credentials(provider, account)
+            if credentials is None:
+                raise RuntimeError(f"No connected {provider.title()} account is available")
+            account_id, access_token = credentials
+            if (
+                provider == "instagram"
+                and account is not None
+                and account.deletion_access_token_encrypted
+            ):
+                access_token = _decrypt_connected_token(account.deletion_access_token_encrypted)
+            if not GRAPH_ID_PATTERN.fullmatch(account_id):
+                raise RuntimeError(f"The saved {provider.title()} account ID is invalid")
+            _graph_delete(
+                f"https://graph.facebook.com/{graph_version}/{quote(post_id, safe='')}",
+                access_token,
+            )
+            on_deletion(provider)
+        except RuntimeError as exc:
+            safe_error = _redact_meta_error(str(exc), os.getenv("META_PAGE_ACCESS_TOKEN", "").strip())
+            errors.append(f"{provider.title()}: {safe_error}")
+            logger.warning(
+                "Adoption listing %s %s post deletion failed: %s",
+                listing.id,
+                provider.title(),
+                safe_error[:400],
+            )
+    return errors
 
 
 def publish_adoption_listing(
@@ -215,6 +293,7 @@ def publish_adoption_listing(
                     "caption": caption,
                     "access_token": access_token,
                 },
+                prefer_page_post_id=True,
             )
             on_publication("facebook", publications["facebook"])
         except RuntimeError as exc:
