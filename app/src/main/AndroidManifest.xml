@@ -67,6 +67,11 @@
             android:label="@string/vault_title" />
 
         <activity
+            android:name=".AdoptionActivity"
+            android:exported="false"
+            android:label="Adopt" />
+
+        <activity
             android:name=".LanguageActivity"
             android:exported="false"
             android:theme="@style/Theme.Fendly"

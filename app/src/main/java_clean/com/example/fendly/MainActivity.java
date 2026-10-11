@@ -3926,7 +3926,9 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             clearReportDraftState();
             showReport("LOST");
         });
-        choices.addView(lost, new LinearLayout.LayoutParams(0, 72, 1));
+        LinearLayout.LayoutParams choiceParams = new LinearLayout.LayoutParams(0, 72, 1);
+        choiceParams.setMargins(0, 0, dp(4), 0);
+        choices.addView(lost, choiceParams);
         TextView found = actionButton("FOUND", false);
         found.setTextColor(Color.WHITE);
         found.setBackground(round(Color.rgb(201, 162, 76), 18));
@@ -3934,7 +3936,18 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             clearReportDraftState();
             showReport("FOUND");
         });
-        choices.addView(found, new LinearLayout.LayoutParams(0, 72, 1));
+        LinearLayout.LayoutParams foundParams = new LinearLayout.LayoutParams(0, 72, 1);
+        foundParams.setMargins(dp(4), 0, dp(4), 0);
+        choices.addView(found, foundParams);
+        TextView adopt = actionButton("Adopt", false);
+        adopt.setTextColor(Color.WHITE);
+        adopt.setBackground(round(Color.rgb(70, 101, 157), 18));
+        adopt.setOnClickListener(view ->
+                startActivity(new Intent(this, AdoptionActivity.class))
+        );
+        LinearLayout.LayoutParams adoptParams = new LinearLayout.LayoutParams(0, 72, 1);
+        adoptParams.setMargins(dp(4), 0, 0, 0);
+        choices.addView(adopt, adoptParams);
         addField(root, choices);
         TextView reports = actionButton("My reports", false);
         reports.setOnClickListener(view -> showReports());

@@ -13,15 +13,21 @@ def test_social_publishing_module_and_cleanup_route_are_removed():
     )
 
 
-def test_production_python_sources_have_no_meta_graph_api_calls():
+def test_meta_graph_api_calls_are_limited_to_opt_in_adoption_publishing():
     repository_root = Path(__file__).resolve().parents[1]
+    adoption_social = repository_root / "adoption_social.py"
+    assert "graph.facebook.com" in adoption_social.read_text(encoding="utf-8")
+
     production_sources = [
         *repository_root.glob("*.py"),
         *repository_root.glob("routers/*.py"),
         *repository_root.glob("scripts/*.py"),
     ]
+    for source in production_sources:
+        if source == adoption_social:
+            continue
+        assert "graph.facebook.com" not in source.read_text(encoding="utf-8").lower()
 
-    assert all(
-        "graph.facebook.com" not in source.read_text(encoding="utf-8").lower()
-        for source in production_sources
-    )
+    adoption_router = (repository_root / "routers/adoptions.py").read_text(encoding="utf-8")
+    assert "if not listing.auto_post_social" in adoption_router
+    assert "publish_adoption_listing" in adoption_router

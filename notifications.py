@@ -81,6 +81,43 @@ def send_verified_match_push(
     return response.success_count
 
 
+def send_user_notification_push(
+    session: Session,
+    notification: UserNotification,
+) -> int:
+    persisted_notification = session.get(UserNotification, notification.id)
+    if persisted_notification is None or not persisted_notification.firebase_uid:
+        raise ValueError("The notification must be persisted before delivery")
+    tokens = session.scalars(
+        select(DeviceToken.token).where(
+            DeviceToken.firebase_uid == persisted_notification.firebase_uid
+        )
+    ).all()
+    if not tokens:
+        return 0
+    try:
+        _firebase_app()
+        response = messaging.send_each_for_multicast(
+            messaging.MulticastMessage(
+                tokens=tokens,
+                data={
+                    "title": persisted_notification.title,
+                    "body": persisted_notification.body,
+                    "notification_type": persisted_notification.notification_type,
+                    "adoption_listing_id": persisted_notification.adoption_listing_id or "",
+                },
+                android=messaging.AndroidConfig(priority="high"),
+            )
+        )
+    except Exception:
+        logger.exception(
+            "Push notification delivery failed for notification %s",
+            persisted_notification.id,
+        )
+        return 0
+    return response.success_count
+
+
 def send_admin_match_email(item_title: str, match_score: float, match_details: str):
     api_key = os.getenv("BREVO_API_KEY")
     admin_email = os.getenv("ADMIN_EMAIL")

@@ -26,6 +26,7 @@ from routers.notifications import inbox_router as inbox_notifications_router
 from routers.notifications import router as notifications_router
 from routers.users import router as users_router
 from routers.admin import router as admin_router
+from routers.adoptions import router as adoptions_router
 from routers.payments import router as payments_router
 from routers.imei import router as imei_router
 from routers.vault import router as vault_router
@@ -243,6 +244,9 @@ async def lifespan(_: FastAPI):
 
         verify_private_bucket()
         verify_private_bucket(os.getenv("VAULT_STORAGE_BUCKET", "private-vault"))
+        from adoption_storage import verify_adoption_bucket
+
+        verify_adoption_bucket()
     cleanup_task = asyncio.create_task(_cleanup_expired_otp_challenges())
     try:
         yield
@@ -337,6 +341,7 @@ app.include_router(notifications_router)
 app.include_router(inbox_notifications_router)
 app.include_router(users_router)
 app.include_router(admin_router)
+app.include_router(adoptions_router)
 app.include_router(payments_router)
 app.include_router(imei_router)
 app.include_router(vault_router)

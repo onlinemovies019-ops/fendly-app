@@ -104,6 +104,10 @@ upload to private Supabase Storage.
 - `POST /api/admin/matches/{found_item_id}/notify`
 - `POST /api/devices/fcm-token`
 - `DELETE /api/devices/fcm-token`
+- `GET /api/adoptions` (public, filterable pet adoption feed)
+- `POST /api/adoptions` and `POST /api/adoptions/{id}/apply` (authenticated)
+- `GET /api/adoptions/{id}/applications` (lister-only application review)
+- `POST /api/adoptions/applications/{id}/decision` (lister-only decision)
 
 Protected `/api` endpoints require `Authorization: Bearer <Firebase ID token>`.
 SMS send/verify endpoints are unauthenticated for sign-up support and are
@@ -118,6 +122,15 @@ As a coordinated release, apply
 updated backend and app. The migration removes stored lost-report IMEI hashes,
 removes the retired lookup quota table, and preserves non-IMEI Vault serial text
 where identifiable.
+
+Apply `supabase/migrations/20261011150000_add_adoption_module.sql` before
+deploying the adoption feature. It creates API-only adoption tables and the
+public `adoption-images` bucket; Lost/Found photos remain private in
+`report-images`. To enable opt-in adoption posts to official Meta pages,
+configure `META_FACEBOOK_PAGE_ID`, `META_INSTAGRAM_ACCOUNT_ID`,
+`META_PAGE_ACCESS_TOKEN`, and an HTTPS `APP_DOWNLOAD_URL`. If the lister opts in
+but publishing is unavailable or fails, the adoption listing remains available
+and returns a separate social-post status for retry.
 
 The FastAPI startup applies
 `supabase/migrations/20261011000000_private_match_workflow.sql` to PostgreSQL
@@ -140,10 +153,14 @@ to the private `report-images` bucket. The database stores a stable object
 reference; API responses contain short-lived signed URLs. The service does not
 write uploaded images to or read images from a local filesystem.
 
-Fendly has no social publishing, Meta OAuth, social account connection, or
-social-post cleanup APIs. Reunion-story consent defaults to false and is
-stored with each report; opted-in summaries are only available to admins for
-manual review and posting outside Fendly. Reopening a report revokes its
+Fendly does not automatically publish Lost/Theft or Found reports and does
+not use Meta OAuth or connect user-owned social accounts. Adoption listers
+may explicitly opt in to publishing an adoption listing to the configured
+official Facebook Page and Instagram account. Meta credentials are
+server-side configuration only; publication failure does not remove the
+adoption listing. Reunion-story consent defaults to false and is stored with
+each report; opted-in summaries are only available to admins for manual
+review and posting outside Fendly. Reopening a report revokes its
 success-story consent.
 
 ## Purge reports retained for previously deleted accounts

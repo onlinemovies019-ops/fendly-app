@@ -47,6 +47,11 @@
         images are visible to the report owner and authorized Fendly
         administrators. Other users do not receive report details or
         potential-match previews.</li>
+      <li><strong>Pet adoption:</strong> adoption listings, pet descriptions,
+        city, and listing photos are public. If you apply, Fendly stores your
+        home type, pet experience, and contact phone. The lister can review
+        applications; after approval, the applicant can see the lister's
+        verified phone number when one is available.</li>
     </ul>
 
     <h2>How information is used and shared</h2>
@@ -71,7 +76,7 @@
       safety moderation before storage. When configured, report text may also
       be sent to OpenAI or Google Gemini for translation. These providers
       process information under their own terms and privacy notices.</p>
-    <p>Fendly does not automatically publish reports to Facebook, Instagram,
+    <p>Fendly does not automatically publish Lost/Theft or Found reports to Facebook, Instagram,
       or other social platforms. An owner may choose to generate a community
       poster or alert card and share it using another app; information in
       materials or messages the owner shares is then subject to the recipient
@@ -79,7 +84,16 @@
       a reunion story, authorized administrators may review its category, city,
       and a temporary photo link and may manually share an approved story
       outside Fendly. This consent is optional and defaults to off. Fendly does
-      not connect to social-media services to publish stories.</p>
+      not automatically publish reunion stories to social media.</p>
+    <p>When creating a public pet-adoption listing, a lister may separately
+      opt in to publishing its first pet photo, pet name, species, age, city,
+      description, and Fendly app link to Fendly's configured Facebook Page
+      and Instagram account. This is optional and applies only to adoption
+      listings. Meta receives the submitted publication content under its
+      terms and privacy policy; Fendly stores returned publication IDs and
+      posting status. Fendly does not receive or store applicants' private
+      details on those pages unless the lister includes them in the public
+      listing description.</p>
     <p>Fendly does not collect or use device IMEIs for lost reports, vault
       records, or public verification. A one-time data update removes
       previously stored report hashes and IMEI values from vault records. The
@@ -94,8 +108,8 @@
       a device cannot be recalled. Copies of materials that users share through
       other apps are subject to those platforms' policies.</p>
     <p>When account deletion completes, Fendly deletes the account's profiles,
-      lost-and-found reports, report photos and generated community posters
-      managed by Fendly, and related
+      lost-and-found reports, adoption listings and applications, report photos,
+      adoption photos and generated community posters managed by Fendly, and related
       match alerts from active service stores. Images hosted outside services
       Fendly controls cannot be removed by Fendly; contact us if you need help
       identifying such an image.</p>
@@ -108,10 +122,12 @@
       The request deletes your Firebase sign-in, profile information, profile
       document copies, notification records and token, username reservation,
       blocked-account settings,
-      pending email-verification challenges, lost-and-found reports, content
+      pending email-verification challenges, lost-and-found reports, adoption
+      listings and applications, content
       reports submitted by the account or concerning its reports, and related
       match alerts. Fendly also attempts to delete report and profile photos stored
-      by services it controls. Deletion can fail temporarily if a required
+      by services it controls. Adoption posts already published to Meta remain
+      subject to Meta's deletion controls and policies. Deletion can fail temporarily if a required
       service is unavailable; the app will tell you to retry rather than
       report success. Copies of materials previously shared by users through
       other apps are controlled by the receiving platforms and may need to be

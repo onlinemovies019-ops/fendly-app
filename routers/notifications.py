@@ -34,6 +34,7 @@ def get_user_notification_payload(session: Session, uid: str) -> dict[str, objec
                 "match_alert_id": notification.match_alert_id,
                 "found_item_id": notification.found_item_id,
                 "lost_item_id": notification.lost_item_id,
+                "adoption_listing_id": notification.adoption_listing_id,
                 "title": notification.title,
                 "body": notification.body,
                 "score": notification.score,

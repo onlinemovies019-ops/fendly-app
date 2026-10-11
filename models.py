@@ -9,6 +9,7 @@ from sqlalchemy import (
     Date,
     DateTime,
     Float,
+    ForeignKey,
     Index,
     Integer,
     JSON,
@@ -109,8 +110,9 @@ class UserNotification(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
     firebase_uid: Mapped[str] = mapped_column(String(128), index=True)
-    found_item_id: Mapped[str] = mapped_column(String(36), index=True)
+    found_item_id: Mapped[str | None] = mapped_column(String(36), index=True)
     lost_item_id: Mapped[str | None] = mapped_column(String(36), index=True)
+    adoption_listing_id: Mapped[str | None] = mapped_column(String(36), index=True)
     match_alert_id: Mapped[str | None] = mapped_column(String(36), index=True)
     notification_type: Mapped[str] = mapped_column(String(32), default="match_verified")
     title: Mapped[str] = mapped_column(String(160))
@@ -136,6 +138,66 @@ class VaultItem(Base):
     warranty_expiry: Mapped[date | None] = mapped_column(Date)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), index=True
+    )
+
+
+class AdoptionListing(Base):
+    __tablename__ = "adoption_listings"
+    __table_args__ = (
+        CheckConstraint("age_months BETWEEN 0 AND 600", name="adoption_listings_age_months_check"),
+        CheckConstraint(
+            "status IN ('available', 'pending', 'adopted')",
+            name="adoption_listings_status_check",
+        ),
+        Index("adoption_listings_public_feed_idx", "status", "species", "location_city"),
+        Index("adoption_listings_owner_created_idx", "lister_user_id", "created_at"),
+    )
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    lister_user_id: Mapped[str] = mapped_column(String(128))
+    pet_name: Mapped[str] = mapped_column(String(120))
+    species: Mapped[str] = mapped_column(String(60))
+    breed: Mapped[str | None] = mapped_column(String(120))
+    age_months: Mapped[int] = mapped_column(Integer)
+    gender: Mapped[str] = mapped_column(String(32))
+    health_status: Mapped[str] = mapped_column(String(500))
+    description: Mapped[str] = mapped_column(Text)
+    location_city: Mapped[str] = mapped_column(String(120))
+    images: Mapped[list[str]] = mapped_column(JSON, default=list)
+    status: Mapped[str] = mapped_column(String(16), default="available")
+    auto_post_social: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    social_post_status: Mapped[str | None] = mapped_column(String(16))
+    social_post_error: Mapped[str | None] = mapped_column(String(500))
+    facebook_post_id: Mapped[str | None] = mapped_column(String(160))
+    instagram_post_id: Mapped[str | None] = mapped_column(String(160))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+
+class AdoptionApplication(Base):
+    __tablename__ = "adoption_applications"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('submitted', 'approved', 'rejected')",
+            name="adoption_applications_status_check",
+        ),
+        UniqueConstraint("listing_id", "applicant_user_id", name="adoption_applications_applicant_uq"),
+        Index("adoption_applications_listing_status_idx", "listing_id", "status"),
+        Index("adoption_applications_applicant_user_id_idx", "applicant_user_id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    listing_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("adoption_listings.id", ondelete="CASCADE"),
+    )
+    applicant_user_id: Mapped[str] = mapped_column(String(128))
+    home_type: Mapped[str] = mapped_column(String(120))
+    pet_experience: Mapped[str] = mapped_column(Text)
+    contact_phone: Mapped[str] = mapped_column(String(32))
+    status: Mapped[str] = mapped_column(String(16), default="submitted")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
     )
 
 

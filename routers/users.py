@@ -15,11 +15,14 @@ from firebase_admin import firestore
 import httpx
 
 from auth import _firebase_app, get_current_user
+from adoption_storage import delete_adoption_image
 from database import get_db
 from image_storage import delete_private_image_asset, refresh_private_image_url
 from models import (
     DeviceToken,
     AdminMatchAlert,
+    AdoptionApplication,
+    AdoptionListing,
     ContentReport,
     EmailOTPChallenge,
     FoundItem,
@@ -260,6 +263,10 @@ def delete_account(
         found_reports = session.scalars(
             select(FoundItem).where(FoundItem.created_by == uid)
         ).all()
+        adoption_listings = session.scalars(
+            select(AdoptionListing).where(AdoptionListing.lister_user_id == uid)
+        ).all()
+        adoption_listing_ids = {listing.id for listing in adoption_listings}
         report_ids = {item.id for item in (*lost_reports, *found_reports)}
         image_urls = {
             url
@@ -278,6 +285,9 @@ def delete_account(
         for image_url in image_urls:
             if not _photo_is_still_referenced(session, image_url, uid):
                 _delete_profile_photo_asset(image_url)
+        for listing in adoption_listings:
+            for image_url in listing.images or []:
+                delete_adoption_image(image_url)
 
         app = _firebase_app()
         _delete_firestore_account_copies(app, uid, email)
@@ -307,6 +317,27 @@ def delete_account(
             )
         session.execute(delete(LostItem).where(LostItem.created_by == uid))
         session.execute(delete(FoundItem).where(FoundItem.created_by == uid))
+        session.execute(
+            delete(AdoptionApplication).where(
+                AdoptionApplication.applicant_user_id == uid
+            )
+        )
+        if adoption_listing_ids:
+            session.execute(
+                delete(UserNotification).where(
+                    UserNotification.adoption_listing_id.in_(adoption_listing_ids)
+                )
+            )
+            session.execute(
+                delete(AdoptionApplication).where(
+                    AdoptionApplication.listing_id.in_(adoption_listing_ids)
+                )
+            )
+            session.execute(
+                delete(AdoptionListing).where(
+                    AdoptionListing.id.in_(adoption_listing_ids)
+                )
+            )
         session.execute(delete(UserNotification).where(UserNotification.firebase_uid == uid))
         session.execute(delete(ContentReport).where(ContentReport.reporter_uid == uid))
         session.execute(delete(DeviceToken).where(DeviceToken.firebase_uid == uid))

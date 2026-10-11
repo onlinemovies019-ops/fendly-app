@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import main
 
 
@@ -20,3 +22,19 @@ def test_private_workflow_migration_runs_schema_and_storage_policies():
     assert "fendly_private_vault_deny_clients" in sql
     assert "BEGIN" not in statements
     assert "COMMIT" not in statements
+
+
+def test_adoption_migration_creates_private_api_tables_and_public_photo_bucket():
+    repository_root = Path(__file__).resolve().parents[1]
+    migration = (
+        repository_root
+        / "supabase/migrations/20261011150000_add_adoption_module.sql"
+    ).read_text(encoding="utf-8")
+
+    assert "CREATE TABLE IF NOT EXISTS public.adoption_listings" in migration
+    assert "CREATE TABLE IF NOT EXISTS public.adoption_applications" in migration
+    assert "fendly_private_adoption_listings_deny_clients" in migration
+    assert "fendly_private_adoption_applications_deny_clients" in migration
+    assert "'adoption-images'" in migration
+    assert "public = true" in migration
+    assert "found_item_id DROP NOT NULL" in migration
