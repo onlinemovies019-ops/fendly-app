@@ -3939,7 +3939,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         LinearLayout.LayoutParams foundParams = new LinearLayout.LayoutParams(0, 72, 1);
         foundParams.setMargins(dp(4), 0, dp(4), 0);
         choices.addView(found, foundParams);
-        TextView adopt = actionButton("Adopt", false);
+        TextView adopt = actionButton(LanguageManager.profileText(this, "adopt_button"), false);
         adopt.setTextColor(Color.WHITE);
         adopt.setBackground(round(Color.rgb(70, 101, 157), 18));
         adopt.setOnClickListener(view ->

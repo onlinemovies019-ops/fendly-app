@@ -19,16 +19,12 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
-import androidx.compose.material3.Card
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Tab
 import androidx.compose.material3.TabRow
@@ -53,9 +49,13 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.window.Dialog
+import androidx.core.view.WindowCompat
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.rememberScrollState
 import com.google.firebase.auth.FirebaseAuth
+import com.example.fendly.ui.theme.FendlyCard
+import com.example.fendly.ui.theme.FendlyPrimaryButton
+import com.example.fendly.ui.theme.FendlyTextField
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -69,8 +69,46 @@ import java.util.Locale
 
 class AdoptionActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
+        val darkMode = getSharedPreferences("fendly_settings", MODE_PRIVATE)
+            .getBoolean("dark_mode", false)
+        setTheme(if (darkMode) R.style.Theme_Fendly_Dark else R.style.Theme_Fendly)
         super.onCreate(savedInstanceState)
-        setContent { MaterialTheme { AdoptionScreen(onBack = ::finish) } }
+        val systemBarColor = if (darkMode) android.graphics.Color.rgb(18, 19, 25)
+        else android.graphics.Color.rgb(247, 243, 238)
+        window.statusBarColor = systemBarColor
+        window.navigationBarColor = systemBarColor
+        WindowCompat.getInsetsController(window, window.decorView).apply {
+            isAppearanceLightStatusBars = !darkMode
+            isAppearanceLightNavigationBars = !darkMode
+        }
+        val colors = if (darkMode) {
+            androidx.compose.material3.darkColorScheme(
+                primary = androidx.compose.ui.graphics.Color(0xFFE8B24A),
+                onPrimary = androidx.compose.ui.graphics.Color(0xFF2B1D05),
+                background = androidx.compose.ui.graphics.Color(0xFF121319),
+                onBackground = androidx.compose.ui.graphics.Color(0xFFF7F9FC),
+                surface = androidx.compose.ui.graphics.Color(0xFF181D24),
+                onSurface = androidx.compose.ui.graphics.Color(0xFFF7F9FC),
+                onSurfaceVariant = androidx.compose.ui.graphics.Color(0xFFAAB1BC),
+                outline = androidx.compose.ui.graphics.Color(0xFF444D5A),
+            )
+        } else {
+            androidx.compose.material3.lightColorScheme(
+                primary = androidx.compose.ui.graphics.Color(0xFFE8B24A),
+                onPrimary = androidx.compose.ui.graphics.Color(0xFF2B1D05),
+                background = androidx.compose.ui.graphics.Color(0xFFF7F3EE),
+                onBackground = androidx.compose.ui.graphics.Color.Black,
+                surface = androidx.compose.ui.graphics.Color(0xFFFDFBF8),
+                onSurface = androidx.compose.ui.graphics.Color.Black,
+                onSurfaceVariant = androidx.compose.ui.graphics.Color(0xFF4D505A),
+                outline = androidx.compose.ui.graphics.Color(0xFFCDC5B8),
+            )
+        }
+        setContent {
+            MaterialTheme(colorScheme = colors) {
+                AdoptionScreen(onBack = ::finish)
+            }
+        }
     }
 }
 
@@ -156,6 +194,7 @@ private fun adoptionRequest(
 @Composable
 private fun AdoptionScreen(onBack: () -> Unit) {
     val context = LocalContext.current
+    fun t(key: String): String = LanguageManager.adoptionText(context, key)
     val scope = rememberCoroutineScope()
     val feed = remember { mutableStateListOf<AdoptionListing>() }
     val mine = remember { mutableStateListOf<AdoptionListing>() }
@@ -188,12 +227,12 @@ private fun AdoptionScreen(onBack: () -> Unit) {
     fun withToken(onToken: (String) -> Unit) {
         val user = FirebaseAuth.getInstance().currentUser
         if (user == null) {
-            message = "Sign in to use this feature."
+            message = t("adopt_sign_in")
             return
         }
         user.getIdToken(false)
             .addOnSuccessListener { result -> onToken(result.token.orEmpty()) }
-            .addOnFailureListener { error -> message = error.localizedMessage ?: "Could not authenticate." }
+            .addOnFailureListener { message = t("adopt_auth_failed") }
     }
 
     fun refreshFeed() {
@@ -213,7 +252,7 @@ private fun AdoptionScreen(onBack: () -> Unit) {
                 for (index in 0 until result.length()) feed.add(adoptionListing(result.getJSONObject(index)))
                 message = ""
             } catch (error: Exception) {
-                message = error.localizedMessage ?: "Could not load adoption listings."
+                message = t("adopt_load_feed_failed")
             } finally {
                 busy = false
             }
@@ -231,7 +270,7 @@ private fun AdoptionScreen(onBack: () -> Unit) {
                     for (index in 0 until result.length()) mine.add(adoptionListing(result.getJSONObject(index)))
                     message = ""
                 } catch (error: Exception) {
-                    message = error.localizedMessage ?: "Could not load your listings."
+                    message = t("adopt_load_listings_failed")
                 }
             }
         }
@@ -258,7 +297,7 @@ private fun AdoptionScreen(onBack: () -> Unit) {
                     }
                     message = ""
                 } catch (error: Exception) {
-                    message = error.localizedMessage ?: "Could not load your applications."
+                    message = t("adopt_load_applications_failed")
                 }
             }
         }
@@ -287,7 +326,7 @@ private fun AdoptionScreen(onBack: () -> Unit) {
                     reviewListing = listing.id
                     message = ""
                 } catch (error: Exception) {
-                    message = error.localizedMessage ?: "Could not load applications."
+                    message = t("adopt_load_reviews_failed")
                 }
             }
         }
@@ -301,25 +340,32 @@ private fun AdoptionScreen(onBack: () -> Unit) {
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Adopt a pet") },
+                title = { Text(t("adopt_title"), maxLines = 1) },
                 navigationIcon = {
-                    TextButton(onClick = onBack) { Text("Back") }
+                    TextButton(onClick = onBack) { Text(t("adopt_back")) }
                 },
                 actions = {
                     TextButton(onClick = {
                         showCreate = true
                         message = ""
-                    }) { Text("List a pet") }
+                    }) { Text(t("adopt_list_pet")) }
                 },
+                colors = androidx.compose.material3.TopAppBarDefaults.topAppBarColors(
+                    containerColor = MaterialTheme.colorScheme.background,
+                    titleContentColor = MaterialTheme.colorScheme.onBackground,
+                    navigationIconContentColor = MaterialTheme.colorScheme.onBackground,
+                ),
             )
         },
+        containerColor = MaterialTheme.colorScheme.background,
     ) { padding ->
         Column(
             Modifier.fillMaxSize().padding(padding).padding(horizontal = 16.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             TabRow(selectedTabIndex = tab) {
-                listOf("Browse pets", "My listings", "My applications").forEachIndexed { index, title ->
+                listOf(t("adopt_browse"), t("adopt_my_listings"), t("adopt_my_applications"))
+                    .forEachIndexed { index, title ->
                     Tab(selected = tab == index, onClick = {
                         tab = index
                         when (index) {
@@ -337,48 +383,52 @@ private fun AdoptionScreen(onBack: () -> Unit) {
             when (tab) {
                 0 -> {
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        OutlinedTextField(
+                        FendlyTextField(
                             value = speciesFilter,
                             onValueChange = { speciesFilter = it },
-                            label = { Text("Species") },
+                            label = t("adopt_species"),
                             modifier = Modifier.weight(1f),
                             singleLine = true,
                         )
-                        OutlinedTextField(
+                        FendlyTextField(
                             value = cityFilter,
                             onValueChange = { cityFilter = it },
-                            label = { Text("City") },
+                            label = t("adopt_city"),
                             modifier = Modifier.weight(1f),
                             singleLine = true,
                         )
                     }
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        OutlinedTextField(
+                        FendlyTextField(
                             value = minimumAge,
                             onValueChange = { minimumAge = it.filter(Char::isDigit).take(3) },
-                            label = { Text("Min age (months)") },
+                            label = t("adopt_min_age"),
                             modifier = Modifier.weight(1f),
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                             singleLine = true,
                         )
-                        OutlinedTextField(
+                        FendlyTextField(
                             value = maximumAge,
                             onValueChange = { maximumAge = it.filter(Char::isDigit).take(3) },
-                            label = { Text("Max age (months)") },
+                            label = t("adopt_max_age"),
                             modifier = Modifier.weight(1f),
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                             singleLine = true,
                         )
                     }
-                    TextButton(onClick = ::refreshFeed) { Text("Apply filters / refresh") }
+                    TextButton(onClick = ::refreshFeed) { Text(t("adopt_refresh")) }
                     LazyColumn(
                         modifier = Modifier.weight(1f),
                         verticalArrangement = Arrangement.spacedBy(10.dp),
                     ) {
                         items(feed, key = AdoptionListing::id) { listing ->
-                            ListingCard(listing) {
+                            ListingCard(
+                                listing = listing,
+                                t = ::t,
+                                actionLabel = t("adopt_request"),
+                            ) {
                                 if (listing.status !in setOf("available", "pending")) {
-                                    message = "This pet is not accepting applications right now."
+                                    message = t("adopt_not_accepting")
                                 } else {
                                     applyingTo = listing
                                 }
@@ -391,13 +441,18 @@ private fun AdoptionScreen(onBack: () -> Unit) {
                     verticalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
                     items(mine, key = AdoptionListing::id) { listing ->
-                        ListingCard(listing, actionLabel = "Review applications") {
+                        ListingCard(
+                            listing,
+                            t = ::t,
+                            actionLabel = t("adopt_review"),
+                        ) {
                             loadApplications(listing)
                         }
                         if (listing.id == reviewListing) {
                             reviewApplications.forEach { application ->
                                 ApplicationReviewCard(
                                     application = application,
+                                    t = ::t,
                                     onDecision = { decision ->
                                         withToken { token ->
                                             scope.launch {
@@ -415,7 +470,7 @@ private fun AdoptionScreen(onBack: () -> Unit) {
                                                     loadApplications(listing)
                                                     loadMine()
                                                 } catch (error: Exception) {
-                                                    message = error.localizedMessage ?: "Could not update application."
+                                                    message = t("adopt_decision_failed")
                                                 }
                                             }
                                         }
@@ -430,16 +485,19 @@ private fun AdoptionScreen(onBack: () -> Unit) {
                     verticalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
                     items(myApplications, key = MyAdoptionApplication::id) { application ->
-                        Card(Modifier.fillMaxWidth()) {
-                            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        FendlyCard(Modifier.fillMaxWidth()) {
+                            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                                 Text(application.petName, fontWeight = FontWeight.Bold)
-                                Text("Status: ${application.status}")
+                                Text("${t("adopt_status")}: ${t("adopt_${application.status}")}")
                                 if (application.status == "approved") {
                                     Text(
                                         if (application.listerPhone.isBlank()) {
-                                            "The lister has no verified phone number on file."
+                                            t("adopt_no_verified_phone")
                                         } else {
-                                            "Contact the lister: ${application.listerPhone}"
+                                            t("adopt_contact_lister").replace(
+                                                "{phone}",
+                                                application.listerPhone,
+                                            )
                                         },
                                     )
                                 }
@@ -454,43 +512,50 @@ private fun AdoptionScreen(onBack: () -> Unit) {
     if (showCreate) {
         val fields = rememberScrollState()
         Dialog(onDismissRequest = { showCreate = false }) {
-            Card(shape = RoundedCornerShape(20.dp)) {
+            FendlyCard(Modifier.fillMaxWidth()) {
                 Column(
-                    Modifier.fillMaxWidth().padding(20.dp).verticalScroll(fields),
+                    Modifier.fillMaxWidth().verticalScroll(fields),
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    Text("Create adoption listing", style = MaterialTheme.typography.titleLarge)
-                    OutlinedTextField(petName, { petName = it }, label = { Text("Pet name") }, modifier = Modifier.fillMaxWidth())
-                    OutlinedTextField(species, { species = it }, label = { Text("Species") }, modifier = Modifier.fillMaxWidth())
-                    OutlinedTextField(breed, { breed = it }, label = { Text("Breed (optional)") }, modifier = Modifier.fillMaxWidth())
-                    OutlinedTextField(
+                    Text(t("adopt_create_title"), style = MaterialTheme.typography.titleLarge)
+                    FendlyTextField(petName, { petName = it }, t("adopt_pet_name"), modifier = Modifier.fillMaxWidth(), singleLine = true)
+                    FendlyTextField(species, { species = it }, t("adopt_species"), modifier = Modifier.fillMaxWidth(), singleLine = true)
+                    FendlyTextField(breed, { breed = it }, t("adopt_breed_optional"), modifier = Modifier.fillMaxWidth(), singleLine = true)
+                    FendlyTextField(
                         age,
                         { age = it.filter(Char::isDigit).take(3) },
-                        label = { Text("Age in months") },
+                        label = t("adopt_age_months"),
                         modifier = Modifier.fillMaxWidth(),
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        singleLine = true,
                     )
-                    OutlinedTextField(gender, { gender = it }, label = { Text("Gender") }, modifier = Modifier.fillMaxWidth())
-                    OutlinedTextField(health, { health = it }, label = { Text("Health / vaccination status") }, modifier = Modifier.fillMaxWidth())
-                    OutlinedTextField(description, { description = it }, label = { Text("Description") }, modifier = Modifier.fillMaxWidth(), minLines = 2)
-                    OutlinedTextField(city, { city = it }, label = { Text("City") }, modifier = Modifier.fillMaxWidth())
+                    FendlyTextField(gender, { gender = it }, t("adopt_gender"), modifier = Modifier.fillMaxWidth(), singleLine = true)
+                    FendlyTextField(health, { health = it }, t("adopt_health"), modifier = Modifier.fillMaxWidth())
+                    FendlyTextField(
+                        description,
+                        { description = it },
+                        t("adopt_description"),
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    FendlyTextField(city, { city = it }, t("adopt_city"), modifier = Modifier.fillMaxWidth(), singleLine = true)
                     TextButton(onClick = { photoPicker.launch("image/*") }) {
-                        Text(if (selectedPhoto == null) "Choose pet photo" else "Pet photo selected")
+                        Text(if (selectedPhoto == null) t("adopt_choose_photo") else t("adopt_photo_selected"))
                     }
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Checkbox(autoPostSocial, { autoPostSocial = it })
                         Text(
-                            "Auto-post this pet adoption to our official Facebook & Instagram pages to help find a home faster.",
+                            t("adopt_social_optin"),
                             style = MaterialTheme.typography.bodySmall,
                         )
                     }
                     Text(
-                        "Optional. If posting fails, your Fendly listing will remain available.",
+                        t("adopt_social_optional"),
                         style = MaterialTheme.typography.bodySmall,
                     )
-                    Row(horizontalArrangement = Arrangement.End, modifier = Modifier.fillMaxWidth()) {
-                        TextButton(onClick = { showCreate = false }) { Text("Cancel") }
-                        Button(
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp), modifier = Modifier.fillMaxWidth()) {
+                        TextButton(onClick = { showCreate = false }) { Text(t("adopt_cancel")) }
+                        FendlyPrimaryButton(
+                            text = t("adopt_publish"),
                             enabled = !busy,
                             onClick = {
                                 val ageValue = age.toIntOrNull()
@@ -500,7 +565,7 @@ private fun AdoptionScreen(onBack: () -> Unit) {
                                     gender.isBlank() || health.isBlank() || description.isBlank() ||
                                     city.isBlank() || photo == null
                                 ) {
-                                    message = "Complete the required fields and choose a pet photo."
+                                    message = t("adopt_required_fields")
                                 } else {
                                     withToken { token ->
                                         busy = true
@@ -524,16 +589,16 @@ private fun AdoptionScreen(onBack: () -> Unit) {
                                                 }
                                                 val listing = adoptionListing(JSONObject(result))
                                                 message = when (listing.socialStatus) {
-                                                    "failed" -> "Listing published. Social post needs attention: ${listing.socialError}"
-                                                    "published" -> "Listing published and shared to social pages."
-                                                    else -> "Adoption listing published."
+                                                    "failed" -> "${t("adopt_social_attention")} ${listing.socialError}"
+                                                    "published" -> t("adopt_shared")
+                                                    else -> t("adopt_listing_published")
                                                 }
                                                 showCreate = false
                                                 tab = 1
                                                 loadMine()
                                                 refreshFeed()
                                             } catch (error: Exception) {
-                                                message = error.localizedMessage ?: "Could not create listing."
+                                                message = t("adopt_submit_failed")
                                             } finally {
                                                 busy = false
                                             }
@@ -541,7 +606,7 @@ private fun AdoptionScreen(onBack: () -> Unit) {
                                     }
                                 }
                             },
-                        ) { Text("Publish listing") }
+                        )
                     }
                 }
             }
@@ -551,23 +616,34 @@ private fun AdoptionScreen(onBack: () -> Unit) {
     applyingTo?.let { listing ->
         AlertDialog(
             onDismissRequest = { applyingTo = null },
-            title = { Text("Request to adopt ${listing.petName}") },
+            title = {
+                Text(
+                    t("adopt_request_title").replace("{pet}", listing.petName),
+                )
+            },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedTextField(homeType, { homeType = it }, label = { Text("Home type") })
-                    OutlinedTextField(petExperience, { petExperience = it }, label = { Text("Pet experience") }, minLines = 2)
-                    OutlinedTextField(
+                    FendlyTextField(homeType, { homeType = it }, t("adopt_home_type"), modifier = Modifier.fillMaxWidth(), singleLine = true)
+                    FendlyTextField(
+                        petExperience,
+                        { petExperience = it },
+                        label = t("adopt_experience"),
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    FendlyTextField(
                         contactPhone,
                         { contactPhone = it },
-                        label = { Text("Your contact phone") },
+                        label = t("adopt_your_phone"),
+                        modifier = Modifier.fillMaxWidth(),
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
+                        singleLine = true,
                     )
                 }
             },
             confirmButton = {
                 TextButton(onClick = {
                     if (homeType.isBlank() || petExperience.isBlank() || contactPhone.isBlank()) {
-                        message = "Complete all application fields."
+                        message = t("adopt_complete_application")
                     } else {
                         withToken { token ->
                             scope.launch {
@@ -588,7 +664,7 @@ private fun AdoptionScreen(onBack: () -> Unit) {
                                             "application/x-www-form-urlencoded",
                                         )
                                     }
-                                    message = "Adoption request sent."
+                                    message = t("adopt_request_sent")
                                     applyingTo = null
                                     homeType = ""
                                     petExperience = ""
@@ -597,15 +673,15 @@ private fun AdoptionScreen(onBack: () -> Unit) {
                                     loadMyApplications()
                                     refreshFeed()
                                 } catch (error: Exception) {
-                                    message = error.localizedMessage ?: "Could not send application."
+                                    message = t("adopt_apply_failed")
                                 }
                             }
                         }
                     }
-                }) { Text("Send request") }
+                }) { Text(t("adopt_send_request")) }
             },
             dismissButton = {
-                TextButton(onClick = { applyingTo = null }) { Text("Cancel") }
+                TextButton(onClick = { applyingTo = null }) { Text(t("adopt_cancel")) }
             },
         )
     }
@@ -614,35 +690,39 @@ private fun AdoptionScreen(onBack: () -> Unit) {
 @Composable
 private fun ListingCard(
     listing: AdoptionListing,
-    actionLabel: String = "Request to Adopt",
+    t: (String) -> String,
+    actionLabel: String,
     onAction: () -> Unit,
 ) {
-    Card(Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            if (listing.image.isNotBlank()) AdoptionImage(listing.image)
+    FendlyCard(Modifier.fillMaxWidth()) {
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            if (listing.image.isNotBlank()) AdoptionImage(listing.image, t("adopt_photo_content_description"))
             Text(listing.petName, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
             Text("${listing.species.replaceFirstChar { if (it.isLowerCase()) it.titlecase(Locale.getDefault()) else it.toString() }}${if (listing.breed.isBlank()) "" else " · ${listing.breed}"}")
-            Text("${listing.ageMonths} months · ${listing.gender} · ${listing.city}")
-            Text("Health: ${listing.healthStatus}")
+            Text("${listing.ageMonths} ${t("adopt_months")} · ${listing.gender} · ${listing.city}")
+            Text("${t("adopt_health_label")}: ${listing.healthStatus}")
             Text(listing.description)
-            Text("Status: ${listing.status}")
+            Text("${t("adopt_status")}: ${t("adopt_${listing.status}")}")
             if (listing.socialStatus.isNotBlank()) {
                 Text(
                     if (listing.socialStatus == "failed") {
-                        "Social post: needs attention. ${listing.socialError}"
+                        "${t("adopt_social_failed")} ${listing.socialError}"
                     } else {
-                        "Social post: ${listing.socialStatus}"
+                        t("adopt_social_status").replace(
+                            "{status}",
+                            t("adopt_social_${listing.socialStatus}"),
+                        )
                     },
                     style = MaterialTheme.typography.bodySmall,
                 )
             }
-            Button(onClick = onAction) { Text(actionLabel) }
+            FendlyPrimaryButton(text = actionLabel, onClick = onAction)
         }
     }
 }
 
 @Composable
-private fun AdoptionImage(url: String) {
+private fun AdoptionImage(url: String, contentDescription: String) {
     val bitmap by produceState<android.graphics.Bitmap?>(initialValue = null, url) {
         value = withContext(Dispatchers.IO) {
             runCatching {
@@ -653,7 +733,7 @@ private fun AdoptionImage(url: String) {
     bitmap?.let {
         Image(
             bitmap = it.asImageBitmap(),
-            contentDescription = "Pet photo",
+            contentDescription = contentDescription,
             modifier = Modifier.fillMaxWidth().height(190.dp),
             contentScale = ContentScale.Crop,
         )
@@ -663,18 +743,22 @@ private fun AdoptionImage(url: String) {
 @Composable
 private fun ApplicationReviewCard(
     application: AdoptionApplicationView,
+    t: (String) -> String,
     onDecision: (String) -> Unit,
 ) {
-    Card(Modifier.fillMaxWidth().padding(start = 14.dp)) {
-        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Text("Applicant (${application.status})", fontWeight = FontWeight.Bold)
-            Text("Home: ${application.homeType}")
-            Text("Experience: ${application.experience}")
-            Text("Phone: ${application.phone}")
+    FendlyCard(Modifier.fillMaxWidth().padding(start = 14.dp)) {
+        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text(
+                "${t("adopt_applicant")} (${t("adopt_${application.status}")})",
+                fontWeight = FontWeight.Bold,
+            )
+            Text("${t("adopt_home_label")}: ${application.homeType}")
+            Text("${t("adopt_experience_label")}: ${application.experience}")
+            Text("${t("adopt_phone_label")}: ${application.phone}")
             if (application.status == "submitted") {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    TextButton(onClick = { onDecision("approved") }) { Text("Approve") }
-                    TextButton(onClick = { onDecision("rejected") }) { Text("Reject") }
+                    TextButton(onClick = { onDecision("approved") }) { Text(t("adopt_approve")) }
+                    TextButton(onClick = { onDecision("rejected") }) { Text(t("adopt_reject")) }
                 }
             }
         }
