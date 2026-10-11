@@ -2,7 +2,7 @@ from fastapi import APIRouter, HTTPException, Response, status
 
 router = APIRouter(prefix="/api/v1/imei", tags=["SafeTrade"])
 
-@router.get("/verify/{imei_number}")
+@router.get("/verify/{imei_number}", status_code=status.HTTP_410_GONE)
 def verify_imei(
     imei_number: str,
     response: Response,

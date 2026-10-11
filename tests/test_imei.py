@@ -7,6 +7,7 @@ from routers.imei import verify_imei
 from routers.items import ItemSubmission
 from routers.vault import _serialize
 from schemas import ItemCreate
+from main import app
 
 
 def test_retired_imei_lookup_returns_gone_without_caching():
@@ -17,6 +18,13 @@ def test_retired_imei_lookup_returns_gone_without_caching():
 
     assert exc_info.value.status_code == 410
     assert response.headers["Cache-Control"] == "no-store"
+
+
+def test_retired_imei_lookup_openapi_documents_gone_response():
+    responses = app.openapi()["paths"]["/api/v1/imei/verify/{imei_number}"]["get"]["responses"]
+
+    assert "410" in responses
+    assert "200" not in responses
 
 
 @pytest.mark.parametrize(
