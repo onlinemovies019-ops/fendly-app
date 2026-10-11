@@ -10587,11 +10587,19 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                     int processed = result.optInt("processed", 0);
                     int removed = result.optInt("removed", 0);
                     int remaining = result.optInt("remaining", 0);
-                    String message = "Checked " + processed + " reports; removed posts for "
-                            + removed + ". Remaining reports: " + remaining + ".";
-                    if (remaining > 0) message += " Run cleanup again to continue.";
-                    if (result.optJSONArray("failures") != null
-                            && result.optJSONArray("failures").length() > 0) {
+                    JSONArray failures = result.optJSONArray("failures");
+                    boolean hasFailures = failures != null && failures.length() > 0;
+                    String message;
+                    if (remaining == 0 && !hasFailures && processed == 0) {
+                        message = "Cleanup complete. No remaining reports need social-post cleanup.";
+                    } else {
+                        message = "Checked " + processed + " reports; removed posts for "
+                                + removed + ". Remaining reports: " + remaining + ".";
+                    }
+                    if (remaining > 0 && !hasFailures) {
+                        message += " Run cleanup again to continue.";
+                    }
+                    if (hasFailures) {
                         message += " Some removals need administrator attention.";
                     }
                     new AlertDialog.Builder(this)

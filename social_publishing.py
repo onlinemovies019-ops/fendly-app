@@ -175,6 +175,9 @@ def remove_report_publications(
     }
     failures: list[str] = []
     for publication in publications:
+        if publication.status == "removed":
+            session.delete(publication)
+            continue
         account = accounts.get(publication.provider)
         if publication.external_post_id:
             if account is None:
@@ -221,8 +224,13 @@ def _legacy_social_report_pairs(session: Session) -> list[tuple[str, str]]:
     pairs = {
         (str(report_id), str(report_type).lower())
         for report_id, report_type in session.execute(
-            select(SocialPublication.report_id, SocialPublication.report_type).distinct()
-        ).all()
+                select(
+                    SocialPublication.report_id,
+                    SocialPublication.report_type,
+                )
+                .distinct()
+                .where(SocialPublication.status != "removed")
+            ).all()
     }
     pairs.update(
         (str(report_id), "lost")

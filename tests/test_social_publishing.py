@@ -2,10 +2,13 @@ import ast
 from pathlib import Path
 
 import pytest
+from sqlalchemy import create_engine
+from sqlalchemy.orm import Session
+from sqlalchemy.pool import StaticPool
 
 import main
 import social_publishing
-from models import SocialAccount
+from models import Base, LostItem, SocialAccount, SocialPublication
 
 
 def test_no_social_connection_or_publication_routes_are_registered():
@@ -81,3 +84,51 @@ def test_legacy_meta_post_cleanup_uses_delete_only(monkeypatch):
             15,
         )
     ]
+
+
+def test_cleanup_ignores_posts_already_removed_and_preserves_audit_rows(monkeypatch):
+    engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(bind=engine)
+    monkeypatch.setattr(
+        social_publishing.httpx,
+        "delete",
+        lambda *args, **kwargs: pytest.fail("Already-removed posts must not be deleted again"),
+    )
+    with Session(engine) as session:
+        session.add(
+            LostItem(
+                id="report-1",
+                created_by="owner-1",
+                title="Lost pet",
+                description="Brown dog",
+                lat=0,
+                lng=0,
+                social_share_consent=False,
+            )
+        )
+        session.add(
+            SocialPublication(
+                id="publication-1",
+                report_id="report-1",
+                report_type="lost",
+                provider="facebook",
+                status="removed",
+                external_post_id="page-id_post-id",
+            )
+        )
+        session.commit()
+
+        result = social_publishing.remove_legacy_social_posts(session)
+
+        assert result == {
+            "processed": 0,
+            "removed": 0,
+            "remaining": 0,
+            "failures": [],
+        }
+        assert session.get(SocialPublication, "publication-1") is not None
+    engine.dispose()
