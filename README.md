@@ -128,16 +128,21 @@ deploying the adoption feature. It creates API-only adoption tables and the
 public `adoption-images` bucket; Lost/Found photos remain private in
 `report-images`. Adoption auto-posting reuses the Facebook Page and Instagram
 account connection previously saved by Fendly's Meta OAuth flow in
-`social_accounts`; it decrypts the saved Page token with the existing
-`APP_SECRET_KEY`. The Graph API version defaults to `v23.0`; set
+`social_accounts` before using direct environment credentials; it decrypts the
+saved Page token with the existing `APP_SECRET_KEY`. The Graph API version defaults to `v23.0`; set
 `APP_DOWNLOAD_URL` only if the app's Play Store link differs from the default.
 For deployments without saved Meta account rows, the optional direct
 configuration is `META_FACEBOOK_PAGE_ID` (or its `META_PAGE_ID` alias),
-`META_INSTAGRAM_ACCOUNT_ID`, and `META_PAGE_ACCESS_TOKEN`. The app ID, app
-secret, Graph API version, and login configuration ID do not replace the Page
-access token or Instagram account ID needed to publish. If the lister opts in
-but publishing is unavailable or fails, the adoption listing remains available
-and returns a separate social-post status for retry.
+and `META_PAGE_ACCESS_TOKEN`. `META_INSTAGRAM_ACCOUNT_ID` may be set to the
+numeric Instagram professional account ID; when it is missing or malformed,
+the API discovers the account linked to `META_PAGE_ID`. Never put an access
+token in either ID variable. The Page token and Meta app must have the
+`pages_manage_posts` permission for Facebook and `instagram_basic` plus
+`instagram_content_publish` for Instagram. The app ID, app secret, Graph API
+version, and login configuration ID do not replace these granted permissions
+or the Page access token. If the lister opts in but publishing is unavailable
+or fails, the adoption listing remains available and returns a separate
+social-post status for retry.
 
 The FastAPI startup applies
 `supabase/migrations/20261011000000_private_match_workflow.sql` to PostgreSQL

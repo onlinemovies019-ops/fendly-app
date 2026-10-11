@@ -15,6 +15,7 @@ from models import AdoptionListing, SocialAccount
 logger = logging.getLogger(__name__)
 DEFAULT_GRAPH_VERSION = "v23.0"
 GRAPH_VERSION_PATTERN = re.compile(r"^v\d{1,2}\.0$")
+GRAPH_ID_PATTERN = re.compile(r"^\d+$")
 
 
 def _graph_configuration() -> tuple[str, str]:
@@ -46,6 +47,11 @@ def _connection_credentials(
     provider: str,
     account: SocialAccount | None,
 ) -> tuple[str, str] | None:
+    if account is not None and account.account_id and account.access_token_encrypted:
+        if not GRAPH_ID_PATTERN.fullmatch(account.account_id):
+            raise RuntimeError(f"The saved {provider.title()} account ID is invalid; reconnect Meta")
+        return account.account_id, _decrypt_connected_token(account.access_token_encrypted)
+
     id_environment_name = (
         "META_FACEBOOK_PAGE_ID" if provider == "facebook" else "META_INSTAGRAM_ACCOUNT_ID"
     )
@@ -53,8 +59,27 @@ def _connection_credentials(
     if provider == "facebook" and not direct_id:
         direct_id = os.getenv("META_PAGE_ID", "").strip()
     direct_token = os.getenv("META_PAGE_ACCESS_TOKEN", "").strip()
-    if direct_id and direct_token:
+    if provider == "facebook" and direct_id and direct_token:
+        if not GRAPH_ID_PATTERN.fullmatch(direct_id):
+            raise RuntimeError(
+                f"{id_environment_name} must be the numeric Facebook Page ID, "
+                "not an access token"
+            )
         return direct_id, direct_token
+    if provider == "instagram" and direct_token:
+        if direct_id and GRAPH_ID_PATTERN.fullmatch(direct_id):
+            return direct_id, direct_token
+        page_id = (
+            os.getenv("META_FACEBOOK_PAGE_ID", "").strip()
+            or os.getenv("META_PAGE_ID", "").strip()
+        )
+        if page_id and GRAPH_ID_PATTERN.fullmatch(page_id):
+            return _instagram_account_for_page(page_id, direct_token), direct_token
+        if direct_id:
+            raise RuntimeError(
+                "META_INSTAGRAM_ACCOUNT_ID must be the numeric Instagram account ID, "
+                "not an access token; configure META_PAGE_ID to discover the linked account"
+            )
     if account is None or not account.account_id or not account.access_token_encrypted:
         if direct_id and not direct_token:
             raise RuntimeError(
@@ -63,7 +88,47 @@ def _connection_credentials(
         if direct_token and not direct_id:
             raise RuntimeError(f"{id_environment_name} is required with META_PAGE_ACCESS_TOKEN")
         return None
-    return account.account_id, _decrypt_connected_token(account.access_token_encrypted)
+    return None
+
+
+def _redact_meta_error(message: str, access_token: str) -> str:
+    if access_token:
+        message = message.replace(access_token, "[redacted Meta access token]")
+    return re.sub(r"\bEAA[A-Za-z0-9]{20,}\b", "[redacted Meta access token]", message)
+
+
+def _instagram_account_for_page(page_id: str, access_token: str) -> str:
+    graph_version = os.getenv("META_GRAPH_API_VERSION", DEFAULT_GRAPH_VERSION).strip()
+    endpoint = f"https://graph.facebook.com/{graph_version}/{page_id}"
+    try:
+        response = httpx.get(
+            endpoint,
+            params={
+                "fields": "instagram_business_account{id}",
+                "access_token": access_token,
+            },
+            timeout=20.0,
+        )
+        response.raise_for_status()
+        result = response.json()
+    except httpx.HTTPStatusError as exc:
+        try:
+            graph_error = exc.response.json().get("error", {}).get("message", "")
+        except (ValueError, AttributeError):
+            graph_error = ""
+        message = graph_error or f"Meta Graph API returned HTTP {exc.response.status_code}"
+        raise RuntimeError(_redact_meta_error(message[:400], access_token)) from exc
+    except (httpx.HTTPError, ValueError) as exc:
+        raise RuntimeError("Could not discover the Instagram account linked to META_PAGE_ID") from exc
+
+    instagram = result.get("instagram_business_account") if isinstance(result, dict) else None
+    instagram_id = instagram.get("id") if isinstance(instagram, dict) else None
+    if not isinstance(instagram_id, str) or not GRAPH_ID_PATTERN.fullmatch(instagram_id):
+        raise RuntimeError(
+            "META_PAGE_ID has no linked Instagram professional account; link one to the "
+            "Facebook Page and grant instagram_basic and instagram_content_publish"
+        )
+    return instagram_id
 
 
 def _graph_post(endpoint: str, payload: dict[str, str]) -> str:
@@ -77,6 +142,14 @@ def _graph_post(endpoint: str, payload: dict[str, str]) -> str:
         except (ValueError, AttributeError):
             graph_error = ""
         message = graph_error or f"Meta Graph API returned HTTP {exc.response.status_code}"
+        access_token = payload.get("access_token", "")
+        message = _redact_meta_error(message, access_token)
+        if "publish_actions" in message.casefold():
+            message = (
+                "Meta rejected Facebook publishing because publish_actions is deprecated. "
+                "Use a Facebook Page access token with pages_manage_posts granted to the "
+                "Meta app and the Page task."
+            )
         raise RuntimeError(message[:400]) from exc
     except (httpx.HTTPError, ValueError) as exc:
         raise RuntimeError("Meta Graph API request failed") from exc
@@ -121,6 +194,10 @@ def publish_adoption_listing(
             if credentials is None:
                 raise RuntimeError("No connected Facebook Page is available for adoption posts")
             page_id, access_token = credentials
+            if not GRAPH_ID_PATTERN.fullmatch(page_id):
+                raise RuntimeError(
+                    "The Facebook Page ID must be numeric; do not enter an access token as the ID"
+                )
             page_endpoint = f"https://graph.facebook.com/{graph_version}/{page_id}/photos"
             publications["facebook"] = _graph_post(
                 page_endpoint,
@@ -144,6 +221,10 @@ def publish_adoption_listing(
             if credentials is None:
                 raise RuntimeError("No connected Instagram account is available for adoption posts")
             instagram_id, access_token = credentials
+            if not GRAPH_ID_PATTERN.fullmatch(instagram_id):
+                raise RuntimeError(
+                    "The Instagram account ID must be numeric; do not enter an access token as the ID"
+                )
             instagram_media_endpoint = (
                 f"https://graph.facebook.com/{graph_version}/{instagram_id}/media"
             )
