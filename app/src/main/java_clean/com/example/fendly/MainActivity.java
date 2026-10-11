@@ -12978,6 +12978,17 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             langParams.setMargins(dp(6), 0, 0, 0);
             expandedIconsContainer.addView(languageIconView, langParams);
 
+            TextView fontSizeIcon = text("A", 17, secondaryTextColor(), Typeface.NORMAL);
+            fontSizeIcon.setGravity(Gravity.CENTER);
+            fontSizeIcon.setTextAlignment(View.TEXT_ALIGNMENT_CENTER);
+            fontSizeIcon.setIncludeFontPadding(false);
+            fontSizeIcon.setBackground(roundWithStroke(surfaceColor(), 14, borderColor()));
+            fontSizeIcon.setContentDescription(translate("Adjust text size"));
+            fontSizeIcon.setOnClickListener(view -> showFontScaleDialog());
+            LinearLayout.LayoutParams fontSizeParams = new LinearLayout.LayoutParams(dp(42), dp(42));
+            fontSizeParams.setMargins(dp(6), 0, 0, 0);
+            expandedIconsContainer.addView(fontSizeIcon, fontSizeParams);
+
             TextView welcomeInfoIcon = text("i", 20, accentColor(), Typeface.BOLD);
             welcomeInfoIcon.setGravity(Gravity.CENTER);
             welcomeInfoIcon.setBackground(roundWithStroke(surfaceColor(), 14, borderColor()));
@@ -13101,15 +13112,14 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             backButton.setOnClickListener(view -> showAdminDashboard());
             controls.addView(backButton, new LinearLayout.LayoutParams(dp(42), dp(42)));
         } else {
-            TextView font = text("A", 17, secondaryTextColor(), Typeface.NORMAL);
-            font.setGravity(Gravity.CENTER);
-            font.setTextAlignment(View.TEXT_ALIGNMENT_CENTER);
-            font.setIncludeFontPadding(false);
-            font.setBackground(roundWithStroke(surfaceColor(), 14, borderColor()));
-            font.setPadding(dp(6), 0, dp(6), 0);
-            font.setContentDescription("Adjust text size");
-            font.setOnClickListener(view -> showFontScaleDialog());
-            controls.addView(font, new LinearLayout.LayoutParams(dp(42), dp(42)));
+            TextView helpButton = text("AI", 15, secondaryTextColor(), Typeface.BOLD);
+            helpButton.setGravity(Gravity.CENTER);
+            helpButton.setTextAlignment(View.TEXT_ALIGNMENT_CENTER);
+            helpButton.setIncludeFontPadding(false);
+            helpButton.setBackground(roundWithStroke(surfaceColor(), 14, borderColor()));
+            helpButton.setContentDescription(assistantUiText("title"));
+            helpButton.setOnClickListener(view -> showFendlyHelpAssistant());
+            controls.addView(helpButton, new LinearLayout.LayoutParams(dp(42), dp(42)));
         }
 
         Space leftSpacer = new Space(this);
@@ -13721,6 +13731,387 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                 applyLiveFontScale(liveScaleTarget, current);
             }
         });
+    }
+
+    private void showFendlyHelpAssistant() {
+        LinearLayout content = new LinearLayout(this);
+        content.setOrientation(LinearLayout.VERTICAL);
+        content.setPadding(dp(18), dp(16), dp(18), dp(12));
+        content.setBackground(roundWithStroke(surfaceColor(), 20, borderColor()));
+
+        TextView title = text(assistantUiText("title"), 20, primaryTextColor(), Typeface.BOLD);
+        title.setIncludeFontPadding(false);
+        content.addView(title, new LinearLayout.LayoutParams(-1, -2));
+
+        TextView intro = text(assistantUiText("intro"), 13, secondaryTextColor(), Typeface.NORMAL);
+        intro.setPadding(0, dp(6), 0, dp(10));
+        content.addView(intro, new LinearLayout.LayoutParams(-1, -2));
+
+        ScrollView conversationScroll = new ScrollView(this);
+        conversationScroll.setFillViewport(false);
+        conversationScroll.setVerticalScrollBarEnabled(false);
+        LinearLayout conversation = new LinearLayout(this);
+        conversation.setOrientation(LinearLayout.VERTICAL);
+        conversation.setPadding(dp(2), dp(2), dp(2), dp(4));
+        conversationScroll.addView(conversation, new ScrollView.LayoutParams(-1, -2));
+        content.addView(conversationScroll, new LinearLayout.LayoutParams(-1, 0, 1f));
+
+        appendFendlyHelpMessage(conversation, assistantUiText("welcome"), false);
+        ArrayList<JSONObject> history = new ArrayList<>();
+
+        LinearLayout composer = new LinearLayout(this);
+        composer.setGravity(Gravity.CENTER_VERTICAL);
+        composer.setPadding(0, dp(10), 0, 0);
+        EditText questionInput = new EditText(this);
+        questionInput.setSingleLine(false);
+        questionInput.setMaxLines(3);
+        questionInput.setTextSize(14);
+        questionInput.setHint(assistantUiText("hint"));
+        questionInput.setPadding(dp(12), dp(8), dp(12), dp(8));
+        questionInput.setBackground(roundWithStroke(surfaceColor(), 12, borderColor()));
+        LinearLayout.LayoutParams inputParams = new LinearLayout.LayoutParams(0, dp(48), 1f);
+        composer.addView(questionInput, inputParams);
+
+        TextView askButton = text(assistantUiText("ask"), 14, Color.WHITE, Typeface.BOLD);
+        askButton.setGravity(Gravity.CENTER);
+        askButton.setMinWidth(dp(62));
+        askButton.setPadding(dp(10), 0, dp(10), 0);
+        askButton.setBackground(round(accentColor(), 12));
+        LinearLayout.LayoutParams askParams = new LinearLayout.LayoutParams(-2, dp(48));
+        askParams.setMargins(dp(8), 0, 0, 0);
+        composer.addView(askButton, askParams);
+        content.addView(composer, new LinearLayout.LayoutParams(-1, -2));
+
+        AlertDialog dialog = new AlertDialog.Builder(this).setView(content).create();
+        askButton.setOnClickListener(view -> {
+            String question = questionInput.getText().toString().trim();
+            if (question.isEmpty()) {
+                questionInput.setError(assistantUiText("empty"));
+                return;
+            }
+            questionInput.setText("");
+            appendFendlyHelpMessage(conversation, question, true);
+            sendFendlyAssistantQuestion(
+                    dialog,
+                    question,
+                    history,
+                    conversation,
+                    conversationScroll,
+                    askButton
+            );
+        });
+        dialog.setOnShowListener(ignored -> {
+            if (dialog.getWindow() != null) {
+                dialog.getWindow().setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
+                dialog.getWindow().setLayout(
+                        Math.min(dp(420), getResources().getDisplayMetrics().widthPixels - dp(32)),
+                        Math.min(dp(620), getResources().getDisplayMetrics().heightPixels - dp(80))
+                );
+            }
+        });
+        dialog.show();
+        if (dialog.getWindow() != null) {
+            dialog.getWindow().setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
+            dialog.getWindow().setLayout(
+                    Math.min(dp(420), getResources().getDisplayMetrics().widthPixels - dp(32)),
+                    Math.min(dp(620), getResources().getDisplayMetrics().heightPixels - dp(80))
+            );
+        }
+    }
+
+    private void appendFendlyHelpMessage(LinearLayout conversation, String message, boolean fromUser) {
+        TextView bubble = text(message, 14, primaryTextColor(), Typeface.NORMAL);
+        bubble.setPadding(dp(12), dp(9), dp(12), dp(9));
+        bubble.setBackground(roundWithStroke(
+                fromUser ? Color.argb(darkMode ? 42 : 24, 232, 178, 74) : surfaceColor(),
+                14,
+                borderColor()
+        ));
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
+                fromUser ? -2 : -1,
+                -2
+        );
+        params.gravity = fromUser ? Gravity.END : Gravity.START;
+        params.setMargins(0, 0, 0, dp(6));
+        conversation.addView(bubble, params);
+    }
+
+    private void sendFendlyAssistantQuestion(
+            AlertDialog dialog,
+            String question,
+            ArrayList<JSONObject> history,
+            LinearLayout conversation,
+            ScrollView conversationScroll,
+            TextView askButton
+    ) {
+        FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
+        if (user == null) {
+            appendFendlyHelpMessage(conversation, assistantUiText("sign_in_required"), false);
+            return;
+        }
+
+        askButton.setEnabled(false);
+        TextView pending = text(assistantUiText("thinking"), 14, secondaryTextColor(), Typeface.NORMAL);
+        pending.setPadding(dp(12), dp(9), dp(12), dp(9));
+        conversation.addView(pending, new LinearLayout.LayoutParams(-1, -2));
+        conversationScroll.post(() -> conversationScroll.fullScroll(View.FOCUS_DOWN));
+
+        user.getIdToken(false)
+                .addOnSuccessListener(token -> network.execute(() -> {
+                    String answer = null;
+                    Exception failure = null;
+                    try {
+                        answer = requestFendlyAssistant(question, history, token.getToken());
+                    } catch (Exception error) {
+                        failure = error;
+                        Log.e("FENDLY_ASSISTANT", "Assistant request failed", error);
+                    }
+                    String finalAnswer = answer;
+                    Exception finalFailure = failure;
+                    runOnUiThread(() -> {
+                        if (!dialog.isShowing()) return;
+                        conversation.removeView(pending);
+                        askButton.setEnabled(true);
+                        if (finalFailure != null) {
+                            appendFendlyHelpMessage(conversation, assistantUiText("request_failed"), false);
+                        } else {
+                            try {
+                                history.add(new JSONObject().put("role", "user").put("content", question));
+                                history.add(new JSONObject().put("role", "assistant").put("content", finalAnswer));
+                                while (history.size() > 8) history.remove(0);
+                            } catch (org.json.JSONException error) {
+                                Log.e("FENDLY_ASSISTANT", "Could not retain assistant conversation context", error);
+                            }
+                            appendFendlyHelpMessage(conversation, finalAnswer, false);
+                        }
+                        conversationScroll.post(() -> conversationScroll.fullScroll(View.FOCUS_DOWN));
+                    });
+                }))
+                .addOnFailureListener(error -> {
+                    if (!dialog.isShowing()) return;
+                    conversation.removeView(pending);
+                    askButton.setEnabled(true);
+                    Log.e("FENDLY_ASSISTANT", "Could not obtain Firebase ID token", error);
+                    appendFendlyHelpMessage(conversation, assistantUiText("request_failed"), false);
+                });
+    }
+
+    private String requestFendlyAssistant(
+            String question,
+            ArrayList<JSONObject> history,
+            String idToken
+    ) throws Exception {
+        HttpURLConnection connection = null;
+        try {
+            JSONObject request = new JSONObject();
+            request.put("question", question);
+            JSONArray messages = new JSONArray();
+            int firstMessage = Math.max(0, history.size() - 8);
+            for (int index = firstMessage; index < history.size(); index++) {
+                messages.put(history.get(index));
+            }
+            request.put("history", messages);
+
+            connection = (HttpURLConnection) new URL(API_BASE + "/api/assistant/chat").openConnection();
+            connection.setRequestMethod("POST");
+            connection.setConnectTimeout(15000);
+            connection.setReadTimeout(35000);
+            connection.setRequestProperty("Authorization", "Bearer " + idToken);
+            connection.setRequestProperty("Content-Type", "application/json; charset=UTF-8");
+            connection.setDoOutput(true);
+            try (OutputStream output = connection.getOutputStream()) {
+                output.write(request.toString().getBytes(StandardCharsets.UTF_8));
+            }
+            int responseCode = connection.getResponseCode();
+            InputStream responseStream = responseCode >= 200 && responseCode < 300
+                    ? connection.getInputStream()
+                    : connection.getErrorStream();
+            if (responseStream == null) {
+                throw new java.io.IOException("Fendly Help returned HTTP " + responseCode);
+            }
+            String responseBody = readStream(responseStream);
+            if (responseCode < 200 || responseCode >= 300) {
+                throw new java.io.IOException("Fendly Help returned HTTP " + responseCode + ": " + responseBody);
+            }
+            String answer = new JSONObject(responseBody).optString("answer", "").trim();
+            if (answer.isEmpty()) {
+                throw new java.io.IOException("Fendly Help returned an empty answer");
+            }
+            return answer;
+        } finally {
+            if (connection != null) connection.disconnect();
+        }
+    }
+
+    private String assistantUiText(String key) {
+        String[][] labels = {
+                {"Fendly AI Help · Gemini", "Ask Fendly questions and get answers from Gemini.", "Hi! What would you like to know about Fendly?", "Ask anything about Fendly", "Ask", "Please enter a question.", "Thinking…", "I couldn’t get an answer right now. Please try again.", "Please sign in to use Fendly AI Help."},
+                {"Fendly AI सहायता · Gemini", "Fendly के बारे में पूछें और Gemini से उत्तर पाएँ।", "नमस्ते! Fendly के बारे में क्या जानना चाहते हैं?", "Fendly के बारे में पूछें", "पूछें", "कृपया प्रश्न लिखें।", "सोच रहा है…", "अभी उत्तर नहीं मिल सका। फिर कोशिश करें।", "Fendly AI सहायता के लिए साइन इन करें।"},
+                {"Fendly AI मदत · Gemini", "Fendly बद्दल विचारा आणि Gemini कडून उत्तरे मिळवा.", "नमस्कार! Fendly बद्दल काय जाणून घ्यायचे आहे?", "Fendly बद्दल विचारा", "विचारा", "कृपया प्रश्न लिहा.", "विचार करत आहे…", "आत्ता उत्तर मिळू शकले नाही. पुन्हा प्रयत्न करा.", "Fendly AI मदतीसाठी साइन इन करा."},
+                {"Fendly AI સહાય · Gemini", "Fendly વિશે પૂછો અને Gemini પાસેથી જવાબ મેળવો.", "નમસ્તે! Fendly વિશે શું જાણવા માંગો છો?", "Fendly વિશે પૂછો", "પૂછો", "કૃપા કરીને પ્રશ્ન લખો.", "વિચારી રહ્યું છે…", "હમણાં જવાબ મળી શક્યો નથી. ફરી પ્રયાસ કરો.", "Fendly AI સહાય માટે સાઇન ઇન કરો."},
+                {"Fendly AI সহায়তা · Gemini", "Fendly সম্পর্কে জিজ্ঞাসা করুন; Gemini উত্তর দেবে.", "হ্যালো! Fendly সম্পর্কে কী জানতে চান?", "Fendly সম্পর্কে জিজ্ঞাসা করুন", "জিজ্ঞাসা", "অনুগ্রহ করে প্রশ্ন লিখুন।", "ভাবছে…", "এখন উত্তর পাওয়া যায়নি। আবার চেষ্টা করুন।", "Fendly AI সহায়তা ব্যবহার করতে সাইন ইন করুন।"},
+                {"Fendly AI உதவி · Gemini", "Fendly பற்றி கேளுங்கள்; Gemini பதிலளிக்கும்.", "வணக்கம்! Fendly பற்றி என்ன தெரிந்துகொள்ள விரும்புகிறீர்கள்?", "Fendly பற்றி கேளுங்கள்", "கேளுங்கள்", "கேள்வியை உள்ளிடவும்.", "சிந்திக்கிறது…", "இப்போது பதில் கிடைக்கவில்லை. மீண்டும் முயற்சிக்கவும்.", "Fendly AI உதவிக்கு உள்நுழையவும்."},
+                {"Fendly AI సహాయం · Gemini", "Fendly గురించి అడగండి; Gemini సమాధానం ఇస్తుంది.", "హాయ్! Fendly గురించి ఏమి తెలుసుకోవాలి?", "Fendly గురించి అడగండి", "అడగండి", "దయచేసి ప్రశ్న నమోదు చేయండి.", "ఆలోచిస్తోంది…", "ఇప్పుడు సమాధానం రాలేదు. మళ్లీ ప్రయత్నించండి.", "Fendly AI సహాయం కోసం సైన్ ఇన్ చేయండి."},
+                {"Fendly AI ಸಹಾಯ · Gemini", "Fendly ಬಗ್ಗೆ ಕೇಳಿ; Gemini ಉತ್ತರಿಸುತ್ತದೆ.", "ನಮಸ್ಕಾರ! Fendly ಬಗ್ಗೆ ಏನು ತಿಳಿಯಲು ಬಯಸುತ್ತೀರಿ?", "Fendly ಬಗ್ಗೆ ಕೇಳಿ", "ಕೇಳಿ", "ದಯವಿಟ್ಟು ಪ್ರಶ್ನೆಯನ್ನು ನಮೂದಿಸಿ.", "ಯೋಚಿಸುತ್ತಿದೆ…", "ಈಗ ಉತ್ತರ ಸಿಗಲಿಲ್ಲ. ಮತ್ತೆ ಪ್ರಯತ್ನಿಸಿ.", "Fendly AI ಸಹಾಯಕ್ಕೆ ಸೈನ್ ಇನ್ ಮಾಡಿ."},
+                {"Fendly AI സഹായം · Gemini", "Fendlyയെക്കുറിച്ച് ചോദിക്കൂ; Gemini മറുപടി നൽകും.", "ഹായ്! Fendlyയെക്കുറിച്ച് എന്താണ് അറിയേണ്ടത്?", "Fendlyയെക്കുറിച്ച് ചോദിക്കൂ", "ചോദിക്കൂ", "ദയവായി ഒരു ചോദ്യം നൽകുക.", "ചിന്തിക്കുന്നു…", "ഇപ്പോൾ മറുപടി ലഭിച്ചില്ല. വീണ്ടും ശ്രമിക്കുക.", "Fendly AI സഹായം ഉപയോഗിക്കാൻ സൈൻ ഇൻ ചെയ്യുക."}
+        };
+        int language = Math.max(0, Math.min(selectedLanguage, labels.length - 1));
+        int labelIndex;
+        switch (key) {
+            case "title": labelIndex = 0; break;
+            case "intro": labelIndex = 1; break;
+            case "welcome": labelIndex = 2; break;
+            case "hint": labelIndex = 3; break;
+            case "ask": labelIndex = 4; break;
+            case "empty": labelIndex = 5; break;
+            case "thinking": labelIndex = 6; break;
+            case "request_failed": labelIndex = 7; break;
+            default: labelIndex = 8; break;
+        }
+        return labels[language][labelIndex];
+    }
+
+    private String localizedFendlyHelpText(String key) {
+        String[][] strings = {
+                {
+                        "Fendly Help · Offline", "Ask about using Fendly. Answers come from built-in help; nothing is sent to an AI service.",
+                        "Hi! I can help with Lost & Found, your reports, adoption, notifications, privacy, sharing, and app settings.",
+                        "Ask a Fendly question", "Ask", "Please enter a question.",
+                        "How do I report a lost or found item?", "Where can I see my reports and matches?", "How do I use Adopt a Pet?",
+                        "Open Adopt a Pet from Home. Choose Browse pets to view listings, List a pet to create one, or My listings to manage your posts.",
+                        "Tap the notification bell at the top of the screen to open your Fendly notifications.",
+                        "Open My Profile and choose Delete account to request permanent deletion. See Privacy in the app for details about data handling.",
+                        "FOUND reports are free. LOST reports may require payment unless your subscription is active; review the amount shown before submitting.",
+                        "For adoption posts, open My Listings and tap Share poster. For LOST or FOUND, use the community-poster action on your report when available.",
+                        "Open the gear menu on the sign-in screen and tap A to adjust text size.",
+                        "I can help only with Fendly app features. Try asking how to report an item, check your reports, use adoption, or manage app settings."
+                },
+                {
+                        "Fendly सहायता · ऑफ़लाइन", "Fendly इस्तेमाल करने के बारे में पूछें। जवाब ऐप में मौजूद सहायता से मिलते हैं; कुछ भी AI सेवा को नहीं भेजा जाता।",
+                        "नमस्ते! मैं खोया-पाया, आपकी रिपोर्ट, गोद लेने, सूचनाओं, गोपनीयता, शेयर करने और ऐप सेटिंग में मदद कर सकता हूँ।",
+                        "Fendly के बारे में पूछें", "पूछें", "कृपया प्रश्न लिखें।",
+                        "खोई या मिली वस्तु की रिपोर्ट कैसे करें?", "मेरी रिपोर्ट और मिलान कहाँ देखें?", "पालतू गोद लेने की सुविधा कैसे उपयोग करें?",
+                        "होम से Adopt a Pet खोलें। विज्ञापन देखने के लिए Browse pets, नया विज्ञापन बनाने के लिए List a pet या अपने विज्ञापन संभालने के लिए My listings चुनें।",
+                        "Fendly सूचनाएँ खोलने के लिए स्क्रीन के ऊपर सूचना घंटी पर टैप करें।",
+                        "My Profile खोलें और स्थायी खाता हटाने का अनुरोध करने के लिए Delete account चुनें। डेटा जानकारी के लिए ऐप में Privacy देखें।",
+                        "FOUND रिपोर्ट निःशुल्क हैं। सक्रिय सदस्यता न होने पर LOST रिपोर्ट के लिए भुगतान करना पड़ सकता है; भेजने से पहले दिखाई गई राशि देखें।",
+                        "गोद लेने के विज्ञापन के लिए My Listings खोलें और Share poster चुनें। LOST या FOUND रिपोर्ट में उपलब्ध community-poster विकल्प उपयोग करें।",
+                        "साइन-इन स्क्रीन पर gear मेनू खोलें और टेक्स्ट आकार बदलने के लिए A दबाएँ।",
+                        "मैं केवल Fendly ऐप की सुविधाओं में मदद कर सकता हूँ। वस्तु की रिपोर्ट, अपनी रिपोर्ट, गोद लेने या ऐप सेटिंग के बारे में पूछें।"
+                },
+                {
+                        "Fendly मदत · ऑफलाइन", "Fendly वापरण्याबद्दल विचारा. उत्तरे अॅपमधील मदतीवर आधारित आहेत; काहीही AI सेवेकडे पाठवले जात नाही.",
+                        "नमस्कार! हरवले-सापडले, तुमचे अहवाल, दत्तक, सूचना, गोपनीयता, शेअरिंग आणि अॅप सेटिंग्जमध्ये मी मदत करू शकतो.",
+                        "Fendly बद्दल विचारा", "विचारा", "कृपया प्रश्न लिहा.",
+                        "हरवलेल्या किंवा सापडलेल्या वस्तूची नोंद कशी करावी?", "माझे अहवाल आणि जुळण्या कुठे पाहू?", "पाळीव प्राणी दत्तक सुविधा कशी वापरावी?",
+                        "होममधून Adopt a Pet उघडा. जाहिराती पाहण्यासाठी Browse pets, नवीन जाहिरात करण्यासाठी List a pet किंवा स्वतःच्या जाहिरातींसाठी My listings निवडा.",
+                        "Fendly सूचना उघडण्यासाठी स्क्रीनवरील सूचना घंटीवर टॅप करा.",
+                        "My Profile उघडा आणि खाते कायमचे हटवण्याची विनंती करण्यासाठी Delete account निवडा. माहिती हाताळणीसाठी अॅपमधील Privacy पाहा.",
+                        "FOUND अहवाल विनामूल्य आहेत. सक्रिय सदस्यत्व नसल्यास LOST अहवालासाठी पैसे लागू शकतात; पाठवण्यापूर्वी दाखवलेली रक्कम तपासा.",
+                        "दत्तक जाहिरातीसाठी My Listings उघडा आणि Share poster निवडा. LOST किंवा FOUND अहवालावरील community-poster पर्याय उपलब्ध असल्यास वापरा.",
+                        "साइन-इन स्क्रीनवरील gear मेनू उघडा आणि मजकूर आकार बदलण्यासाठी A निवडा.",
+                        "मी फक्त Fendly अॅपच्या सुविधांबद्दल मदत करू शकतो. वस्तूची नोंद, अहवाल, दत्तक किंवा सेटिंग्जबद्दल विचारा."
+                },
+                {
+                        "Fendly સહાય · ઑફલાઇન", "Fendly વાપરવા વિશે પૂછો. જવાબો ઍપમાંની સહાયમાંથી છે; કંઈપણ AI સેવાને મોકલવામાં આવતું નથી.",
+                        "નમસ્તે! હું ખોવાયેલ-મળેલ, તમારા રિપોર્ટ, દત્તક, સૂચનાઓ, ગોપનીયતા, શેરિંગ અને ઍપ સેટિંગમાં મદદ કરી શકું છું.",
+                        "Fendly વિશે પૂછો", "પૂછો", "કૃપા કરીને પ્રશ્ન લખો.",
+                        "ખોવાયેલી કે મળેલી વસ્તુનો રિપોર્ટ કેવી રીતે કરવો?", "મારા રિપોર્ટ અને મેચ ક્યાં જોઈ શકું?", "પાળતુ પ્રાણી દત્તક સુવિધા કેવી રીતે વાપરવી?",
+                        "હોમમાંથી Adopt a Pet ખોલો. જાહેરાતો જોવા Browse pets, નવી જાહેરાત બનાવવા List a pet અથવા તમારી જાહેરાતો માટે My listings પસંદ કરો.",
+                        "Fendly સૂચનાઓ ખોલવા સ્ક્રીન ઉપરની સૂચના ઘંટડીને ટેપ કરો.",
+                        "My Profile ખોલો અને કાયમી એકાઉન્ટ ડિલીટ કરવાની વિનંતી માટે Delete account પસંદ કરો. ડેટાની માહિતી માટે ઍપમાં Privacy જુઓ.",
+                        "FOUND રિપોર્ટ મફત છે. સક્રિય સબ્સ્ક્રિપ્શન ન હોય તો LOST રિપોર્ટ માટે ચુકવણી થઈ શકે; મોકલતા પહેલાં બતાવેલી રકમ તપાસો.",
+                        "દત્તક જાહેરાત માટે My Listings ખોલો અને Share poster દબાવો. LOST અથવા FOUND રિપોર્ટમાં ઉપલબ્ધ community-poster વિકલ્પ વાપરો.",
+                        "સાઇન-ઇન સ્ક્રીન પર gear મેનુ ખોલો અને ટેક્સ્ટનું કદ બદલવા A દબાવો.",
+                        "હું ફક્ત Fendly ઍપની સુવિધાઓમાં મદદ કરી શકું છું. વસ્તુનો રિપોર્ટ, તમારા રિપોર્ટ, દત્તક અથવા સેટિંગ વિશે પૂછો."
+                },
+                {
+                        "Fendly সহায়তা · অফলাইন", "Fendly ব্যবহার সম্পর্কে জিজ্ঞাসা করুন। উত্তর অ্যাপের সাহায্য থেকে আসে; কিছুই AI পরিষেবায় পাঠানো হয় না।",
+                        "হ্যালো! হারানো-পাওয়া, আপনার রিপোর্ট, দত্তক, বিজ্ঞপ্তি, গোপনীয়তা, শেয়ার এবং অ্যাপ সেটিংয়ে সাহায্য করতে পারি।",
+                        "Fendly সম্পর্কে জিজ্ঞাসা করুন", "জিজ্ঞাসা", "অনুগ্রহ করে একটি প্রশ্ন লিখুন।",
+                        "হারানো বা পাওয়া জিনিসের রিপোর্ট কীভাবে করব?", "আমার রিপোর্ট ও ম্যাচ কোথায় দেখব?", "পোষ্য দত্তক নেওয়ার সুবিধা কীভাবে ব্যবহার করব?",
+                        "হোম থেকে Adopt a Pet খুলুন। তালিকা দেখতে Browse pets, নতুন পোস্ট করতে List a pet, অথবা নিজের পোস্ট পরিচালনা করতে My listings বেছে নিন।",
+                        "Fendly বিজ্ঞপ্তি খুলতে স্ক্রিনের ওপরের বিজ্ঞপ্তি ঘণ্টায় ট্যাপ করুন।",
+                        "My Profile খুলে স্থায়ীভাবে অ্যাকাউন্ট মুছতে Delete account বেছে নিন। তথ্য ব্যবহারের বিস্তারিত অ্যাপের Privacy-তে দেখুন।",
+                        "FOUND রিপোর্ট বিনামূল্যে। সক্রিয় সাবস্ক্রিপশন না থাকলে LOST রিপোর্টে মূল্য লাগতে পারে; জমা দেওয়ার আগে দেখানো মূল্য দেখুন।",
+                        "দত্তক পোস্টের জন্য My Listings খুলে Share poster চাপুন। LOST বা FOUND রিপোর্টে community-poster বিকল্প থাকলে সেটি ব্যবহার করুন।",
+                        "সাইন-ইন স্ক্রিনের gear মেনু খুলে টেক্সটের আকার বদলাতে A চাপুন।",
+                        "আমি শুধু Fendly অ্যাপের সুবিধা নিয়ে সাহায্য করতে পারি। রিপোর্ট, নিজের রিপোর্ট, দত্তক বা সেটিংস নিয়ে জিজ্ঞাসা করুন।"
+                },
+                {
+                        "Fendly உதவி · ஆஃப்லைன்", "Fendly பயன்பாடு பற்றி கேளுங்கள். பதில்கள் செயலியில் உள்ள உதவியிலிருந்து வரும்; எதுவும் AI சேவைக்கு அனுப்பப்படாது.",
+                        "வணக்கம்! தொலைந்தது/கிடைத்தது, உங்கள் அறிக்கைகள், தத்தெடுப்பு, அறிவிப்புகள், தனியுரிமை, பகிர்வு மற்றும் அமைப்புகளில் உதவுவேன்.",
+                        "Fendly பற்றி கேளுங்கள்", "கேளுங்கள்", "தயவுசெய்து ஒரு கேள்வியை உள்ளிடவும்.",
+                        "தொலைந்த அல்லது கிடைத்த பொருளை எப்படிப் புகாரளிப்பது?", "எனது அறிக்கைகள் மற்றும் பொருத்தங்களை எங்கே காணலாம்?", "செல்லப்பிராணி தத்தெடுப்பை எப்படிப் பயன்படுத்துவது?",
+                        "முகப்பிலிருந்து Adopt a Pet-ஐத் திறக்கவும். பட்டியல்களைப் பார்க்க Browse pets, புதியதைப் பதிவிட List a pet அல்லது உங்கள் பதிவுகளை நிர்வகிக்க My listings-ஐத் தேர்ந்தெடுக்கவும்.",
+                        "Fendly அறிவிப்புகளைத் திறக்க திரையின் மேலுள்ள அறிவிப்பு மணியைத் தட்டவும்.",
+                        "My Profile-ஐத் திறந்து கணக்கை நிரந்தரமாக நீக்க Delete account-ஐத் தேர்ந்தெடுக்கவும். தரவு விவரங்களுக்கு செயலியில் Privacy-ஐப் பார்க்கவும்.",
+                        "FOUND அறிக்கைகள் இலவசம். செயலில் உள்ள சந்தா இல்லையெனில் LOST அறிக்கைக்கு கட்டணம் இருக்கலாம்; சமர்ப்பிக்கும் முன் காட்டப்படும் தொகையைப் பார்க்கவும்.",
+                        "தத்தெடுப்பு பதிவுகளுக்கு My Listings-ஐத் திறந்து Share poster-ஐத் தேர்ந்தெடுக்கவும். LOST அல்லது FOUND அறிக்கையில் community-poster விருப்பம் இருந்தால் பயன்படுத்தவும்.",
+                        "உள்நுழைவுத் திரையில் gear மெனுவைத் திறந்து உரை அளவை மாற்ற A-ஐத் தட்டவும்.",
+                        "Fendly செயலி அம்சங்கள் பற்றி மட்டுமே என்னால் உதவ முடியும். அறிக்கை, உங்கள் அறிக்கைகள், தத்தெடுப்பு அல்லது அமைப்புகள் பற்றி கேளுங்கள்."
+                },
+                {
+                        "Fendly సహాయం · ఆఫ్‌లైన్", "Fendly ఉపయోగం గురించి అడగండి. సమాధానాలు యాప్‌లోని సహాయం నుంచే వస్తాయి; ఏదీ AI సేవకు పంపబడదు.",
+                        "హాయ్! పోయినవి/దొరికినవి, మీ రిపోర్టులు, దత్తత, నోటిఫికేషన్లు, గోప్యత, షేరింగ్, యాప్ సెట్టింగ్‌లలో సహాయం చేస్తాను.",
+                        "Fendly గురించి అడగండి", "అడగండి", "దయచేసి ఒక ప్రశ్నను నమోదు చేయండి.",
+                        "పోయిన లేదా దొరికిన వస్తువును ఎలా రిపోర్ట్ చేయాలి?", "నా రిపోర్టులు, మ్యాచ్‌లను ఎక్కడ చూడాలి?", "పెంపుడు జంతువు దత్తతను ఎలా ఉపయోగించాలి?",
+                        "హోమ్‌లో Adopt a Pet తెరవండి. జాబితాలను చూడటానికి Browse pets, కొత్తదాన్ని పెట్టడానికి List a pet, మీ పోస్టులను నిర్వహించడానికి My listings ఎంచుకోండి.",
+                        "Fendly నోటిఫికేషన్లను తెరవడానికి స్క్రీన్ పైభాగంలోని గంటను నొక్కండి.",
+                        "My Profile తెరిచి ఖాతాను శాశ్వతంగా తొలగించడానికి Delete account ఎంచుకోండి. డేటా వివరాలకు యాప్‌లో Privacy చూడండి.",
+                        "FOUND రిపోర్టులు ఉచితం. యాక్టివ్ సబ్‌స్క్రిప్షన్ లేకపోతే LOST రిపోర్టుకు చెల్లింపు అవసరం కావచ్చు; సమర్పించే ముందు చూపిన మొత్తాన్ని చూడండి.",
+                        "దత్తత పోస్టుల కోసం My Listings తెరిచి Share poster నొక్కండి. LOST/FOUND రిపోర్టులో community-poster ఎంపిక ఉంటే ఉపయోగించండి.",
+                        "సైన్-ఇన్ స్క్రీన్‌లో gear మెనూ తెరిచి టెక్స్ట్ పరిమాణం మార్చడానికి A నొక్కండి.",
+                        "Fendly యాప్ ఫీచర్ల గురించి మాత్రమే సహాయం చేయగలను. రిపోర్ట్, మీ రిపోర్టులు, దత్తత లేదా సెట్టింగ్‌ల గురించి అడగండి."
+                },
+                {
+                        "Fendly ಸಹಾಯ · ಆಫ್‌ಲೈನ್", "Fendly ಬಳಕೆಯ ಬಗ್ಗೆ ಕೇಳಿ. ಉತ್ತರಗಳು ಆ್ಯಪ್‌ನಲ್ಲಿರುವ ಸಹಾಯದಿಂದ ಬರುತ್ತವೆ; ಯಾವುದನ್ನೂ AI ಸೇವೆಗೆ ಕಳುಹಿಸುವುದಿಲ್ಲ.",
+                        "ನಮಸ್ಕಾರ! ಕಳೆದುಹೋದ/ಸಿಕ್ಕಿದ ವಸ್ತುಗಳು, ನಿಮ್ಮ ವರದಿಗಳು, ದತ್ತು, ಅಧಿಸೂಚನೆಗಳು, ಗೌಪ್ಯತೆ, ಹಂಚಿಕೆ ಮತ್ತು ಸೆಟ್ಟಿಂಗ್‌ಗಳಲ್ಲಿ ಸಹಾಯ ಮಾಡುತ್ತೇನೆ.",
+                        "Fendly ಬಗ್ಗೆ ಕೇಳಿ", "ಕೇಳಿ", "ದಯವಿಟ್ಟು ಪ್ರಶ್ನೆಯನ್ನು ನಮೂದಿಸಿ.",
+                        "ಕಳೆದುಹೋದ ಅಥವಾ ಸಿಕ್ಕಿದ ವಸ್ತುವನ್ನು ಹೇಗೆ ವರದಿ ಮಾಡುವುದು?", "ನನ್ನ ವರದಿಗಳು ಮತ್ತು ಹೊಂದಾಣಿಕೆಗಳನ್ನು ಎಲ್ಲಿ ನೋಡಬಹುದು?", "ಸಾಕುಪ್ರಾಣಿ ದತ್ತುವನ್ನು ಹೇಗೆ ಬಳಸುವುದು?",
+                        "ಹೋಮ್‌ನಿಂದ Adopt a Pet ತೆರೆಯಿರಿ. ಪಟ್ಟಿಗಳನ್ನು ನೋಡಲು Browse pets, ಹೊಸದನ್ನು ಪ್ರಕಟಿಸಲು List a pet ಅಥವಾ ನಿಮ್ಮ ಪ್ರಕಟಣೆಗಳನ್ನು ನಿರ್ವಹಿಸಲು My listings ಆಯ್ಕೆಮಾಡಿ.",
+                        "Fendly ಅಧಿಸೂಚನೆಗಳನ್ನು ತೆರೆಯಲು ಪರದೆಯ ಮೇಲಿನ ಗಂಟೆಯನ್ನು ಟ್ಯಾಪ್ ಮಾಡಿ.",
+                        "My Profile ತೆರೆಯಿರಿ ಮತ್ತು ಖಾತೆಯನ್ನು ಶಾಶ್ವತವಾಗಿ ಅಳಿಸಲು Delete account ಆಯ್ಕೆಮಾಡಿ. ಡೇಟಾ ವಿವರಗಳಿಗಾಗಿ ಆ್ಯಪ್‌ನ Privacy ನೋಡಿ.",
+                        "FOUND ವರದಿಗಳು ಉಚಿತ. ಸಕ್ರಿಯ ಚಂದಾದಾರಿಕೆ ಇಲ್ಲದಿದ್ದರೆ LOST ವರದಿಗೆ ಪಾವತಿ ಬೇಕಾಗಬಹುದು; ಸಲ್ಲಿಸುವ ಮೊದಲು ತೋರಿಸಿದ ಮೊತ್ತ ಪರಿಶೀಲಿಸಿ.",
+                        "ದತ್ತು ಪೋಸ್ಟ್‌ಗಳಿಗಾಗಿ My Listings ತೆರೆಯಿರಿ ಮತ್ತು Share poster ಒತ್ತಿ. LOST ಅಥವಾ FOUND ವರದಿಯಲ್ಲಿ community-poster ಆಯ್ಕೆ ಲಭ್ಯವಿದ್ದರೆ ಬಳಸಿ.",
+                        "ಸೈನ್-ಇನ್ ಪರದೆಯ gear ಮೆನು ತೆರೆಯಿರಿ ಮತ್ತು ಪಠ್ಯದ ಗಾತ್ರ ಬದಲಿಸಲು A ಒತ್ತಿ.",
+                        "Fendly ಆ್ಯಪ್ ವೈಶಿಷ್ಟ್ಯಗಳ ಬಗ್ಗೆ ಮಾತ್ರ ಸಹಾಯ ಮಾಡಬಲ್ಲೆ. ವರದಿ, ನಿಮ್ಮ ವರದಿಗಳು, ದತ್ತು ಅಥವಾ ಸೆಟ್ಟಿಂಗ್‌ಗಳ ಬಗ್ಗೆ ಕೇಳಿ."
+                },
+                {
+                        "Fendly സഹായം · ഓഫ്‌ലൈൻ", "Fendly ഉപയോഗത്തെക്കുറിച്ച് ചോദിക്കൂ. ഉത്തരങ്ങൾ ആപ്പിലെ സഹായത്തിൽ നിന്നാണ്; ഒന്നും AI സേവനത്തിലേക്ക് അയയ്ക്കില്ല.",
+                        "ഹായ്! നഷ്ടപ്പെട്ടത്/കണ്ടെത്തിയത്, നിങ്ങളുടെ റിപ്പോർട്ടുകൾ, ദത്തെടുക്കൽ, അറിയിപ്പുകൾ, സ്വകാര്യത, പങ്കിടൽ, ആപ്പ് ക്രമീകരണങ്ങൾ എന്നിവയിൽ സഹായിക്കാം.",
+                        "Fendlyയെക്കുറിച്ച് ചോദിക്കൂ", "ചോദിക്കൂ", "ദയവായി ഒരു ചോദ്യം നൽകുക.",
+                        "നഷ്ടപ്പെട്ടതോ കണ്ടെത്തിയതോ ആയ വസ്തു എങ്ങനെ റിപ്പോർട്ട് ചെയ്യാം?", "എന്റെ റിപ്പോർട്ടുകളും പൊരുത്തങ്ങളും എവിടെ കാണാം?", "വളർത്തുമൃഗ ദത്തെടുക്കൽ എങ്ങനെ ഉപയോഗിക്കാം?",
+                        "ഹോമിൽ നിന്ന് Adopt a Pet തുറക്കുക. ലിസ്റ്റിംഗുകൾ കാണാൻ Browse pets, പുതിയത് ചേർക്കാൻ List a pet, നിങ്ങളുടെ പോസ്റ്റുകൾ നിയന്ത്രിക്കാൻ My listings തിരഞ്ഞെടുക്കുക.",
+                        "Fendly അറിയിപ്പുകൾ തുറക്കാൻ സ്ക്രീനിന്റെ മുകളിലുള്ള അറിയിപ്പ് മണി ടാപ്പ് ചെയ്യുക.",
+                        "My Profile തുറന്ന് അക്കൗണ്ട് സ്ഥിരമായി ഇല്ലാതാക്കാൻ Delete account തിരഞ്ഞെടുക്കുക. ഡാറ്റാ വിവരങ്ങൾക്ക് ആപ്പിലെ Privacy കാണുക.",
+                        "FOUND റിപ്പോർട്ടുകൾ സൗജന്യമാണ്. സജീവ സബ്സ്ക്രിപ്ഷൻ ഇല്ലെങ്കിൽ LOST റിപ്പോർട്ടിന് പണം വേണ്ടിവരാം; സമർപ്പിക്കുന്നതിന് മുമ്പ് കാണിക്കുന്ന തുക പരിശോധിക്കുക.",
+                        "ദത്തെടുക്കൽ പോസ്റ്റുകൾക്കായി My Listings തുറന്ന് Share poster അമർത്തുക. LOST/FOUND റിപ്പോർട്ടിൽ community-poster ഓപ്ഷൻ ഉണ്ടെങ്കിൽ ഉപയോഗിക്കുക.",
+                        "സൈൻ-ഇൻ സ്ക്രീനിലെ gear മെനു തുറന്ന് ടെക്സ്റ്റ് വലുപ്പം മാറ്റാൻ A അമർത്തുക.",
+                        "Fendly ആപ്പിലെ സവിശേഷതകളെക്കുറിച്ച് മാത്രമേ സഹായിക്കാനാകൂ. റിപ്പോർട്ട്, നിങ്ങളുടെ റിപ്പോർട്ടുകൾ, ദത്തെടുക്കൽ, അല്ലെങ്കിൽ ക്രമീകരണങ്ങൾ ചോദിക്കൂ."
+                }
+        };
+        int language = Math.max(0, Math.min(selectedLanguage, strings.length - 1));
+        int textIndex;
+        switch (key) {
+            case "title": textIndex = 0; break;
+            case "intro": textIndex = 1; break;
+            case "welcome": textIndex = 2; break;
+            case "hint": textIndex = 3; break;
+            case "ask": textIndex = 4; break;
+            case "empty": textIndex = 5; break;
+            case "report_question": textIndex = 6; break;
+            case "my_reports_question": textIndex = 7; break;
+            case "adoption_question": textIndex = 8; break;
+            case "adoption_answer": textIndex = 9; break;
+            case "notifications_answer": textIndex = 10; break;
+            case "privacy_answer": textIndex = 11; break;
+            case "payment_answer": textIndex = 12; break;
+            case "sharing_answer": textIndex = 13; break;
+            case "text_size_answer": textIndex = 14; break;
+            default: textIndex = 15; break;
+        }
+        return strings[language][textIndex];
     }
 
     @SuppressWarnings("deprecation")

@@ -69,6 +69,15 @@ Required environment variables:
 	`OPENAI_TRANSLATION_MODEL` (default `gpt-4o-mini`) as applicable. Provider
 	usage may incur charges. Without a working key, admins see an explicit
 	translation-unavailable message instead of untranslated text.
+- The authenticated `/api/assistant/chat` endpoint uses the same server-side
+	`GEMINI_API_KEY` to answer Fendly app-help questions. It never exposes the key
+	to Android, limits each question to 1,000 characters and conversation
+	context to eight messages, and uses `GEMINI_ASSISTANT_MODEL` and
+	`GEMINI_ASSISTANT_FALLBACK_MODEL` to select Gemini models. Assistant requests
+	are provider usage and may consume free-tier quota or incur charges according
+	to the Google AI Studio account's current plan and limits. If Gemini is
+	misconfigured or unavailable, the endpoint reports an error to the app rather
+	than returning a fabricated/offline answer.
 
 Uploads require Supabase Storage. Report images and encrypted vault images use
 separate private buckets; the API blocks public access to legacy
