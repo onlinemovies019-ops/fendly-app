@@ -15,6 +15,10 @@ services:
         sync: false
       - key: SUPABASE_SERVICE_ROLE_KEY
         sync: false
+      - key: VAULT_STORAGE_BUCKET
+        value: private-vault
+      - key: VAULT_ENCRYPTION_KEY
+        sync: false
       - key: IMAGE_MATCHING_FUNCTION_URL
         value: https://us-central1-fendly-6d746.cloudfunctions.net/matchReportImages
       - key: CLOUDINARY_CLOUD_NAME

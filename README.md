@@ -41,6 +41,10 @@ Required environment variables:
 	uploads, signed URLs, and matching-index cleanup. The service-role key must
 	remain server-side only. The API creates and verifies the private
 	`report-images` bucket during startup.
+- `VAULT_STORAGE_BUCKET` (default `private-vault`) and
+  `VAULT_ENCRYPTION_KEY`: configure the private object bucket and base64-encoded
+  32-byte AES-256 key used for encrypted vault images. Keep the key stable and
+  server-side; changing it makes existing vault images undecryptable.
 - `CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_API_KEY`, and `CLOUDINARY_API_SECRET`
 	enable deletion of Fendly-managed Cloudinary images during account/report
 	cleanup. Keep the API secret server-side only.
@@ -70,9 +74,12 @@ Required environment variables:
 	usage may incur charges. Without a working key, admins see an explicit
 	translation-unavailable message instead of untranslated text.
 
-Uploads require Supabase Storage. The API blocks public access to legacy
-`/static/uploads` files; old local uploads must be migrated to the private
-bucket before their images can be viewed.
+Uploads require Supabase Storage. Report images and encrypted vault images use
+separate private buckets; the API blocks public access to legacy
+`/static/uploads` files. The service does not read or write local upload files.
+Legacy `/static/uploads/` references require recovery from a backup and manual
+upload to private Supabase Storage; the admin migration endpoint will report
+them as unsupported.
 
 ## API
 
@@ -94,7 +101,8 @@ bucket before their images can be viewed.
   (admin-only match review; confirmation requires manually verified proof)
 - `POST /api/admin/private-images/migrate?apply=false&limit=10` (admin-only
   legacy-image migration; preview first, then repeat with `apply=true` until
-  `remaining_assets` and `pending_source_cleanup` are zero)
+  `remaining_assets` and `pending_source_cleanup` are zero; local upload URLs
+  are reported as unsupported and require recovery from backup)
 - `POST /api/admin/social/cleanup` (admin-only, batched removal of legacy
   Facebook/Instagram posts; no new posts are published)
 - `DELETE /api/users/account` (deletes account data and its reports)
@@ -138,10 +146,13 @@ not included in match notifications.
 All new report and profile images are uploaded with the Supabase Python client
 to the private `report-images` bucket. The database stores a stable object
 reference; API responses contain short-lived signed URLs. The service does not
-write uploaded images to Render's local filesystem. Legacy local and
-Cloudinary image references can be reviewed and migrated using the
-admin-only private-image migration endpoint before their old sources are
-removed.
+write uploaded images to or read images from a local filesystem. Legacy
+Cloudinary and Supabase Storage references can be reviewed and migrated using
+the admin-only private-image migration endpoint before their old sources are
+removed. Legacy `/static/uploads/` references are reported as unsupported:
+recover those files from a backup and upload them to private Supabase Storage
+before retiring their references; the service will not try to read them from
+an ephemeral server disk.
 
 Fendly has no social publishing, Meta OAuth, or social account connection
 routes. An admin can still remove already-published legacy Facebook and

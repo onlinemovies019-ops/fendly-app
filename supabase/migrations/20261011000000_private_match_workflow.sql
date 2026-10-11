@@ -125,6 +125,26 @@ SET name = EXCLUDED.name,
     file_size_limit = EXCLUDED.file_size_limit,
     allowed_mime_types = EXCLUDED.allowed_mime_types;
 
+INSERT INTO storage.buckets (
+    id,
+    name,
+    public,
+    file_size_limit,
+    allowed_mime_types
+)
+VALUES (
+    'private-vault',
+    'private-vault',
+    false,
+    10485788,
+    ARRAY['application/octet-stream']::text[]
+)
+ON CONFLICT (id) DO UPDATE
+SET name = EXCLUDED.name,
+    public = false,
+    file_size_limit = EXCLUDED.file_size_limit,
+    allowed_mime_types = EXCLUDED.allowed_mime_types;
+
 DROP POLICY IF EXISTS fendly_private_uploads_deny_clients ON storage.objects;
 CREATE POLICY fendly_private_uploads_deny_clients ON storage.objects
     AS RESTRICTIVE
@@ -138,6 +158,13 @@ CREATE POLICY fendly_private_report_images_deny_clients ON storage.objects
     FOR ALL TO anon, authenticated
     USING (bucket_id <> 'report-images')
     WITH CHECK (bucket_id <> 'report-images');
+
+DROP POLICY IF EXISTS fendly_private_vault_deny_clients ON storage.objects;
+CREATE POLICY fendly_private_vault_deny_clients ON storage.objects
+    AS RESTRICTIVE
+    FOR ALL TO anon, authenticated
+    USING (bucket_id <> 'private-vault')
+    WITH CHECK (bucket_id <> 'private-vault');
 
 UPDATE public.social_publications
 SET status = 'cancelled',

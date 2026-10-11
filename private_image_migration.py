@@ -7,7 +7,6 @@ import re
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from pathlib import Path
 from urllib.parse import unquote, urlsplit
 from uuid import uuid4
 
@@ -37,7 +36,6 @@ IMAGE_FORMATS = {
     "PNG": ("image/png", "png"),
     "WEBP": ("image/webp", "webp"),
 }
-LOCAL_UPLOAD_NAME = re.compile(r"[0-9a-f]{32}\.(?:jpg|png|webp)")
 CLOUDINARY_VERSION = re.compile(r"v\d+")
 
 
@@ -69,20 +67,6 @@ def _cloudinary_source(url: str) -> tuple[str, str] | None:
     if not public_id or ".." in public_id.split("/"):
         return None
     return cloud_name, public_id
-
-
-def _local_upload_source(url: str) -> str | None:
-    parsed = urlsplit(url)
-    public_base = urlsplit(
-        os.getenv("PUBLIC_BASE_URL", "https://fendly-api.onrender.com").rstrip("/")
-    )
-    if (parsed.scheme, parsed.netloc) != (public_base.scheme, public_base.netloc):
-        return None
-    segments = [unquote(part) for part in parsed.path.split("/") if part]
-    if len(segments) != 3 or segments[:2] != ["static", "uploads"]:
-        return None
-    filename = segments[2]
-    return filename if LOCAL_UPLOAD_NAME.fullmatch(filename) else None
 
 
 def _supabase_source(url: str) -> tuple[str, str] | None:
@@ -128,14 +112,6 @@ def _asset_for_url(url: str) -> LegacyImage | None:
             locator=f"{cloud_name}/{public_id}",
             urls={url},
         )
-    filename = _local_upload_source(url)
-    if filename:
-        return LegacyImage(
-            key=f"local:{filename}",
-            kind="local",
-            locator=filename,
-            urls={url},
-        )
     return None
 
 
@@ -179,16 +155,7 @@ def _collect_images(
 
 
 async def _download_image(image: LegacyImage) -> tuple[bytes, str, str]:
-    if image.kind == "local":
-        filename = image.locator
-        if not LOCAL_UPLOAD_NAME.fullmatch(filename):
-            raise ValueError("Legacy upload filename is invalid")
-        upload_root = Path(os.getenv("UPLOAD_DIR", "static/uploads")).resolve()
-        path = (upload_root / filename).resolve()
-        if path.parent != upload_root or not path.is_file():
-            raise FileNotFoundError("Legacy upload file is unavailable on this server")
-        data = await asyncio.to_thread(path.read_bytes)
-    elif image.kind == "supabase":
+    if image.kind == "supabase":
         bucket, object_key = image.locator.split("/", 1)
         data = await asyncio.to_thread(download_storage_image, bucket, object_key)
     elif image.kind == "cloudinary":
@@ -303,16 +270,6 @@ def _delete_cloudinary_asset(locator: str) -> None:
         raise RuntimeError("Cloudinary did not confirm image removal")
 
 
-def _delete_local_asset(filename: str) -> None:
-    if not LOCAL_UPLOAD_NAME.fullmatch(filename):
-        raise ValueError("Legacy upload filename is invalid")
-    upload_root = Path(os.getenv("UPLOAD_DIR", "static/uploads")).resolve()
-    path = (upload_root / filename).resolve()
-    if path.parent != upload_root:
-        raise ValueError("Legacy upload is outside the configured upload directory")
-    path.unlink(missing_ok=True)
-
-
 def _image_key_is_referenced(session: Session, key: str) -> bool:
     images, _ = _collect_images(_all_image_references(session))
     return key in images
@@ -346,7 +303,11 @@ def _process_pending_cleanup(session: Session, limit: int) -> tuple[int, int, li
             bucket, object_key = task.source_locator.split("/", 1)
             reference_key = f"supabase:{bucket}:{object_key}"
         else:
-            reference_key = f"local:{task.source_locator}"
+            task.last_error = (
+                f"Unsupported legacy cleanup source type: {task.source_kind}"
+            )
+            failures.append(task.last_error)
+            continue
         if _image_key_is_referenced(session, reference_key):
             continue
         try:
@@ -355,8 +316,6 @@ def _process_pending_cleanup(session: Session, limit: int) -> tuple[int, int, li
             elif task.source_kind == "supabase":
                 bucket, object_key = task.source_locator.split("/", 1)
                 delete_storage_image(bucket, object_key)
-            elif task.source_kind == "local":
-                _delete_local_asset(task.source_locator)
             else:
                 raise ValueError("Pending image cleanup has an unknown source type")
             task.cleaned_at = datetime.now(timezone.utc)
@@ -409,7 +368,7 @@ async def migrate_private_images(
             if not new_url or not new_url.startswith(f"storage://{BUCKET_NAME}/"):
                 raise RuntimeError("Image copy did not produce a private storage reference")
             migrated_references += _replace_references(session, image.urls, new_url)
-            if image.kind in {"cloudinary", "local", "supabase"}:
+            if image.kind in {"cloudinary", "supabase"}:
                 _persist_cleanup_task(session, image.kind, image.locator)
             session.commit()
             migrated_assets += 1

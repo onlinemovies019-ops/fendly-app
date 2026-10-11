@@ -16,5 +16,7 @@ def test_private_workflow_migration_runs_schema_and_storage_policies():
     assert "INSERT INTO storage.buckets" in sql
     assert "'report-images'" in sql
     assert "fendly_private_report_images_deny_clients" in sql
+    assert "'private-vault'" in sql
+    assert "fendly_private_vault_deny_clients" in sql
     assert "BEGIN" not in statements
     assert "COMMIT" not in statements

@@ -3,7 +3,6 @@ import binascii
 import os
 from datetime import date
 from io import BytesIO
-from pathlib import Path
 from urllib.parse import quote, urlsplit
 from uuid import uuid4
 
@@ -42,45 +41,31 @@ def _encryption_key() -> bytes:
     return key
 
 
-def _storage_backend() -> tuple[str, str | Path, str | None]:
+def _storage_backend() -> tuple[str, str, str]:
     supabase_url = os.getenv("SUPABASE_URL", "").rstrip("/")
     service_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "")
-    bucket = os.getenv("VAULT_STORAGE_BUCKET", "").strip()
-    if supabase_url or service_key or bucket:
-        parsed = urlsplit(supabase_url)
-        if (
-            not supabase_url
-            or not service_key
-            or not bucket
-            or parsed.scheme != "https"
-            or not parsed.netloc
-        ):
-            raise HTTPException(
-                status_code=503,
-                detail="Vault object storage is not configured",
-            )
-        return "supabase", supabase_url, f"{service_key}\n{bucket}"
-
-    directory = Path(os.getenv("VAULT_LOCAL_STORAGE_DIR", "private_vault_storage")).resolve()
-    static_root = Path("static").resolve()
-    if directory == static_root or static_root in directory.parents:
+    bucket = os.getenv("VAULT_STORAGE_BUCKET", "private-vault").strip()
+    parsed = urlsplit(supabase_url)
+    if (
+        not supabase_url
+        or not service_key
+        or not bucket
+        or parsed.scheme != "https"
+        or not parsed.netloc
+    ):
         raise HTTPException(
             status_code=503,
-            detail="Vault local storage must be outside the public static directory",
+            detail="Vault Supabase Storage is not configured",
         )
-    return "local", directory, None
+    return supabase_url, service_key, bucket
 
 
-def _storage_headers(credentials: str) -> tuple[dict[str, str], str]:
-    service_key, bucket = credentials.split("\n", 1)
-    return (
-        {
-            "Authorization": f"Bearer {service_key}",
-            "apikey": service_key,
-            "Content-Type": "application/octet-stream",
-        },
-        bucket,
-    )
+def _storage_headers(service_key: str) -> dict[str, str]:
+    return {
+        "Authorization": f"Bearer {service_key}",
+        "apikey": service_key,
+        "Content-Type": "application/octet-stream",
+    }
 
 
 def _object_url(base_url: str, bucket: str, object_key: str) -> str:
@@ -91,89 +76,49 @@ def _object_url(base_url: str, bucket: str, object_key: str) -> str:
 
 
 def _write_encrypted_object(object_key: str, encrypted: bytes) -> None:
-    backend, location, credentials = _storage_backend()
-    if backend == "supabase":
-        assert isinstance(location, str) and credentials
-        headers, bucket = _storage_headers(credentials)
-        headers["x-upsert"] = "false"
-        try:
-            response = httpx.post(
-                _object_url(location, bucket, object_key),
-                headers=headers,
-                content=encrypted,
-                timeout=30.0,
-            )
-            response.raise_for_status()
-        except httpx.HTTPError as exc:
-            raise HTTPException(status_code=503, detail="Vault storage is unavailable") from exc
-        return
-
-    assert isinstance(location, Path)
+    supabase_url, service_key, bucket = _storage_backend()
+    headers = _storage_headers(service_key)
+    headers["x-upsert"] = "false"
     try:
-        location.mkdir(mode=0o700, parents=True, exist_ok=True)
-        target = (location / object_key).resolve()
-        if target.parent != location:
-            raise HTTPException(status_code=503, detail="Vault storage path is invalid")
-        with target.open("xb") as stored:
-            os.chmod(target, 0o600)
-            stored.write(encrypted)
-    except HTTPException:
-        raise
-    except OSError as exc:
+        response = httpx.post(
+            _object_url(supabase_url, bucket, object_key),
+            headers=headers,
+            content=encrypted,
+            timeout=30.0,
+        )
+        response.raise_for_status()
+    except httpx.HTTPError as exc:
         raise HTTPException(status_code=503, detail="Vault storage is unavailable") from exc
 
 
 def _read_encrypted_object(object_key: str) -> bytes:
-    backend, location, credentials = _storage_backend()
-    if backend == "supabase":
-        assert isinstance(location, str) and credentials
-        headers, bucket = _storage_headers(credentials)
-        headers.pop("Content-Type", None)
-        try:
-            response = httpx.get(
-                _object_url(location, bucket, object_key),
-                headers=headers,
-                timeout=30.0,
-            )
-            response.raise_for_status()
-            return response.content
-        except httpx.HTTPError as exc:
-            raise HTTPException(status_code=503, detail="Vault storage is unavailable") from exc
-
-    assert isinstance(location, Path)
-    target = (location / object_key).resolve()
-    if target.parent != location:
-        raise HTTPException(status_code=503, detail="Vault storage path is invalid")
+    supabase_url, service_key, bucket = _storage_backend()
+    headers = _storage_headers(service_key)
+    headers.pop("Content-Type", None)
     try:
-        return target.read_bytes()
-    except OSError as exc:
+        response = httpx.get(
+            _object_url(supabase_url, bucket, object_key),
+            headers=headers,
+            timeout=30.0,
+        )
+        response.raise_for_status()
+        return response.content
+    except httpx.HTTPError as exc:
         raise HTTPException(status_code=503, detail="Vault storage is unavailable") from exc
 
 
 def _delete_encrypted_object(object_key: str) -> None:
-    backend, location, credentials = _storage_backend()
-    if backend == "supabase":
-        assert isinstance(location, str) and credentials
-        headers, bucket = _storage_headers(credentials)
-        headers.pop("Content-Type", None)
-        try:
-            response = httpx.delete(
-                _object_url(location, bucket, object_key),
-                headers=headers,
-                timeout=30.0,
-            )
-            response.raise_for_status()
-        except httpx.HTTPError as exc:
-            raise HTTPException(status_code=503, detail="Vault storage is unavailable") from exc
-        return
-
-    assert isinstance(location, Path)
-    target = (location / object_key).resolve()
-    if target.parent != location:
-        raise HTTPException(status_code=503, detail="Vault storage path is invalid")
+    supabase_url, service_key, bucket = _storage_backend()
+    headers = _storage_headers(service_key)
+    headers.pop("Content-Type", None)
     try:
-        target.unlink(missing_ok=True)
-    except OSError as exc:
+        response = httpx.delete(
+            _object_url(supabase_url, bucket, object_key),
+            headers=headers,
+            timeout=30.0,
+        )
+        response.raise_for_status()
+    except httpx.HTTPError as exc:
         raise HTTPException(status_code=503, detail="Vault storage is unavailable") from exc
 
 

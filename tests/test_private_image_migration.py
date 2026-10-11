@@ -24,19 +24,16 @@ def test_cloudinary_variants_group_by_public_asset(monkeypatch):
     assert unsupported == 0
 
 
-def test_local_upload_sources_are_limited_to_configured_host_and_name(monkeypatch):
-    monkeypatch.setenv("PUBLIC_BASE_URL", "https://fendly-api.example")
+def test_local_upload_references_are_not_migrated_from_service_filesystem():
     filename = "a1b2c3d4e5f6478899aabbccddeeff00.jpg"
+    url = f"https://fendly-api.example/static/uploads/{filename}"
 
-    assert migration._local_upload_source(
-        f"https://fendly-api.example/static/uploads/{filename}"
-    ) == filename
-    assert migration._local_upload_source(
-        f"https://other.example/static/uploads/{filename}"
-    ) is None
-    assert migration._local_upload_source(
-        "https://fendly-api.example/static/uploads/../../private.jpg"
-    ) is None
+    images, unsupported = migration._collect_images(
+        [(object(), "image_url", url)]
+    )
+
+    assert images == {}
+    assert unsupported == 1
 
 
 def test_replace_references_updates_scalar_and_image_list(monkeypatch):

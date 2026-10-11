@@ -136,7 +136,9 @@ def delete_private_image_asset(image_url: str) -> bool:
     return True
 
 
-def verify_private_bucket() -> None:
-    bucket = _storage_client().storage.get_bucket(BUCKET_NAME)
+def verify_private_bucket(bucket_name: str = BUCKET_NAME) -> None:
+    if not bucket_name:
+        raise ValueError("Supabase Storage bucket name is required")
+    bucket = _storage_client().storage.get_bucket(bucket_name)
     if bucket.public is not False:
-        raise RuntimeError(f"Supabase Storage bucket {BUCKET_NAME!r} must be private")
+        raise RuntimeError(f"Supabase Storage bucket {bucket_name!r} must be private")

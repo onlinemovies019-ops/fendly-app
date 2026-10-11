@@ -231,6 +231,7 @@ async def lifespan(_: FastAPI):
         from image_storage import verify_private_bucket
 
         verify_private_bucket()
+        verify_private_bucket(os.getenv("VAULT_STORAGE_BUCKET", "private-vault"))
     cleanup_task = asyncio.create_task(_cleanup_expired_otp_challenges())
     try:
         yield
