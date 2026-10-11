@@ -8,6 +8,7 @@ from sqlalchemy.pool import StaticPool
 import routers.users as users
 from models import (
     AdminMatchAlert,
+    AdoptionListing,
     Base,
     DeviceToken,
     EmailOTPChallenge,
@@ -319,6 +320,20 @@ def test_delete_account_removes_reports_and_related_data(
                 provider="instagram",
                 status="pending",
             ),
+            AdoptionListing(
+                id="adoption-1",
+                lister_user_id=uid,
+                pet_name="Milo",
+                species="dog",
+                age_months=18,
+                gender="male",
+                health_status="Vaccinated",
+                description="Friendly dog.",
+                location_city="Pune",
+                images=["https://storage.example/adoptions/pet.jpg"],
+                social_post_image_url="https://storage.example/adoptions/social-poster.jpg",
+                auto_post_social=True,
+            ),
         ]
     )
     deletion_session.commit()
@@ -327,6 +342,8 @@ def test_delete_account_removes_reports_and_related_data(
     monkeypatch.setattr(users, "_delete_firestore_account_copies", lambda *args: None)
     monkeypatch.setattr(users, "_delete_profile_photo_asset", lambda _: None)
     monkeypatch.setattr(users, "_delete_supabase_account_matching_data", lambda _: None)
+    deleted_adoption_images = []
+    monkeypatch.setattr(users, "delete_adoption_image", deleted_adoption_images.append)
     auth_deleted_after_database_commit = []
 
     def delete_firebase_user(target_uid, app):
@@ -348,6 +365,11 @@ def test_delete_account_removes_reports_and_related_data(
     assert deletion_session.get(LostItem, "lost-1") is None
     assert deletion_session.get(FoundItem, "found-1") is None
     assert deletion_session.query(SocialPublication).count() == 0
+    assert deletion_session.get(AdoptionListing, "adoption-1") is None
+    assert deleted_adoption_images == [
+        "https://storage.example/adoptions/pet.jpg",
+        "https://storage.example/adoptions/social-poster.jpg",
+    ]
     assert deletion_session.query(AdminMatchAlert).count() == 0
     assert deletion_session.query(DeviceToken).filter_by(firebase_uid=uid).count() == 0
     assert deletion_session.query(UserNotification).filter_by(firebase_uid=uid).count() == 0

@@ -260,15 +260,27 @@ def publish_adoption_listing(
     if not listing.images:
         return {}, ["Add at least one public pet photo before requesting social posting."]
 
-    image_url = listing.images[0]
+    image_url = listing.social_post_image_url or listing.images[0]
+    years, remaining_months = divmod(listing.age_months, 12)
+    age_label = (
+        f"{years} yr {remaining_months} mo"
+        if years and remaining_months
+        else f"{years} {'year' if years == 1 else 'years'}"
+        if years
+        else f"{remaining_months} {'month' if remaining_months == 1 else 'months'}"
+    )
+    breed = f" · {listing.breed.strip()}" if listing.breed and listing.breed.strip() else ""
+    description = " ".join(listing.description.split())
+    if len(description) > 800:
+        description = description[:797].rsplit(" ", 1)[0] + "..."
     caption = (
-        f"{listing.pet_name} is looking for a loving home!\n"
-        f"{listing.species.title()}"
-        f"{f' · {listing.breed}' if listing.breed else ''} · "
-        f"{listing.age_months} months old\n"
-        f"Location: {listing.location_city}\n\n"
-        f"{listing.description}\n\n"
-        f"Learn more and apply in Fendly: {download_url}"
+        f"🐾 A new best friend is waiting to meet you! 🐾\n\n"
+        f"Meet {listing.pet_name} — our lovely {listing.species.title()}{breed}.\n"
+        f"🎂 {age_label}  ·  📍 {listing.location_city}\n\n"
+        f"{description}\n\n"
+        f"Give {listing.pet_name} a loving home. Learn more and apply in Fendly:\n"
+        f"{download_url}\n\n"
+        f"#AdoptDontShop #PetAdoption #AdoptWithFendly"
     )
     if len(caption) > 2000:
         caption = caption[:1997].rstrip() + "..."

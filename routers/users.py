@@ -288,6 +288,8 @@ def delete_account(
         for listing in adoption_listings:
             for image_url in listing.images or []:
                 delete_adoption_image(image_url)
+            if listing.social_post_image_url:
+                delete_adoption_image(listing.social_post_image_url)
 
         app = _firebase_app()
         _delete_firestore_account_copies(app, uid, email)

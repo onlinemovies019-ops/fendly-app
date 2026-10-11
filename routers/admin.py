@@ -476,6 +476,8 @@ def delete_admin_adoption(
         )
 
     image_urls = list(listing.images or [])
+    if listing.social_post_image_url:
+        image_urls.append(listing.social_post_image_url)
     session.query(AdoptionApplication).filter(
         AdoptionApplication.listing_id == listing.id
     ).delete(synchronize_session=False)

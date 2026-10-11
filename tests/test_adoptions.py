@@ -40,6 +40,11 @@ def adoption_client(monkeypatch):
     monkeypatch.setattr(adoptions_module, "moderate_content", allow_content)
     monkeypatch.setattr(adoptions_module, "_check_image", lambda data, mime_type: "jpg")
     monkeypatch.setattr(adoptions_module, "store_adoption_image", store_image)
+    monkeypatch.setattr(
+        adoptions_module,
+        "render_adoption_poster",
+        lambda *_args, **_kwargs: b"framed adoption poster",
+    )
     for setting in (
         "META_FACEBOOK_PAGE_ID",
         "META_INSTAGRAM_ACCOUNT_ID",
@@ -199,6 +204,7 @@ def test_admin_can_list_and_delete_adoption_with_meta_posts(
         )
         session.commit()
         expected_image_urls = list(listing.images)
+        expected_image_urls.append(listing.social_post_image_url)
 
     current_uid[0] = "not-admin"
     assert client.get("/api/admin/adoptions").status_code == 403
@@ -405,3 +411,4 @@ def test_social_opt_in_failure_does_not_remove_public_listing(adoption_client):
     assert listing is not None
     assert listing.auto_post_social is True
     assert "no connected facebook page" in listing.social_post_error.lower()
+    assert listing.social_post_image_url is not None

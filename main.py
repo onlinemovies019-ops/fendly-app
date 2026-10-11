@@ -188,6 +188,11 @@ async def lifespan(_: FastAPI):
                 "deletion_access_token_encrypted",
                 "text",
             )
+            add_column_if_missing(
+                "adoption_listings",
+                "social_post_image_url",
+                "varchar(1000)",
+            )
 
             # --- ITEM EMBEDDINGS & REPORT COLUMNS ---
             add_column_if_missing("lost_items", "image_embedding", "vector(512)")

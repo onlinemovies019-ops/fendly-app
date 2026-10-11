@@ -12,6 +12,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from adoption_social import publish_adoption_listing
+from adoption_poster import render_adoption_poster
 from adoption_storage import delete_adoption_image, store_adoption_image
 from auth import get_current_user
 from database import get_db
@@ -284,6 +285,8 @@ def delete_adoption(
         raise HTTPException(403, "Only the lister can delete this adoption listing")
 
     image_urls = list(listing.images or [])
+    if listing.social_post_image_url:
+        image_urls.append(listing.social_post_image_url)
     session.query(AdoptionApplication).filter(
         AdoptionApplication.listing_id == listing.id
     ).delete(synchronize_session=False)
@@ -361,8 +364,35 @@ async def create_adoption(
         logger.exception("Adoption image upload failed")
         raise HTTPException(503, "Pet photos could not be uploaded; please try again") from exc
 
+    listing_id = str(uuid4())
+    social_post_image_url = None
+    poster_error = None
+    if auto_post_social:
+        try:
+            poster_data = render_adoption_poster(
+                prepared[0][0],
+                pet_name=pet_name.strip(),
+                species=species.strip().lower(),
+                breed=breed.strip() if breed else None,
+                age_months=age_months,
+                location_city=location_city.strip(),
+                health_status=health_status.strip(),
+                download_url=os.getenv(
+                    "APP_DOWNLOAD_URL",
+                    "https://play.google.com/store/apps/details?id=com.example.fendly",
+                ).strip(),
+            )
+            social_post_image_url = await store_adoption_image(
+                poster_data,
+                f"{uid}/social-posters/{listing_id}.jpg",
+                "image/jpeg",
+            )
+        except Exception:
+            logger.exception("Could not prepare framed social image for adoption listing %s", listing_id)
+            poster_error = "The framed social post image could not be prepared."
+
     listing = AdoptionListing(
-        id=str(uuid4()),
+        id=listing_id,
         lister_user_id=uid,
         pet_name=pet_name.strip(),
         species=species.strip().lower(),
@@ -376,6 +406,7 @@ async def create_adoption(
         status="available",
         auto_post_social=auto_post_social,
         social_post_status="pending" if auto_post_social else None,
+        social_post_image_url=social_post_image_url,
     )
     try:
         session.add(listing)
@@ -388,19 +419,29 @@ async def create_adoption(
                 delete_adoption_image(image_url)
             except Exception:
                 logger.exception("Failed to clean up adoption photos after database failure")
+        if social_post_image_url:
+            try:
+                delete_adoption_image(social_post_image_url)
+            except Exception:
+                logger.exception("Failed to clean up adoption social poster after database failure")
         logger.exception("Adoption listing could not be saved")
         raise HTTPException(503, "Adoption listing could not be saved") from exc
 
     if auto_post_social:
-        try:
-            _publish_listing_social(listing, session)
-        except (ValueError, RuntimeError) as exc:
-            session.rollback()
-            logger.warning("Adoption social publishing did not finish: %s", exc)
-            listing = session.get(AdoptionListing, listing.id) or listing
+        if poster_error:
             listing.social_post_status = "failed"
-            listing.social_post_error = str(exc)[:500]
+            listing.social_post_error = poster_error
             session.commit()
+        else:
+            try:
+                _publish_listing_social(listing, session)
+            except (ValueError, RuntimeError) as exc:
+                session.rollback()
+                logger.warning("Adoption social publishing did not finish: %s", exc)
+                listing = session.get(AdoptionListing, listing.id) or listing
+                listing.social_post_status = "failed"
+                listing.social_post_error = str(exc)[:500]
+                session.commit()
     return _serialize_listing(listing, include_owner_fields=True)
 
 

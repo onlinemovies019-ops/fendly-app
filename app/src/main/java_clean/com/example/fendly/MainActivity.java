@@ -875,7 +875,13 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                 "1. നഷ്ടപ്പെട്ടവ റിപ്പോർട്ട് ചെയ്യൽ:\n• ഹോം സ്‌ക്രീനിലെ പച്ച LOST ബട്ടണിൽ ടാപ്പ് ചെയ്യുക.\n• ഇനത്തിന്റെ വിശദാംശങ്ങൾ, വിഭാഗം, വിവരണം, ഫോട്ടോ എന്നിവ നൽകുക.\n\n2. കണ്ടെത്തിയവ റിപ്പോർട്ട് ചെയ്യൽ:\n• ഒരു ഇനം കണ്ടെത്തുമ്പോൾ ഹോം സ്‌ക്രീനിലെ സുവർണ്ണ FOUND ബട്ടണിൽ ടാപ്പ് ചെയ്യുക.\n• കണ്ടെത്തിയ ഇനത്തിന്റെ വിവരങ്ങൾ നൽകുക.\n\n3. റിപ്പോർട്ടുകൾ ട്രാക്ക് ചെയ്യൽ:\n• സമർപ്പിച്ച റിപ്പോർട്ടുകളും അപ്‌ഡേറ്റുകളും കാണാൻ എപ്പോൾ വേണമെങ്കിലും My Reports സന്ദർശിക്കുക."
         };
         int lang = Math.max(0, Math.min(selectedLanguage, texts.length - 1));
-        if (lang == 0) return texts[lang];
+        if (lang == 0) {
+            return "1. On Home, tap LOST/THEFT or FOUND, then choose Item/Valuables, Pet/Animal, or Missing Person.\n\n"
+                    + "2. Enter a title, identifying details, city, and location. Add up to 3 photos using the camera or gallery; "
+                    + "the date and precise GPS location are optional. Accept the Community Guidelines.\n\n"
+                    + "3. Review and submit. A LOST report may require payment unless your subscription is active.\n\n"
+                    + "4. Track your report and its status in My Reports.";
+        }
 
         String[] lostButtonLabels = {
             "LOST", "खोया", "हरवले/चोरी", "ખોવાયેલું", "হারানো",
@@ -924,6 +930,14 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                 "1. സമർപ്പിച്ച റിപ്പോർട്ടുകൾ കാണുക:\n• നിങ്ങളുടെ എല്ലാ റിപ്പോർട്ടുകളും ഒറ്റ ലിസ്റ്റിൽ കാണുക.\n\n2. സ്റ്റാറ്റസും AI മാച്ചുകളും ട്രാക്ക് ചെയ്യുക:\n• റിപ്പോർട്ട് സ്റ്റാറ്റസ് നിരീക്ഷിക്കുകയും സാധ്യമായ AI മാച്ചുകൾ പരിശോധിക്കുകയും ചെയ്യുക.\n\n3. റിപ്പോർട്ടുകൾ എഡിറ്റ് ചെയ്യൽ:\n• നിങ്ങൾ അപ്‌ലോഡ് ചെയ്ത റിപ്പോർട്ട് സൃഷ്ടിച്ച് 5 മണിക്കൂറിനുള്ളിൽ ഒരു തവണ മാത്രമേ എഡിറ്റ് ചെയ്യാൻ സാധിക്കൂ; അതിനുശേഷം എഡിറ്റ് ചെയ്യാൻ കഴിയില്ല."
         };
         int lang = Math.max(0, Math.min(selectedLanguage, texts.length - 1));
+        if (lang == 0) {
+            texts[0] = "1. Open My Reports and use the category tabs to filter your LOST and FOUND reports. "
+                    + "Tap a report card to see its details and status tracker.\n\n"
+                    + "2. Tap Edit to change a report once within 5 hours. A report can be deleted only within "
+                    + "1 hour of posting.\n\n"
+                    + "3. Use Mark as reunited when the item is returned; story sharing is optional. "
+                    + "Lost and Found reports may also offer a community poster or alert card to share.";
+        }
         String[] completedReportsNotes = {
                 "Completed reports stay collapsed. Tap the section heading to expand or collapse the list.",
                 "पूरी हो चुकी रिपोर्टें बंद रहती हैं। सूची देखने या छिपाने के लिए पूरी रिपोर्टें शीर्षक पर टैप करें।",
@@ -6790,7 +6804,8 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                             false
                     ));
                 }
-                if (!isCompleted && "LOST".equalsIgnoreCase(type)) {
+                if (!isCompleted
+                        && ("LOST".equalsIgnoreCase(type) || "FOUND".equalsIgnoreCase(type))) {
                     addCommunityPosterAction(reportCardContainer, report, dp(8), dp(12));
                 }
                 if (isHighPriorityReport(report)) {
@@ -11197,9 +11212,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         int maxContentHeight = Math.max(dp(180), getResources().getDisplayMetrics().heightPixels - dp(300));
         content.addView(scroll, new LinearLayout.LayoutParams(-1, Math.min(dp(390), maxContentHeight)));
 
-        if (!adminView
-                && "LOST".equalsIgnoreCase(type)
-                && isActiveCommunityReport(report)) {
+        if (!adminView && isActiveCommunityReport(report)) {
             addCommunityPosterAction(content, report, 0, dp(8));
         }
 

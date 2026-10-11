@@ -167,6 +167,7 @@ class AdoptionListing(Base):
     auto_post_social: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     social_post_status: Mapped[str | None] = mapped_column(String(16))
     social_post_error: Mapped[str | None] = mapped_column(String(500))
+    social_post_image_url: Mapped[str | None] = mapped_column(String(1000))
     facebook_post_id: Mapped[str | None] = mapped_column(String(160))
     instagram_post_id: Mapped[str | None] = mapped_column(String(160))
     created_at: Mapped[datetime] = mapped_column(

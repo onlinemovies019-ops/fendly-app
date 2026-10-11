@@ -111,43 +111,71 @@ def render_community_poster(
     title: str, report_type: str, category: str,
     report_url: str, photo: Image.Image | None, date: str = "",
 ) -> bytes:
+    normalized_type = report_type.strip().casefold()
+    is_found = normalized_type == "found"
+    report_label = "FOUND ITEM" if is_found else "LOST ITEM"
+    accent = (22, 104, 79) if is_found else (174, 59, 54)
+    subject = _home_subject(title, category).lower()
+    headline = (
+        f"Help reunite this {subject} with its owner"
+        if is_found
+        else f"Help find this {subject}"
+    )
     poster = Image.new("RGB", (POSTER_WIDTH, POSTER_HEIGHT), BACKGROUND)
     draw = ImageDraw.Draw(poster)
-    draw.rounded_rectangle((52, 48, POSTER_WIDTH - 52, 190), radius=34, fill=GREEN)
-    draw.text((90, 66), "FENDLY  ·  COMMUNITY ALERT", fill="white", font=_font(48, bold=True))
-    draw.text((90, 128), f"Help bring this {_home_subject(title, category)} home",
-              fill="white", font=_font(28))
+    draw.rounded_rectangle(
+        (30, 28, POSTER_WIDTH - 30, POSTER_HEIGHT - 28),
+        radius=38,
+        outline=GREEN,
+        width=5,
+    )
+    draw.rounded_rectangle((52, 48, POSTER_WIDTH - 52, 190), radius=34, fill=accent)
+    draw.text((90, 66), f"FENDLY  ·  {report_label} ALERT", fill="white", font=_font(43, bold=True))
+    draw.text((90, 128), headline, fill="white", font=_font(27, bold=True))
 
-    _draw_wrapped(draw, title.strip() or "Lost item", (76, 220), POSTER_WIDTH - 152,
-                  _font(56, bold=True))
+    _draw_wrapped(
+        draw,
+        title.strip() or ("Found item" if is_found else "Lost item"),
+        (76, 220),
+        POSTER_WIDTH - 152,
+        _font(56, bold=True),
+    )
     image_bounds = (130, 330, 950, 1150)
-    draw.rounded_rectangle(image_bounds, radius=28, fill=(231, 229, 218))
+    draw.rounded_rectangle(
+        (image_bounds[0] - 10, image_bounds[1] - 10, image_bounds[2] + 10, image_bounds[3] + 10),
+        radius=38,
+        fill=(255, 255, 255),
+    )
     if photo is None:
-        draw.text((112, 552), "Photo not available", fill=MUTED, font=_font(30))
+        draw.rounded_rectangle(image_bounds, radius=28, fill=(231, 229, 218))
+        _draw_wrapped(draw, "Photo not available", (290, 552), 500, _font(30, bold=True), 1)
     else:
         fitted_photo = _rounded_photo(
             photo,
             (image_bounds[2] - image_bounds[0], image_bounds[3] - image_bounds[1]),
         )
         poster.paste(fitted_photo, image_bounds[:2], fitted_photo.getchannel("A"))
+    draw.rounded_rectangle((158, 356, 340, 410), radius=27, fill=accent)
+    draw.text((180, 369), report_label, fill="white", font=_font(21, bold=True))
 
     qr = cast(Image.Image, qrcode.make(report_url)).convert("RGB").resize(
         (150, 150), Image.Resampling.NEAREST
     )
-    poster.paste(qr, (842, 1170))
+    poster.paste(qr, (842, 1168))
     _draw_wrapped(
         draw,
-        f"{report_type.title()} report · View details in Fendly",
-        (78, 1200),
+        f"{report_label.title()} · View details in Fendly",
+        (78, 1182),
         720,
-        _font(34, bold=True),
+        _font(32, bold=True),
+        1,
     )
     date_text = date.strip() or "Date not provided"
-    draw.text((78, 1315), date_text, fill=MUTED, font=_font(24))
+    draw.text((78, 1260), date_text, fill=MUTED, font=_font(24))
     scan_text = "SCAN FOR FENDLY"
-    scan_font = _font(18)
+    scan_font = _font(16)
     scan_width = draw.textbbox((0, 0), scan_text, font=scan_font)[2]
-    draw.text((917 - scan_width / 2, 1342), scan_text, fill=MUTED, font=scan_font)
+    draw.text((917 - scan_width / 2, 1148), scan_text, fill=MUTED, font=scan_font)
     output = io.BytesIO()
     poster.save(output, format="JPEG", quality=90, optimize=True)
     return output.getvalue()

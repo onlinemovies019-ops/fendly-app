@@ -1027,8 +1027,14 @@ def test_policy_and_external_account_deletion_pages_are_publicly_served():
 
     assert policy.status_code == 200
     assert "account deletion request page" in policy.text
+    assert "Administrators can delete an adoption listing" in policy.text
+    assert "framed graphic made from its first pet photo" in policy.text
+    assert "generated adoption graphics" in policy.text
+    assert "does not automatically" in policy.text
+    assert "remove adoption posts" in policy.text
     assert deletion.status_code == 200
     assert "info.fendly@gmail.com" in deletion.text
+    assert "contact Fendly before requesting account deletion" in deletion.text
 
 
 @pytest.mark.asyncio

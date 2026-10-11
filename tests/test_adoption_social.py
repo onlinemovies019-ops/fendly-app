@@ -61,6 +61,7 @@ def test_direct_meta_credentials_override_saved_accounts_for_both_publications(m
         location_city="Pune",
         images=["https://storage.example/pet.jpg"],
         auto_post_social=True,
+        social_post_image_url="https://storage.example/social-posters/milo.jpg",
     )
     recorded = []
 
@@ -86,8 +87,9 @@ def test_direct_meta_credentials_override_saved_accounts_for_both_publications(m
     assert requests[0][1]["access_token"] == "incorrect-direct-token"
     assert requests[1][0].endswith("/2222222222/media")
     assert requests[1][1]["access_token"] == "incorrect-direct-token"
-    assert requests[0][1]["url"] == "https://storage.example/pet.jpg"
-    assert requests[1][1]["image_url"] == "https://storage.example/pet.jpg"
+    assert requests[0][1]["url"] == "https://storage.example/social-posters/milo.jpg"
+    assert requests[1][1]["image_url"] == "https://storage.example/social-posters/milo.jpg"
+    assert "#AdoptDontShop" in requests[0][1]["caption"]
     assert requests[2][1]["creation_id"] == "instagram-container"
 
 
