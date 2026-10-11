@@ -5,10 +5,7 @@ import android.graphics.BitmapFactory
 import android.graphics.Bitmap
 import android.net.Uri
 import android.os.Bundle
-import android.util.Log
 import android.util.LruCache
-import android.view.Surface
-import java.io.File
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
@@ -46,7 +43,6 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
@@ -70,21 +66,13 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.view.WindowCompat
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.core.content.ContextCompat
-import androidx.camera.core.CameraSelector
-import androidx.camera.core.ImageCapture
-import androidx.camera.core.ImageCaptureException
-import androidx.camera.core.Preview
-import androidx.camera.lifecycle.ProcessCameraProvider
-import androidx.camera.view.PreviewView
 import com.google.firebase.auth.FirebaseAuth
 import com.example.fendly.ui.theme.FendlyCard
 import com.example.fendly.ui.theme.FendlyPrimaryButton
@@ -99,7 +87,6 @@ import java.net.URL
 import java.io.ByteArrayOutputStream
 import java.nio.charset.StandardCharsets
 import java.util.Locale
-import java.util.concurrent.Executors
 
 
 class AdoptionActivity : ComponentActivity() {
@@ -269,7 +256,6 @@ private fun AdoptionScreen(onBack: () -> Unit) {
     }
     var selectedPhotoSlot by remember { mutableStateOf(-1) }
     var showPhotoSource by remember { mutableStateOf(false) }
-    var showCameraCapture by remember { mutableStateOf(false) }
     var homeType by remember { mutableStateOf("") }
     var petExperience by remember { mutableStateOf("") }
     var contactPhone by remember { mutableStateOf("") }
@@ -463,11 +449,18 @@ private fun AdoptionScreen(onBack: () -> Unit) {
             selectedPhotos[selectedPhotoSlot] = AdoptionPhoto(uri = uri)
         }
     }
+    val cameraLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.TakePicturePreview(),
+    ) { bitmap ->
+        if (bitmap != null && selectedPhotoSlot in selectedPhotos.indices) {
+            selectedPhotos[selectedPhotoSlot] = AdoptionPhoto(bitmap = bitmap)
+        }
+    }
     val cameraPermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission(),
     ) { granted ->
         if (granted) {
-            showCameraCapture = true
+            cameraLauncher.launch(null)
         } else {
             message = t("adopt_camera_permission")
         }
@@ -961,7 +954,7 @@ private fun AdoptionScreen(onBack: () -> Unit) {
                                                 Manifest.permission.CAMERA,
                                             ) == android.content.pm.PackageManager.PERMISSION_GRANTED
                                         ) {
-                                            showCameraCapture = true
+                                            cameraLauncher.launch(null)
                                         } else {
                                             cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
                                         }
@@ -977,19 +970,6 @@ private fun AdoptionScreen(onBack: () -> Unit) {
             }
         }
     }
-    if (showCameraCapture) {
-        AdoptionCameraDialog(
-            t = ::t,
-            onCapture = { bitmap ->
-                if (selectedPhotoSlot in selectedPhotos.indices) {
-                    selectedPhotos[selectedPhotoSlot] = AdoptionPhoto(bitmap = bitmap)
-                }
-                showCameraCapture = false
-            },
-            onDismiss = { showCameraCapture = false },
-        )
-    }
-
     editingListing?.let { listing ->
         AlertDialog(
             onDismissRequest = { editingListing = null },
@@ -1226,173 +1206,6 @@ private fun ListingCard(
                     ) {
                         ownerActions()
                     }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun AdoptionCameraDialog(
-    t: (String) -> String,
-    onCapture: (Bitmap) -> Unit,
-    onDismiss: () -> Unit,
-) {
-    val context = LocalContext.current
-    val lifecycleOwner = LocalLifecycleOwner.current
-    val previewView = remember(context) {
-        PreviewView(context).apply {
-            scaleType = PreviewView.ScaleType.FILL_CENTER
-            implementationMode = PreviewView.ImplementationMode.PERFORMANCE
-        }
-    }
-    val imageCapture = remember {
-        ImageCapture.Builder()
-            .setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY)
-            .build()
-    }
-    val executor = remember { Executors.newSingleThreadExecutor() }
-    var cameraProvider by remember { mutableStateOf<ProcessCameraProvider?>(null) }
-    var cameraPreview by remember { mutableStateOf<Preview?>(null) }
-    var camera by remember { mutableStateOf<androidx.camera.core.Camera?>(null) }
-    var cameraReady by remember { mutableStateOf(false) }
-    var cameraError by remember { mutableStateOf(false) }
-
-    LaunchedEffect(previewView, lifecycleOwner) {
-        val providerFuture = ProcessCameraProvider.getInstance(context)
-        providerFuture.addListener(
-            {
-                try {
-                    val provider = providerFuture.get()
-                    val selector = if (provider.hasCamera(CameraSelector.DEFAULT_BACK_CAMERA)) {
-                        CameraSelector.DEFAULT_BACK_CAMERA
-                    } else {
-                        CameraSelector.DEFAULT_FRONT_CAMERA
-                    }
-                    val preview = Preview.Builder().build().also {
-                        it.surfaceProvider = previewView.surfaceProvider
-                    }
-                    previewView.post {
-                        try {
-                            val boundCamera = provider.bindToLifecycle(
-                                lifecycleOwner,
-                                selector,
-                                preview,
-                                imageCapture,
-                            )
-                            cameraProvider = provider
-                            cameraPreview = preview
-                            camera = boundCamera
-                        } catch (exception: Exception) {
-                            Log.e("AdoptionCamera", "Could not bind camera preview", exception)
-                            cameraError = true
-                        }
-                    }
-                } catch (exception: Exception) {
-                    Log.e("AdoptionCamera", "Could not initialize camera provider", exception)
-                    cameraError = true
-                }
-            },
-            ContextCompat.getMainExecutor(context),
-        )
-    }
-
-    DisposableEffect(camera, lifecycleOwner) {
-        val boundCamera = camera
-        val state = boundCamera?.cameraInfo?.cameraState
-        val observer = androidx.lifecycle.Observer<androidx.camera.core.CameraState> { cameraState ->
-            cameraReady = cameraState.type == androidx.camera.core.CameraState.Type.OPEN
-            cameraState.error?.let { error ->
-                Log.e("AdoptionCamera", "Camera entered an error state", error.cause)
-                cameraError = true
-            }
-        }
-        state?.observe(lifecycleOwner, observer)
-        onDispose {
-            state?.removeObserver(observer)
-        }
-    }
-
-    DisposableEffect(cameraProvider, cameraPreview, imageCapture) {
-        onDispose {
-            val preview = cameraPreview
-            if (preview != null) {
-                cameraProvider?.unbind(preview, imageCapture)
-            }
-        }
-    }
-    DisposableEffect(executor) {
-        onDispose {
-            executor.shutdown()
-        }
-    }
-
-    Dialog(onDismissRequest = onDismiss) {
-        FendlyCard(Modifier.fillMaxWidth()) {
-            Column(
-                modifier = Modifier.fillMaxWidth(),
-                verticalArrangement = Arrangement.spacedBy(12.dp),
-            ) {
-                Text(t("adopt_take_photo"), style = MaterialTheme.typography.titleLarge)
-                AndroidView(
-                    factory = { previewView },
-                    modifier = Modifier.fillMaxWidth().height(360.dp),
-                )
-                if (cameraError) {
-                    Text(
-                        t("adopt_camera_unavailable"),
-                        color = MaterialTheme.colorScheme.error,
-                    )
-                }
-                FendlyPrimaryButton(
-                    text = t("adopt_capture"),
-                    enabled = cameraReady && !cameraError,
-                    onClick = {
-                        val outputFile = try {
-                            File.createTempFile("adoption-photo-", ".jpg", context.cacheDir)
-                        } catch (exception: Exception) {
-                            Log.e("AdoptionCamera", "Could not create a temporary photo file", exception)
-                            cameraError = true
-                            return@FendlyPrimaryButton
-                        }
-                        imageCapture.targetRotation = previewView.display?.rotation
-                            ?: Surface.ROTATION_0
-                        val outputOptions = ImageCapture.OutputFileOptions.Builder(outputFile).build()
-                        imageCapture.takePicture(
-                            outputOptions,
-                            executor,
-                            object : ImageCapture.OnImageSavedCallback {
-                                override fun onImageSaved(
-                                    outputFileResults: ImageCapture.OutputFileResults,
-                                ) {
-                                    val bitmap = BitmapFactory.decodeFile(outputFile.absolutePath)
-                                    outputFile.delete()
-                                    ContextCompat.getMainExecutor(context).execute {
-                                        if (bitmap == null) {
-                                            Log.e("AdoptionCamera", "Camera saved an unreadable JPEG")
-                                            cameraError = true
-                                        } else {
-                                            onCapture(bitmap)
-                                        }
-                                    }
-                                }
-
-                                override fun onError(exception: ImageCaptureException) {
-                                    outputFile.delete()
-                                    Log.e("AdoptionCamera", "Could not capture adoption photo", exception)
-                                    ContextCompat.getMainExecutor(context).execute {
-                                        cameraError = true
-                                    }
-                                }
-                            },
-                        )
-                    },
-                )
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.End,
-                ) {
-                    TextButton(onClick = onDismiss) { Text(t("adopt_cancel")) }
                 }
             }
         }
