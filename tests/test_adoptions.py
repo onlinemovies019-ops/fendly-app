@@ -412,3 +412,18 @@ def test_social_opt_in_failure_does_not_remove_public_listing(adoption_client):
     assert listing.auto_post_social is True
     assert "no connected facebook page" in listing.social_post_error.lower()
     assert listing.social_post_image_url is not None
+
+
+def test_social_poster_url_is_returned_only_to_listing_owner(adoption_client):
+    client, _, _ = adoption_client
+    created = _create_listing(client, auto_post_social="true")
+    assert created.status_code == 201, created.text
+    poster_url = created.json()["social_post_image_url"]
+
+    mine = client.get("/api/adoptions/mine")
+    public_feed = client.get("/api/adoptions")
+
+    assert mine.status_code == 200
+    assert mine.json()[0]["social_post_image_url"] == poster_url
+    assert public_feed.status_code == 200
+    assert "social_post_image_url" not in public_feed.json()[0]

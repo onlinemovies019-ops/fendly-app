@@ -151,6 +151,7 @@ private data class AdoptionListing(
     val status: String,
     val socialStatus: String,
     val socialError: String,
+    val socialPosterImage: String,
 )
 
 private data class AdoptionPhoto(
@@ -188,6 +189,7 @@ private fun adoptionListing(json: JSONObject) = AdoptionListing(
     status = json.optString("status"),
     socialStatus = json.optString("social_post_status"),
     socialError = json.optString("social_post_error"),
+    socialPosterImage = json.optString("social_post_image_url"),
 )
 
 private fun adoptionRequest(
@@ -443,6 +445,36 @@ private fun AdoptionScreen(onBack: () -> Unit) {
         }
     }
 
+    fun shareAdoptionPoster(listing: AdoptionListing) {
+        if (listing.socialPosterImage.isBlank()) {
+            message = t("adopt_share_poster_unavailable")
+            return
+        }
+        scope.launch {
+            message = t("adopt_preparing_share")
+            try {
+                val poster = withContext(Dispatchers.IO) {
+                    val connection = URL(listing.socialPosterImage).openConnection()
+                    connection.connectTimeout = 15000
+                    connection.readTimeout = 30000
+                    connection.getInputStream().use(BitmapFactory::decodeStream)
+                        ?: error("Could not decode the adoption poster image")
+                }
+                SharePosterUtil.sharePoster(
+                    context,
+                    poster,
+                    t("adopt_share_caption")
+                        .replace("{pet}", listing.petName)
+                        .replace("{species}", listing.species)
+                        .replace("{city}", listing.city),
+                )
+                message = ""
+            } catch (error: Exception) {
+                message = t("adopt_share_failed")
+            }
+        }
+    }
+
     LaunchedEffect(Unit) {
         refreshFeed()
         loadMine()
@@ -625,19 +657,40 @@ private fun AdoptionScreen(onBack: () -> Unit) {
                                     if (expandedListing == listing.id) "" else listing.id
                             },
                             ownerActions = {
-                                TextButton(onClick = {
-                                    petName = listing.petName
-                                    species = listing.species
-                                    breed = listing.breed
-                                    age = listing.ageMonths.toString()
-                                    gender = listing.gender
-                                    health = listing.healthStatus
-                                    description = listing.description
-                                    city = listing.city
-                                    editingListing = listing
-                                }) { Text(t("adopt_edit")) }
-                                TextButton(onClick = { deletingListing = listing }) {
-                                    Text(t("adopt_delete"), color = MaterialTheme.colorScheme.error)
+                                if (listing.socialPosterImage.isNotBlank()) {
+                                    TextButton(
+                                        modifier = Modifier.weight(1f),
+                                        onClick = { shareAdoptionPoster(listing) },
+                                    ) {
+                                        Text(t("adopt_share_poster"), maxLines = 1, softWrap = false)
+                                    }
+                                }
+                                TextButton(
+                                    modifier = Modifier.weight(1f),
+                                    onClick = {
+                                        petName = listing.petName
+                                        species = listing.species
+                                        breed = listing.breed
+                                        age = listing.ageMonths.toString()
+                                        gender = listing.gender
+                                        health = listing.healthStatus
+                                        description = listing.description
+                                        city = listing.city
+                                        editingListing = listing
+                                    },
+                                ) {
+                                    Text(t("adopt_edit"), maxLines = 1, softWrap = false)
+                                }
+                                TextButton(
+                                    modifier = Modifier.weight(1f),
+                                    onClick = { deletingListing = listing },
+                                ) {
+                                    Text(
+                                        t("adopt_delete"),
+                                        color = MaterialTheme.colorScheme.error,
+                                        maxLines = 1,
+                                        softWrap = false,
+                                    )
                                 }
                             },
                         ) {
@@ -739,6 +792,8 @@ private fun AdoptionScreen(onBack: () -> Unit) {
         val descriptionFocus = remember { FocusRequester() }
         val cityFocus = remember { FocusRequester() }
         Dialog(onDismissRequest = { showCreate = false }) {
+            val dialogFocusManager = LocalFocusManager.current
+            val dialogKeyboardController = LocalSoftwareKeyboardController.current
             FendlyCard(Modifier.fillMaxWidth()) {
                 Column(
                     Modifier.fillMaxWidth().verticalScroll(fields),
@@ -851,8 +906,8 @@ private fun AdoptionScreen(onBack: () -> Unit) {
                         ),
                         keyboardActions = KeyboardActions(
                             onDone = {
-                                focusManager.clearFocus()
-                                keyboardController?.hide()
+                                dialogKeyboardController?.hide()
+                                dialogFocusManager.clearFocus(force = true)
                             },
                         ),
                         singleLine = true,
@@ -984,6 +1039,8 @@ private fun AdoptionScreen(onBack: () -> Unit) {
             onDismissRequest = { editingListing = null },
             title = { Text(t("adopt_edit_listing")) },
             text = {
+                val dialogFocusManager = LocalFocusManager.current
+                val dialogKeyboardController = LocalSoftwareKeyboardController.current
                 Column(
                     Modifier.fillMaxWidth().height(440.dp).verticalScroll(rememberScrollState()),
                     verticalArrangement = Arrangement.spacedBy(8.dp),
@@ -1013,7 +1070,22 @@ private fun AdoptionScreen(onBack: () -> Unit) {
                     }
                     FendlyTextField(health, { health = it }, t("adopt_health"))
                     FendlyTextField(description, { description = it }, t("adopt_description"))
-                    FendlyTextField(city, { city = it }, t("adopt_city"), singleLine = true)
+                    FendlyTextField(
+                        city,
+                        { city = it },
+                        t("adopt_city"),
+                        keyboardOptions = KeyboardOptions(
+                            capitalization = KeyboardCapitalization.Words,
+                            imeAction = ImeAction.Done,
+                        ),
+                        keyboardActions = KeyboardActions(
+                            onDone = {
+                                dialogKeyboardController?.hide()
+                                dialogFocusManager.clearFocus(force = true)
+                            },
+                        ),
+                        singleLine = true,
+                    )
                     if (listing.imageCount > 0) {
                         Text(t("adopt_edit_photos_note"))
                     }

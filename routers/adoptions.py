@@ -97,6 +97,7 @@ def _serialize_listing(
                 "auto_post_social": listing.auto_post_social,
                 "social_post_status": listing.social_post_status,
                 "social_post_error": listing.social_post_error,
+                "social_post_image_url": listing.social_post_image_url,
                 "facebook_post_id": listing.facebook_post_id,
                 "instagram_post_id": listing.instagram_post_id,
             }
