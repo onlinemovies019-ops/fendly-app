@@ -46,17 +46,10 @@ async def create_image_embedding(image_url: str | None) -> list[float] | None:
         image_url = await asyncio.to_thread(refresh_private_image_url, image_url)
         if not image_url:
             return None
-        from pathlib import Path
-        upload_dir = Path(os.getenv("UPLOAD_DIR", "static/uploads"))
-        filename = image_url.rstrip("/").split("/")[-1]
-        local_file = upload_dir / filename
-        if local_file.is_file():
-            data = local_file.read_bytes()
-        else:
-            async with httpx.AsyncClient(timeout=5) as client:
-                response = await client.get(image_url)
-                response.raise_for_status()
-                data = response.content
+        async with httpx.AsyncClient(timeout=5) as client:
+            response = await client.get(image_url)
+            response.raise_for_status()
+            data = response.content
         return await asyncio.to_thread(_encode_image, data)
     except Exception:
         return None

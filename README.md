@@ -37,11 +37,10 @@ Required environment variables:
 - `CORS_ORIGINS`: Comma-separated browser origins allowed to call the API.
   Defaults to the production API origin; wildcard entries are ignored in
   production and logged. Bearer-token authentication is used instead of cookies.
-- `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, and `SUPABASE_STORAGE_BUCKET`:
-	configure these to store report and profile images in a private Supabase
-	Storage bucket and clean up matching-index data when deleting reports. The
-	service-role key must remain server-side only. Apply the private-workflow
-	migration before deployment; clients receive short-lived signed image URLs.
+- `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY`: configure private image
+	uploads, signed URLs, and matching-index cleanup. The service-role key must
+	remain server-side only. The API creates and verifies the private
+	`report-images` bucket during startup.
 - `CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_API_KEY`, and `CLOUDINARY_API_SECRET`
 	enable deletion of Fendly-managed Cloudinary images during account/report
 	cleanup. Keep the API secret server-side only.
@@ -120,16 +119,12 @@ Apply `supabase/migrations/20261004090000_safetrade_imei_verification.sql`
 before deploying SafeTrade. It adds a status and keyed-IMEI-hash index for
 lost reports and the persistent public lookup rate-limit table.
 
-Apply `supabase/migrations/20261011000000_private_match_workflow.sql` before
-using the private-image migration endpoint. It denies client-role access to
-report tables and the `uploads` bucket. From the authenticated admin app,
-preview and confirm **Move old report images to private storage**; repeat
-until no supported assets or source-cleanup tasks remain. The endpoint copies
-legacy Cloudinary and local-upload images before updating database references,
-then removes the old source only after no report/profile record references it.
-Unsupported external image references and failed source removals are reported
-for manual review. Run the admin Meta cleanup action separately; it reports
-any post that Meta did not confirm deleting.
+The FastAPI startup applies
+`supabase/migrations/20261011000000_private_match_workflow.sql` to PostgreSQL
+idempotently, then verifies that the private Supabase `report-images` bucket is
+available. Production startup requires `DATABASE_URL`, `SUPABASE_URL`, and
+`SUPABASE_SERVICE_ROLE_KEY`. The migration denies client-role access to report
+tables and image buckets.
 
 ## Private reports and verified matches
 
@@ -140,19 +135,18 @@ was manually reviewed and enter verification notes before Fendly creates an
 owner-scoped in-app notification and attempts an FCM push. Contact details are
 not included in match notifications.
 
-Supabase report and profile images are stored in the private `uploads` bucket.
-The backend signs image URLs for short-lived access and stores stable object
-references. Direct `anon` and `authenticated` table/storage access is denied by
-`supabase/migrations/20261011000000_private_match_workflow.sql`. Apply that
-migration before deploying the API. The migration also cancels queued social
-publication jobs and makes the `uploads` bucket private. Static files under
-`/static/uploads` are no longer served.
+All new report and profile images are uploaded with the Supabase Python client
+to the private `report-images` bucket. The database stores a stable object
+reference; API responses contain short-lived signed URLs. The service does not
+write uploaded images to Render's local filesystem. Legacy local and
+Cloudinary image references can be reviewed and migrated using the
+admin-only private-image migration endpoint before their old sources are
+removed.
 
-An admin can remove old Facebook and Instagram posts in batches using
-`POST /api/admin/social/cleanup` after Meta's deletion credentials are
-configured. The cleanup call is explicit and never runs as part of report
-creation. It must be run after deployment; code changes alone do not remove
-already published posts.
+Fendly has no social publishing, Meta OAuth, or social account connection
+routes. An admin can still remove already-published legacy Facebook and
+Instagram posts in batches using `POST /api/admin/social/cleanup`; it is a
+delete-only cleanup operation and never runs when a report is created.
 
 ## Purge reports retained for previously deleted accounts
 

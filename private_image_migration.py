@@ -16,7 +16,13 @@ from PIL import Image, UnidentifiedImageError
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from image_storage import private_image_reference, store_image
+from image_storage import (
+    BUCKET_NAME,
+    delete_storage_image,
+    download_storage_image,
+    private_image_reference,
+    store_image,
+)
 from models import (
     FoundItem,
     LostItem,
@@ -79,30 +85,38 @@ def _local_upload_source(url: str) -> str | None:
     return filename if LOCAL_UPLOAD_NAME.fullmatch(filename) else None
 
 
-def _supabase_source(url: str) -> bool:
+def _supabase_source(url: str) -> tuple[str, str] | None:
     supabase_url = os.getenv("SUPABASE_URL", "").rstrip("/")
-    bucket = os.getenv("SUPABASE_STORAGE_BUCKET", "uploads")
+    parsed = urlsplit(url)
+    if parsed.scheme == "storage" and parsed.netloc:
+        bucket = unquote(parsed.netloc)
+        object_key = unquote(parsed.path.lstrip("/"))
+        if bucket and object_key:
+            return bucket, object_key
     if not supabase_url:
-        return False
-    parsed, base = urlsplit(url), urlsplit(supabase_url)
+        return None
+    base = urlsplit(supabase_url)
     if (parsed.scheme, parsed.netloc) != (base.scheme, base.netloc):
-        return False
+        return None
     parts = parsed.path.removeprefix("/storage/v1/object/").split("/", 2)
-    return (
-        len(parts) == 3
-        and parts[0] in {"public", "sign"}
-        and unquote(parts[1]) == bucket
-    )
+    if len(parts) != 3 or parts[0] not in {"public", "sign", "authenticated"}:
+        return None
+    bucket, object_key = unquote(parts[1]), unquote(parts[2])
+    return (bucket, object_key) if bucket and object_key else None
 
 
 def _asset_for_url(url: str) -> LegacyImage | None:
-    if not url or url.startswith("storage://"):
+    if not url:
         return None
-    if _supabase_source(url):
+    supabase = _supabase_source(url)
+    if supabase:
+        bucket, object_key = supabase
+        if bucket == BUCKET_NAME:
+            return None
         return LegacyImage(
-            key=f"supabase:{url}",
+            key=f"supabase:{bucket}:{object_key}",
             kind="supabase",
-            locator=url,
+            locator=f"{bucket}/{object_key}",
             urls={url},
         )
     cloudinary = _cloudinary_source(url)
@@ -149,10 +163,11 @@ def _collect_images(
     images: dict[str, LegacyImage] = {}
     unsupported = 0
     for _, _, url in references:
-        if url.startswith("storage://"):
-            continue
         image = _asset_for_url(url)
         if image is None:
+            source = _supabase_source(url)
+            if source and source[0] == BUCKET_NAME:
+                continue
             unsupported += 1
             continue
         existing = images.get(image.key)
@@ -173,6 +188,9 @@ async def _download_image(image: LegacyImage) -> tuple[bytes, str, str]:
         if path.parent != upload_root or not path.is_file():
             raise FileNotFoundError("Legacy upload file is unavailable on this server")
         data = await asyncio.to_thread(path.read_bytes)
+    elif image.kind == "supabase":
+        bucket, object_key = image.locator.split("/", 1)
+        data = await asyncio.to_thread(download_storage_image, bucket, object_key)
     elif image.kind == "cloudinary":
         cloud_name, public_id = image.locator.split("/", 1)
         url = next(iter(image.urls))
@@ -324,6 +342,9 @@ def _process_pending_cleanup(session: Session, limit: int) -> tuple[int, int, li
         if task.source_kind == "cloudinary":
             cloud_name, public_id = task.source_locator.split("/", 1)
             reference_key = f"cloudinary:{cloud_name}:{public_id}"
+        elif task.source_kind == "supabase":
+            bucket, object_key = task.source_locator.split("/", 1)
+            reference_key = f"supabase:{bucket}:{object_key}"
         else:
             reference_key = f"local:{task.source_locator}"
         if _image_key_is_referenced(session, reference_key):
@@ -331,6 +352,9 @@ def _process_pending_cleanup(session: Session, limit: int) -> tuple[int, int, li
         try:
             if task.source_kind == "cloudinary":
                 _delete_cloudinary_asset(task.source_locator)
+            elif task.source_kind == "supabase":
+                bucket, object_key = task.source_locator.split("/", 1)
+                delete_storage_image(bucket, object_key)
             elif task.source_kind == "local":
                 _delete_local_asset(task.source_locator)
             else:
@@ -375,20 +399,17 @@ async def migrate_private_images(
     failures: list[str] = []
     for image in ordered_images[:limit]:
         try:
-            if image.kind == "supabase":
-                new_url = private_image_reference(next(iter(image.urls)))
-            else:
-                data, content_type, extension = await _download_image(image)
-                signed_url = await store_image(
-                    data,
-                    f"{uuid4().hex}.{extension}",
-                    content_type,
-                )
-                new_url = private_image_reference(signed_url)
-                if not new_url or not new_url.startswith("storage://"):
-                    raise RuntimeError("Image copy did not produce a private storage reference")
+            data, content_type, extension = await _download_image(image)
+            signed_url = await store_image(
+                data,
+                f"{uuid4().hex}.{extension}",
+                content_type,
+            )
+            new_url = private_image_reference(signed_url)
+            if not new_url or not new_url.startswith(f"storage://{BUCKET_NAME}/"):
+                raise RuntimeError("Image copy did not produce a private storage reference")
             migrated_references += _replace_references(session, image.urls, new_url)
-            if image.kind in {"cloudinary", "local"}:
+            if image.kind in {"cloudinary", "local", "supabase"}:
                 _persist_cleanup_task(session, image.kind, image.locator)
             session.commit()
             migrated_assets += 1

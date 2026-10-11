@@ -4,7 +4,6 @@ import os
 import re
 import time
 from typing import Any
-from pathlib import Path
 from urllib.parse import quote, unquote, urlsplit
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy import delete, desc, func, or_, select, update
@@ -17,7 +16,7 @@ import httpx
 
 from auth import _firebase_app, get_current_user
 from database import get_db
-from image_storage import refresh_private_image_url
+from image_storage import delete_private_image_asset, refresh_private_image_url
 from models import (
     DeviceToken,
     AdminMatchAlert,
@@ -86,8 +85,11 @@ def _delete_profile_photo_asset(photo_url: str) -> None:
     parsed = urlsplit(photo_url)
     filename_pattern = re.compile(r"[0-9a-f]{32}\.(?:jpg|png|webp)")
 
+    if delete_private_image_asset(photo_url):
+        return
+
     supabase_url = os.getenv("SUPABASE_URL", "").rstrip("/")
-    bucket = os.getenv("SUPABASE_STORAGE_BUCKET", "uploads")
+    bucket = "report-images"
     service_role_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "")
     storage_bucket = None
     object_key = None
@@ -103,15 +105,15 @@ def _delete_profile_photo_asset(photo_url: str) -> None:
             and len(segments) == 6
             and segments[:3] == ["storage", "v1", "object"]
             and segments[3] in {"public", "sign"}
-            and segments[4] == bucket
+            and segments[4] in {bucket, "uploads"}
             and filename_pattern.fullmatch(segments[5])
         ):
             storage_bucket, object_key = segments[4], segments[5]
-    if storage_bucket == bucket and object_key and filename_pattern.fullmatch(object_key):
+    if storage_bucket in {bucket, "uploads"} and object_key and filename_pattern.fullmatch(object_key):
         if not supabase_url or not service_role_key:
             raise RuntimeError("Supabase storage credentials are required to delete the profile image")
         endpoint = (
-            f"{supabase_url}/storage/v1/object/{quote(bucket, safe='')}/"
+            f"{supabase_url}/storage/v1/object/{quote(storage_bucket, safe='')}/"
             f"{quote(object_key, safe='')}"
         )
         response = httpx.delete(
@@ -124,26 +126,6 @@ def _delete_profile_photo_asset(photo_url: str) -> None:
         )
         response.raise_for_status()
         return
-
-    public_base_url = os.getenv(
-        "PUBLIC_BASE_URL",
-        "https://fendly-api.onrender.com",
-    ).rstrip("/")
-    if public_base_url:
-        public_base = urlsplit(public_base_url)
-        segments = [unquote(part) for part in parsed.path.split("/") if part]
-        if (
-            parsed.scheme == public_base.scheme
-            and parsed.netloc == public_base.netloc
-            and len(segments) == 3
-            and segments[:2] == ["static", "uploads"]
-            and filename_pattern.fullmatch(segments[2])
-        ):
-            upload_root = Path(os.getenv("UPLOAD_DIR", "static/uploads")).resolve()
-            asset_path = (upload_root / segments[2]).resolve()
-            if asset_path.parent != upload_root:
-                raise ValueError("Profile image path is outside the upload directory")
-            asset_path.unlink(missing_ok=True)
 
     cloudinary_cloud_name = os.getenv("CLOUDINARY_CLOUD_NAME", "")
     if parsed.hostname == "res.cloudinary.com":
@@ -604,6 +586,9 @@ def update_profile(
     except HTTPException:
         session.rollback()
         raise
+    except ValueError as exc:
+        session.rollback()
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
     except Exception as exc:
         session.rollback()
         logger.error("Profile update error: %s", exc)

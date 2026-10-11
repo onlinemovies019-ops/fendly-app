@@ -5,6 +5,7 @@ import urllib.parse
 import asyncio
 import logging
 import time
+from pathlib import Path
 from contextlib import asynccontextmanager
 import logging
 from fastapi import Depends, FastAPI, HTTPException, status
@@ -14,6 +15,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.types import Scope
 from pydantic import BaseModel, EmailStr
 from sqlalchemy import delete, select, text
+from sqlalchemy.engine import Connection
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 from auth import router as auth_router, get_current_user
@@ -32,6 +34,18 @@ from schemas import ItemResponse, MatchResponse
 logger = logging.getLogger(__name__)
 
 
+def _apply_private_workflow_migration(connection: Connection) -> None:
+    migration_path = (
+        Path(__file__).resolve().parent
+        / "supabase/migrations/20261011000000_private_match_workflow.sql"
+    )
+    migration_sql = migration_path.read_text(encoding="utf-8")
+    for statement in migration_sql.split(";"):
+        statement = statement.strip()
+        if statement and statement.upper() not in {"BEGIN", "COMMIT"}:
+            connection.exec_driver_sql(statement)
+
+
 def _validate_production_config() -> None:
     if os.getenv("ENVIRONMENT", "development").lower() != "production":
         return
@@ -42,6 +56,8 @@ def _validate_production_config() -> None:
         "APP_SECRET_KEY",
         "RESEND_API_KEY",
         "OPENAI_API_KEY",
+        "SUPABASE_URL",
+        "SUPABASE_SERVICE_ROLE_KEY",
     )
     missing = [name for name in required if not os.getenv(name)]
     if missing:
@@ -55,6 +71,7 @@ async def lifespan(_: FastAPI):
     environment = os.getenv("ENVIRONMENT", "development").lower()
     if environment == "production":
         _validate_production_config()
+    verify_image_bucket = False
     if engine is not None:
         with engine.begin() as connection:
             dialect_name = connection.dialect.name
@@ -88,6 +105,10 @@ async def lifespan(_: FastAPI):
                             "FROM PUBLIC, anon, authenticated"
                         )
                     )
+                _apply_private_workflow_migration(connection)
+                verify_image_bucket = bool(
+                    os.getenv("SUPABASE_URL") and os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+                )
             now = int(time.time())
             connection.execute(
                 delete(EmailOTPChallenge).where(
@@ -206,6 +227,10 @@ async def lifespan(_: FastAPI):
                     "ON lost_items (status, imei_hash)"
                 )
             )
+    if verify_image_bucket:
+        from image_storage import verify_private_bucket
+
+        verify_private_bucket()
     cleanup_task = asyncio.create_task(_cleanup_expired_otp_challenges())
     try:
         yield

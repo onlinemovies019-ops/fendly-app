@@ -195,22 +195,8 @@ def _require_db_session(session: Session | None) -> Session:
 
 
 def _validate_report_image_urls(image_urls: list[str]) -> None:
-    public_base = os.getenv("PUBLIC_BASE_URL", "https://fendly-api.onrender.com").rstrip("/")
     supabase_base = os.getenv("SUPABASE_URL", "").rstrip("/")
-    cloudinary_name = os.getenv("CLOUDINARY_CLOUD_NAME", "")
-    cloudinary_url = os.getenv("CLOUDINARY_URL", "")
-    is_production = os.getenv("ENVIRONMENT", "development").lower() == "production"
-    if not cloudinary_name and cloudinary_url:
-        cloudinary_name = urlsplit(cloudinary_url).hostname or ""
-        cloudinary_name = cloudinary_name.removeprefix("api.")
-
-    allowed_origins = {
-        (parsed.scheme, parsed.netloc)
-        for value in (public_base, supabase_base)
-        if value
-        for parsed in [urlsplit(value)]
-    }
-    configured_bucket = os.getenv("SUPABASE_STORAGE_BUCKET", "uploads")
+    configured_bucket = "report-images"
     for image_url in image_urls:
         parsed = urlsplit(image_url)
         is_supabase_origin = bool(supabase_base) and (
@@ -225,13 +211,8 @@ def _validate_report_image_urls(image_urls: list[str]) -> None:
             and unquote(supabase_object_parts[1]) == configured_bucket
             and bool(parsed.query)
         )
-        is_local_http_upload = (
-            not is_production
-            and parsed.scheme == "http"
-            and parsed.hostname in {"localhost", "127.0.0.1", "::1"}
-        )
         if (
-            (parsed.scheme != "https" and not is_local_http_upload)
+            parsed.scheme != "https"
             or not parsed.path
             or parsed.username
             or parsed.password
@@ -240,22 +221,7 @@ def _validate_report_image_urls(image_urls: list[str]) -> None:
         ):
             raise HTTPException(status.HTTP_400_BAD_REQUEST, "Report images must use a Fendly upload URL")
 
-        is_fendly_upload = (parsed.scheme, parsed.netloc) in allowed_origins
-        is_supabase_upload = is_supabase_origin and (
-            parsed.path.startswith(
-                f"/storage/v1/object/sign/{configured_bucket}/"
-            )
-            or parsed.path.startswith(
-                f"/storage/v1/object/public/{configured_bucket}/"
-            )
-        )
-        is_cloudinary_upload = (
-            bool(cloudinary_name)
-            and parsed.scheme == "https"
-            and parsed.netloc == "res.cloudinary.com"
-            and parsed.path.startswith(f"/{cloudinary_name}/image/upload/")
-        )
-        if not (is_fendly_upload or is_supabase_upload or is_cloudinary_upload):
+        if not is_supabase_signed_upload:
             raise HTTPException(status.HTTP_400_BAD_REQUEST, "Report images must use a Fendly upload URL")
 
 

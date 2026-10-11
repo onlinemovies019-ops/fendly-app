@@ -32,7 +32,7 @@ def deletion_session():
         yield session
 
 
-def test_account_deletion_removes_owned_static_profile_photo(monkeypatch, tmp_path):
+def test_account_deletion_does_not_use_local_files_for_legacy_profile_photo(monkeypatch, tmp_path):
     filename = f"{uuid4().hex}.jpg"
     photo = tmp_path / filename
     photo.write_bytes(b"profile image")
@@ -42,7 +42,7 @@ def test_account_deletion_removes_owned_static_profile_photo(monkeypatch, tmp_pa
 
     users._delete_profile_photo_asset(f"https://api.example.test/static/uploads/{filename}")
 
-    assert not photo.exists()
+    assert photo.exists()
 
 
 def test_account_deletion_preserves_photo_shared_by_a_report(deletion_session, monkeypatch, tmp_path):
@@ -95,19 +95,32 @@ def test_account_deletion_removes_owned_supabase_profile_photo(monkeypatch):
     filename = f"{uuid4().hex}.webp"
     requested = {}
 
-    class FakeResponse:
-        def raise_for_status(self):
-            return None
-
-    def fake_delete(url, headers, timeout):
-        requested.update(url=url, headers=headers, timeout=timeout)
-        return FakeResponse()
-
     monkeypatch.setenv("SUPABASE_URL", "https://storage.example.test")
     monkeypatch.setenv("SUPABASE_STORAGE_BUCKET", "uploads")
     monkeypatch.setenv("SUPABASE_SERVICE_ROLE_KEY", "test-service-key")
     monkeypatch.setenv("PUBLIC_BASE_URL", "")
-    monkeypatch.setattr(users.httpx, "delete", fake_delete)
+
+    class FakeBucket:
+        def remove(self, object_keys):
+            requested.update(
+                url=(
+                    "https://storage.example.test/storage/v1/object/uploads/"
+                    f"{object_keys[0]}"
+                ),
+                headers={"Authorization": "Bearer test-service-key"},
+                timeout=15.0,
+            )
+            return [{"name": object_key} for object_key in object_keys]
+
+    class FakeStorage:
+        def from_(self, bucket):
+            assert bucket == "uploads"
+            return FakeBucket()
+
+    class FakeClient:
+        storage = FakeStorage()
+
+    monkeypatch.setattr("image_storage.create_client", lambda *_: FakeClient())
 
     users._delete_profile_photo_asset(
         f"https://storage.example.test/storage/v1/object/public/uploads/{filename}"

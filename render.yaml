@@ -17,8 +17,6 @@ services:
         sync: false
       - key: IMAGE_MATCHING_FUNCTION_URL
         value: https://us-central1-fendly-6d746.cloudfunctions.net/matchReportImages
-      - key: SUPABASE_STORAGE_BUCKET
-        value: uploads
       - key: CLOUDINARY_CLOUD_NAME
         sync: false
       - key: CLOUDINARY_API_KEY
@@ -67,17 +65,7 @@ services:
         sync: false
       - key: APP_SECRET_KEY
         sync: false
-      - key: META_APP_ID
-        sync: false
-      - key: META_APP_SECRET
-        sync: false
-      - key: META_LOGIN_CONFIG_ID
-        sync: false
-      - key: META_PAGE_ID
-        sync: false
       - key: META_GRAPH_API_VERSION
-        sync: false
-      - key: META_REDIRECT_URI
         sync: false
       - key: RAZORPAY_KEY_ID
         sync: false
@@ -87,8 +75,6 @@ services:
         value: omni-moderation-latest
       - key: PUBLIC_BASE_URL
         value: https://fendly-api.onrender.com
-      - key: UPLOAD_DIR
-        value: static/uploads
     buildCommand: pip install -r requirements.txt
     startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT --no-access-log
     healthCheckPath: /health

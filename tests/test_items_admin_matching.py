@@ -247,7 +247,12 @@ async def test_batch_translation_preserves_report_ids_and_passes_english_through
 
 @pytest.mark.asyncio
 async def test_report_creation_keeps_original_and_stores_english_fields(monkeypatch):
-    monkeypatch.setenv("PUBLIC_BASE_URL", "https://cdn.example")
+    monkeypatch.setenv("SUPABASE_URL", "https://project.supabase.co")
+    image_urls = [
+        "https://project.supabase.co/storage/v1/object/sign/report-images/"
+        f"{index}.jpg?token=short-lived"
+        for index in range(1, 4)
+    ]
 
     async def no_moderation(title, description, **_):
         return None
@@ -275,12 +280,8 @@ async def test_report_creation_keeps_original_and_stores_english_fields(monkeypa
     payload = ItemCreate(
         title="निळी पिशवी",
         description="स्थानकावर पिशवी हरवली",
-        image_url="https://cdn.example/one.jpg",
-        image_urls=[
-            "https://cdn.example/one.jpg",
-            "https://cdn.example/two.jpg",
-            "https://cdn.example/three.jpg",
-        ],
+        image_url=image_urls[0],
+        image_urls=image_urls,
         report_location="मध्यवर्ती स्थानक",
         category="पिशवी",
         source_language="mr",
@@ -295,11 +296,13 @@ async def test_report_creation_keeps_original_and_stores_english_fields(monkeypa
     assert record.description_en == "A bag lost at the station"
     assert record.report_location_en == "Central station"
     assert record.category_en == "Bag"
-    assert record.image_url == "https://cdn.example/one.jpg"
+    assert record.image_url == (
+        "storage://report-images/1.jpg"
+    )
     assert record.image_urls == [
-        "https://cdn.example/one.jpg",
-        "https://cdn.example/two.jpg",
-        "https://cdn.example/three.jpg",
+        "storage://report-images/1.jpg",
+        "storage://report-images/2.jpg",
+        "storage://report-images/3.jpg",
     ]
     session.add.assert_called_once_with(record)
 

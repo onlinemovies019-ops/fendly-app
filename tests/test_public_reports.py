@@ -385,22 +385,21 @@ def test_non_admin_cannot_remove_report(reports_client, monkeypatch):
         main.app.dependency_overrides.pop(admin_module.get_current_user, None)
 
 
-def test_local_report_image_urls_are_only_allowed_for_loopback_in_development(monkeypatch):
+def test_report_image_urls_must_be_private_supabase_signed_urls(monkeypatch):
     monkeypatch.setenv("ENVIRONMENT", "development")
-    monkeypatch.setenv("PUBLIC_BASE_URL", "http://127.0.0.1:8000")
-    monkeypatch.delenv("SUPABASE_URL", raising=False)
-    monkeypatch.delenv("CLOUDINARY_CLOUD_NAME", raising=False)
-    monkeypatch.delenv("CLOUDINARY_URL", raising=False)
+    monkeypatch.setenv("SUPABASE_URL", "https://project.supabase.co")
 
     items_module._validate_report_image_urls([
-        "http://127.0.0.1:8000/static/uploads/image.jpg"
+        "https://project.supabase.co/storage/v1/object/sign/report-images/"
+        "image.jpg?token=short-lived"
     ])
 
     with pytest.raises(HTTPException) as error:
-        items_module._validate_report_image_urls(["http://images.example/image.jpg"])
+        items_module._validate_report_image_urls([
+            "https://project.supabase.co/storage/v1/object/public/report-images/image.jpg"
+        ])
     assert error.value.status_code == 400
 
-    monkeypatch.setenv("ENVIRONMENT", "production")
     with pytest.raises(HTTPException) as error:
         items_module._validate_report_image_urls([
             "http://127.0.0.1:8000/static/uploads/image.jpg"

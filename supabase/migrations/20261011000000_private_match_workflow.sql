@@ -105,12 +105,39 @@ UPDATE storage.buckets
 SET public = false
 WHERE id = 'uploads' OR name = 'uploads';
 
+INSERT INTO storage.buckets (
+    id,
+    name,
+    public,
+    file_size_limit,
+    allowed_mime_types
+)
+VALUES (
+    'report-images',
+    'report-images',
+    false,
+    10485760,
+    ARRAY['image/jpeg', 'image/png', 'image/webp']::text[]
+)
+ON CONFLICT (id) DO UPDATE
+SET name = EXCLUDED.name,
+    public = false,
+    file_size_limit = EXCLUDED.file_size_limit,
+    allowed_mime_types = EXCLUDED.allowed_mime_types;
+
 DROP POLICY IF EXISTS fendly_private_uploads_deny_clients ON storage.objects;
 CREATE POLICY fendly_private_uploads_deny_clients ON storage.objects
     AS RESTRICTIVE
     FOR ALL TO anon, authenticated
     USING (bucket_id <> 'uploads')
     WITH CHECK (bucket_id <> 'uploads');
+
+DROP POLICY IF EXISTS fendly_private_report_images_deny_clients ON storage.objects;
+CREATE POLICY fendly_private_report_images_deny_clients ON storage.objects
+    AS RESTRICTIVE
+    FOR ALL TO anon, authenticated
+    USING (bucket_id <> 'report-images')
+    WITH CHECK (bucket_id <> 'report-images');
 
 UPDATE public.social_publications
 SET status = 'cancelled',
