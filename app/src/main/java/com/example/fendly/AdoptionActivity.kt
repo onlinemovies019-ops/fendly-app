@@ -52,6 +52,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.Color
@@ -65,6 +66,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -219,11 +221,12 @@ private fun adoptionRequest(
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalComposeUiApi::class)
 @Composable
 private fun AdoptionScreen(onBack: () -> Unit) {
     val context = LocalContext.current
     val focusManager = LocalFocusManager.current
+    val keyboardController = LocalSoftwareKeyboardController.current
     fun t(key: String): String = LanguageManager.adoptionText(context, key)
     val scope = rememberCoroutineScope()
     val feed = remember { mutableStateListOf<AdoptionListing>() }
@@ -576,7 +579,10 @@ private fun AdoptionScreen(onBack: () -> Unit) {
                                 imeAction = ImeAction.Done,
                             ),
                             keyboardActions = KeyboardActions(
-                                onDone = { focusManager.clearFocus() },
+                                onDone = {
+                                    focusManager.clearFocus()
+                                    keyboardController?.hide()
+                                },
                             ),
                             singleLine = true,
                         )
@@ -844,7 +850,10 @@ private fun AdoptionScreen(onBack: () -> Unit) {
                             imeAction = ImeAction.Done,
                         ),
                         keyboardActions = KeyboardActions(
-                            onDone = { focusManager.clearFocus() },
+                            onDone = {
+                                focusManager.clearFocus()
+                                keyboardController?.hide()
+                            },
                         ),
                         singleLine = true,
                     )
@@ -1092,7 +1101,10 @@ private fun AdoptionScreen(onBack: () -> Unit) {
                             imeAction = ImeAction.Done,
                         ),
                         keyboardActions = KeyboardActions(
-                            onDone = { focusManager.clearFocus() },
+                            onDone = {
+                                focusManager.clearFocus()
+                                keyboardController?.hide()
+                            },
                         ),
                         singleLine = true,
                     )
