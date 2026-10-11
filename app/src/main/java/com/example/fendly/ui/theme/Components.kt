@@ -6,10 +6,11 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -38,7 +39,7 @@ fun FendlyPrimaryButton(
 ) {
     Button(
         onClick = onClick,
-        modifier = modifier.fillMaxWidth().height(52.dp),
+        modifier = modifier.fillMaxWidth().heightIn(min = 52.dp),
         enabled = enabled,
         shape = RoundedCornerShape(26.dp),
         colors = ButtonDefaults.buttonColors(
@@ -50,8 +51,10 @@ fun FendlyPrimaryButton(
         Text(
             text = text,
             style = MaterialTheme.typography.labelLarge.copy(
-                platformStyle = PlatformTextStyle(includeFontPadding = false),
+                platformStyle = PlatformTextStyle(includeFontPadding = true),
             ),
+            textAlign = TextAlign.Center,
+            softWrap = true,
         )
     }
 }
@@ -65,7 +68,7 @@ fun FendlySecondaryButton(
 ) {
     OutlinedButton(
         onClick = onClick,
-        modifier = modifier.fillMaxWidth().height(52.dp),
+        modifier = modifier.fillMaxWidth().heightIn(min = 52.dp),
         shape = RoundedCornerShape(26.dp),
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
         colors = ButtonDefaults.outlinedButtonColors(
@@ -78,6 +81,7 @@ fun FendlySecondaryButton(
                 platformStyle = PlatformTextStyle(includeFontPadding = true),
             ),
             textAlign = TextAlign.Center,
+            softWrap = true,
         )
     }
 }
@@ -90,6 +94,7 @@ fun FendlyTextField(
     label: String,
     modifier: Modifier = Modifier,
     trailingIcon: (@Composable (() -> Unit))? = null,
+    keyboardActions: KeyboardActions = KeyboardActions.Default,
     keyboardOptions: KeyboardOptions = KeyboardOptions.Default.copy(
         autoCorrect = false,
         keyboardType = KeyboardType.Text,
@@ -110,6 +115,7 @@ fun FendlyTextField(
         },
         trailingIcon = trailingIcon,
         keyboardOptions = keyboardOptions,
+        keyboardActions = keyboardActions,
         singleLine = singleLine,
         // CORE FIX: Removed forced English locale so text style respects active app language localization
         textStyle = MaterialTheme.typography.bodyLarge.copy(

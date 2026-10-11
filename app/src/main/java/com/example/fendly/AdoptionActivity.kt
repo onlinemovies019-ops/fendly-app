@@ -235,6 +235,8 @@ private fun AdoptionScreen(onBack: () -> Unit) {
     val mine = remember { mutableStateListOf<AdoptionListing>() }
     val myApplications = remember { mutableStateListOf<MyAdoptionApplication>() }
     val reviewApplications = remember { mutableStateListOf<AdoptionApplicationView>() }
+    var mineLoaded by remember { mutableStateOf(false) }
+    var mineLoading by remember { mutableStateOf(false) }
     var reviewListing by remember { mutableStateOf("") }
     var reviewLoadingListing by remember { mutableStateOf("") }
     var expandedListing by remember { mutableStateOf("") }
@@ -311,7 +313,11 @@ private fun AdoptionScreen(onBack: () -> Unit) {
     }
 
     fun loadMine() {
-        withToken { token ->
+        mineLoaded = false
+        mineLoading = true
+        withToken(
+            onFailure = { mineLoading = false },
+        ) { token ->
             scope.launch {
                 try {
                     val result = withContext(Dispatchers.IO) {
@@ -320,9 +326,12 @@ private fun AdoptionScreen(onBack: () -> Unit) {
                     mine.clear()
                     for (index in 0 until result.length()) mine.add(adoptionListing(result.getJSONObject(index)))
                     feed.removeAll { listing -> mine.any { it.id == listing.id } }
+                    mineLoaded = true
                     message = ""
                 } catch (error: Exception) {
                     message = t("adopt_load_listings_failed")
+                } finally {
+                    mineLoading = false
                 }
             }
         }
@@ -619,21 +628,42 @@ private fun AdoptionScreen(onBack: () -> Unit) {
                             singleLine = true,
                         )
                     }
-                    TextButton(onClick = ::refreshFeed) { Text(t("adopt_refresh")) }
-                    LazyColumn(
-                        modifier = Modifier.weight(1f),
-                        verticalArrangement = Arrangement.spacedBy(10.dp),
-                    ) {
-                        items(feed.filterNot { listing -> mine.any { it.id == listing.id } }, key = AdoptionListing::id) { listing ->
-                            ListingCard(
-                                listing = listing,
-                                t = ::t,
-                                actionLabel = t("adopt_request"),
-                            ) {
-                                if (listing.status !in setOf("available", "pending")) {
-                                    message = t("adopt_not_accepting")
-                                } else {
-                                    applyingTo = listing
+                    TextButton(onClick = {
+                        loadMine()
+                        refreshFeed()
+                    }) { Text(t("adopt_refresh")) }
+                    if (!mineLoaded) {
+                        Column(
+                            modifier = Modifier.weight(1f).fillMaxWidth(),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.Center,
+                        ) {
+                            if (mineLoading) {
+                                CircularProgressIndicator(Modifier.size(28.dp))
+                            } else {
+                                Text(t("adopt_load_listings_failed"))
+                                TextButton(onClick = {
+                                    loadMine()
+                                    refreshFeed()
+                                }) { Text(t("adopt_refresh")) }
+                            }
+                        }
+                    } else {
+                        LazyColumn(
+                            modifier = Modifier.weight(1f),
+                            verticalArrangement = Arrangement.spacedBy(10.dp),
+                        ) {
+                            items(feed.filterNot { listing -> mine.any { it.id == listing.id } }, key = AdoptionListing::id) { listing ->
+                                ListingCard(
+                                    listing = listing,
+                                    t = ::t,
+                                    actionLabel = t("adopt_request"),
+                                ) {
+                                    if (listing.status !in setOf("available", "pending")) {
+                                        message = t("adopt_not_accepting")
+                                    } else {
+                                        applyingTo = listing
+                                    }
                                 }
                             }
                         }

@@ -42,10 +42,7 @@ import android.util.TypedValue;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.animation.Animation;
-import android.view.animation.AlphaAnimation;
-import android.view.animation.AnimationSet;
 import android.view.animation.ScaleAnimation;
-import android.view.animation.TranslateAnimation;
 import androidx.compose.ui.platform.ComposeView;
 import android.content.res.Configuration;
 import android.view.ViewParent;
@@ -83,6 +80,7 @@ import android.text.Editable;
 import android.text.InputType;
 import android.text.method.DigitsKeyListener;
 import android.text.SpannableString;
+import android.text.SpannableStringBuilder;
 import android.text.Spanned;
 import android.text.TextWatcher;
 import android.text.style.ForegroundColorSpan;
@@ -122,6 +120,7 @@ import java.util.Collections;
 import android.graphics.drawable.GradientDrawable;
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
+import androidx.core.view.WindowCompat;
 import androidx.core.content.FileProvider;
 import androidx.core.content.res.ResourcesCompat;
 import androidx.exifinterface.media.ExifInterface;
@@ -1195,7 +1194,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         actions.addView(cancel, new LinearLayout.LayoutParams(0, dp(44), 1f));
 
         TextView delete = filledButton(
-                LanguageManager.profileText(this, "delete_report"),
+                LanguageManager.adoptionText(this, "adopt_delete"),
                 Color.rgb(180, 45, 45),
                 Color.WHITE
         );
@@ -1433,6 +1432,8 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
         root.setGravity(Gravity.CENTER_HORIZONTAL);
+        root.setClipChildren(false);
+        root.setClipToPadding(false);
         root.setPadding(responsiveHorizontalPadding(), dp(16), responsiveHorizontalPadding(), dp(30));
         root.setBackgroundColor(backgroundColor());
         if (Build.VERSION.SDK_INT >= 29) root.setForceDarkAllowed(false);
@@ -1443,10 +1444,17 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         LinearLayout centerArea = new LinearLayout(this);
         centerArea.setOrientation(LinearLayout.VERTICAL);
         centerArea.setGravity(Gravity.CENTER_VERTICAL | Gravity.CENTER_HORIZONTAL);
+        centerArea.setClipChildren(false);
+        centerArea.setClipToPadding(false);
         if (Build.VERSION.SDK_INT >= 29) centerArea.setForceDarkAllowed(false);
         LinearLayout.LayoutParams centerParams = new LinearLayout.LayoutParams(-1, 0, 1f);
+        int authCardElevation = dp(16);
+        int authShadowClearance = Math.round(authCardElevation * 1.5f);
         ScrollView authScroll = new ScrollView(this);
         authScroll.setFillViewport(true);
+        authScroll.setClipChildren(false);
+        authScroll.setClipToPadding(false);
+        authScroll.setPadding(0, authShadowClearance, 0, authShadowClearance);
         authScroll.addView(centerArea, new ScrollView.LayoutParams(-1, -2));
         authScroll.addOnLayoutChangeListener((view, left, top, right, bottom,
                                                oldLeft, oldTop, oldRight, oldBottom) -> {
@@ -1469,7 +1477,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         authCard.setOrientation(LinearLayout.VERTICAL);
         authCard.setPadding(dp(18), dp(16), dp(18), dp(18));
         authCard.setBackground(roundWithStroke(surfaceColor(), 30, borderColor()));
-        authCard.setElevation(dp(16));
+        authCard.setElevation(authCardElevation);
         authCard.setClipToOutline(true);
         if (Build.VERSION.SDK_INT >= 29) authCard.setForceDarkAllowed(false);
 
@@ -2175,11 +2183,19 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
 
         LinearLayout nameRow = new LinearLayout(this);
         nameRow.setOrientation(LinearLayout.HORIZONTAL);
-        nameRow.addView(labeledField(getString(R.string.profile_first_name), firstName), new LinearLayout.LayoutParams(0, dp(76), 1f));
-        LinearLayout.LayoutParams surnameParams = new LinearLayout.LayoutParams(0, dp(76), 1f);
+        nameRow.setBaselineAligned(false);
+        nameRow.addView(
+                labeledField(getString(R.string.profile_first_name), firstName),
+                new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+        );
+        LinearLayout.LayoutParams surnameParams = new LinearLayout.LayoutParams(
+                0,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                1f
+        );
         surnameParams.setMargins(dp(8), 0, 0, 0);
         nameRow.addView(labeledField(getString(R.string.profile_surname), surname), surnameParams);
-        root.addView(nameRow, contentParams(-1, dp(76), dp(4)));
+        root.addView(nameRow, contentParams(-1, ViewGroup.LayoutParams.WRAP_CONTENT, dp(8)));
 
         TextView emailVerify = filledButton(getString(R.string.profile_verify_otp), GOLD, GOLD_ON);
         emailVerify.setPadding(dp(12), 0, dp(12), 0);
@@ -3933,6 +3949,8 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
 
         LinearLayout choices = new LinearLayout(this);
         choices.setOrientation(LinearLayout.HORIZONTAL);
+        choices.setBaselineAligned(false);
+        choices.setTag("wrapField");
         TextView lost = actionButton(LanguageManager.profileText(this, "lost_theft_button"), true);
         lost.setBackground(round(Color.rgb(11, 93, 69), 18));
         lost.setTextColor(Color.WHITE);
@@ -3940,7 +3958,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             clearReportDraftState();
             showReport("LOST");
         });
-        LinearLayout.LayoutParams choiceParams = new LinearLayout.LayoutParams(0, 72, 1);
+        LinearLayout.LayoutParams choiceParams = new LinearLayout.LayoutParams(0, -2, 1);
         choiceParams.setMargins(0, 0, dp(4), 0);
         choices.addView(lost, choiceParams);
         TextView found = actionButton("FOUND", false);
@@ -3950,16 +3968,24 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             clearReportDraftState();
             showReport("FOUND");
         });
-        LinearLayout.LayoutParams foundParams = new LinearLayout.LayoutParams(0, 72, 1);
+        LinearLayout.LayoutParams foundParams = new LinearLayout.LayoutParams(0, -2, 1);
         foundParams.setMargins(dp(4), 0, dp(4), 0);
         choices.addView(found, foundParams);
-        TextView adopt = actionButton(LanguageManager.profileText(this, "adopt_button"), false);
+        TextView adopt = actionButton(
+                LanguageManager.profileText(this, "adopt_button").toUpperCase(Locale.getDefault()),
+                false
+        );
         adopt.setTextColor(Color.WHITE);
         adopt.setBackground(round(Color.rgb(70, 101, 157), 18));
         adopt.setOnClickListener(view ->
                 startActivity(new Intent(this, AdoptionActivity.class))
         );
-        LinearLayout.LayoutParams adoptParams = new LinearLayout.LayoutParams(0, 72, 1);
+        for (TextView choice : new TextView[]{lost, found, adopt}) {
+            choice.setSingleLine(false);
+            choice.setMinHeight(dp(64));
+            choice.setPadding(dp(8), dp(8), dp(8), dp(8));
+        }
+        LinearLayout.LayoutParams adoptParams = new LinearLayout.LayoutParams(0, -2, 1);
         adoptParams.setMargins(dp(4), 0, 0, 0);
         choices.addView(adopt, adoptParams);
         addField(root, choices);
@@ -4104,13 +4130,6 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         currentReportType = type;
         restoreReportLocationState(type);
         LinearLayout root = screenBase("");
-        AnimationSet transition = new AnimationSet(true);
-        AlphaAnimation fade = new AlphaAnimation(0f, 1f);
-        TranslateAnimation slide = new TranslateAnimation(0f, 0f, dp(10), 0f);
-        transition.addAnimation(fade);
-        transition.addAnimation(slide);
-        transition.setDuration(180);
-        root.startAnimation(transition);
         addHeading(
                 localizeReportWizardText("Report wizard"),
                 localizeReportWizardText("Step " + reportWizardStep + " of 4")
@@ -4150,6 +4169,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         String[] labels = {"Category", "Location", "Details", "Review"};
         LinearLayout progress = new LinearLayout(this);
         progress.setOrientation(LinearLayout.HORIZONTAL);
+        progress.setBaselineAligned(false);
         for (int index = 0; index < labels.length; index++) {
             boolean current = reportWizardStep == index + 1;
             TextView step = text(
@@ -4159,16 +4179,29 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                     current ? Typeface.BOLD : Typeface.NORMAL
             );
             step.setGravity(Gravity.CENTER);
-            step.setPadding(dp(4), dp(8), dp(4), dp(8));
+            step.setPadding(dp(4), dp(6), dp(4), dp(6));
+            step.setSingleLine(false);
+            step.setMaxLines(2);
+            step.setIncludeFontPadding(true);
+            step.setMinHeight(dp(48));
             step.setBackground(round(
                     current ? LOST_GREEN : surfaceColor(),
                     12
             ));
-            LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(0, dp(38), 1);
+            LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
+                    0,
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                    1
+            );
             params.setMargins(dp(2), 0, dp(2), 0);
             progress.addView(step, params);
         }
-        addField(root, progress);
+        LinearLayout.LayoutParams progressParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+        );
+        progressParams.bottomMargin = dp(14);
+        root.addView(progress, progressParams);
     }
 
     private void bindReportDraftField(EditText field, String value, java.util.function.Consumer<String> update) {
@@ -6522,24 +6555,29 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
     private void addLabeledDateField(LinearLayout parent, String label, EditText date) {
         LinearLayout group = new LinearLayout(this);
         group.setOrientation(LinearLayout.VERTICAL);
-        group.addView(fieldLabel(label), new LinearLayout.LayoutParams(-1, dp(20)));
+        group.addView(fieldLabel(label, true), new LinearLayout.LayoutParams(-1, dp(36)));
 
         FrameLayout dateFrame = new FrameLayout(this);
         dateFrame.setBackground(roundWithStroke(surfaceColor(), 10, fieldBorderColor()));
         date.setBackgroundColor(Color.TRANSPARENT);
         date.setPadding(dp(16), dp(8), dp(48), dp(8));
-        dateFrame.addView(date, new FrameLayout.LayoutParams(-1, dp(46)));
+        dateFrame.addView(date, new FrameLayout.LayoutParams(-1, dp(52)));
         ImageView calendar = new ImageView(this);
         calendar.setImageResource(R.drawable.ic_field_calendar);
         calendar.setColorFilter(accentColor());
         calendar.setPadding(dp(11), dp(11), dp(11), dp(11));
         calendar.setContentDescription("Choose date");
         calendar.setOnClickListener(view -> pickDate(date));
-        FrameLayout.LayoutParams iconParams = new FrameLayout.LayoutParams(dp(46), dp(46), Gravity.END | Gravity.CENTER_VERTICAL);
+        FrameLayout.LayoutParams iconParams = new FrameLayout.LayoutParams(dp(52), dp(52), Gravity.END | Gravity.CENTER_VERTICAL);
         dateFrame.addView(calendar, iconParams);
         dateFrame.setOnClickListener(view -> pickDate(date));
-        group.addView(dateFrame, new LinearLayout.LayoutParams(-1, dp(46)));
-        parent.addView(group, contentParams(-1, dp(76), dp(4)));
+        LinearLayout.LayoutParams dateFrameParams = new LinearLayout.LayoutParams(-1, dp(52));
+        dateFrameParams.topMargin = dp(4);
+        group.addView(dateFrame, dateFrameParams);
+        parent.addView(
+                group,
+                contentParams(-1, ViewGroup.LayoutParams.WRAP_CONTENT, dp(4))
+        );
     }
 
     private TextWatcher draftWatcher(Consumer<String> update) {
@@ -8868,11 +8906,19 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
 
         LinearLayout nameRow = new LinearLayout(this);
         nameRow.setOrientation(LinearLayout.HORIZONTAL);
-        nameRow.addView(labeledField(getString(R.string.profile_first_name), firstName), new LinearLayout.LayoutParams(0, dp(76), 1f));
-        LinearLayout.LayoutParams surnameParams = new LinearLayout.LayoutParams(0, dp(76), 1f);
+        nameRow.setBaselineAligned(false);
+        nameRow.addView(
+                labeledField(getString(R.string.profile_first_name), firstName),
+                new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+        );
+        LinearLayout.LayoutParams surnameParams = new LinearLayout.LayoutParams(
+                0,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                1f
+        );
         surnameParams.setMargins(dp(8), 0, 0, 0);
         nameRow.addView(labeledField(getString(R.string.profile_surname), surname), surnameParams);
-        root.addView(nameRow, contentParams(-1, dp(76), dp(4)));
+        root.addView(nameRow, contentParams(-1, ViewGroup.LayoutParams.WRAP_CONTENT, dp(8)));
 
         EditText email = field(getString(R.string.profile_email_address));
         visibleEmail = email;
@@ -9593,9 +9639,12 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
     }
 
     private void addField(LinearLayout parent, View child) {
-        int height = "reportRow".equals(child.getTag()) ? dp(82) : dp(48);
+        boolean wrapsContent = "wrapField".equals(child.getTag());
+        int height = "reportRow".equals(child.getTag())
+                ? dp(82)
+                : wrapsContent ? ViewGroup.LayoutParams.WRAP_CONTENT : dp(48);
         LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(-1, height);
-        params.setMargins(0, 0, 0, dp(14));
+        params.setMargins(0, wrapsContent ? dp(12) : 0, 0, dp(14));
         parent.addView(child, params);
     }
 
@@ -9615,19 +9664,27 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         }
         LinearLayout group = new LinearLayout(this);
         group.setOrientation(LinearLayout.VERTICAL);
-        group.addView(fieldLabel(label), new LinearLayout.LayoutParams(-1, dp(20)));
-        LinearLayout.LayoutParams inputParams = new LinearLayout.LayoutParams(-1, dp(46));
+        group.addView(
+                fieldLabel(label, true),
+                new LinearLayout.LayoutParams(-1, dp(36))
+        );
+        LinearLayout.LayoutParams inputParams = new LinearLayout.LayoutParams(-1, dp(52));
         inputParams.topMargin = dp(4);
         if (input != null) {
             if (input.getParent() instanceof ViewGroup) {
                 ((ViewGroup) input.getParent()).removeView(input);
             }
+            input.setIncludeFontPadding(true);
             group.addView(input, inputParams);
         }
         return group;
     }
 
     private LinearLayout fieldLabel(String label) {
+        return fieldLabel(label, false);
+    }
+
+    private LinearLayout fieldLabel(String label, boolean allowWrapping) {
         LinearLayout row = new LinearLayout(this);
         row.setOrientation(LinearLayout.HORIZONTAL);
         row.setGravity(Gravity.CENTER_VERTICAL);
@@ -9636,15 +9693,21 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         icon.setImageResource(getIconForLabel(label));
         icon.setColorFilter(accentColor());
         icon.setContentDescription(label + " icon");
-        row.addView(icon, new LinearLayout.LayoutParams(dp(24), dp(20)));
+        row.addView(icon, new LinearLayout.LayoutParams(dp(24), dp(allowWrapping ? 28 : 20)));
 
         String displayLabel = localizedFieldLabel(label);
         if (displayLabel == null) displayLabel = label;
         TextView labelView = text(displayLabel, 10, secondaryTextColor(), Typeface.NORMAL);
         labelView.setLetterSpacing(.04f);
         labelView.setGravity(Gravity.CENTER_VERTICAL);
-        labelView.setIncludeFontPadding(false);
-        LinearLayout.LayoutParams labelParams = new LinearLayout.LayoutParams(-1, dp(20));
+        labelView.setSingleLine(!allowWrapping);
+        labelView.setMaxLines(allowWrapping ? 2 : 1);
+        labelView.setIncludeFontPadding(allowWrapping);
+        LinearLayout.LayoutParams labelParams = new LinearLayout.LayoutParams(
+                allowWrapping ? 0 : -1,
+                allowWrapping ? ViewGroup.LayoutParams.WRAP_CONTENT : dp(20),
+                allowWrapping ? 1f : 0f
+        );
         labelParams.setMargins(dp(8), 0, 0, 0);
         row.addView(labelView, labelParams);
         return row;
@@ -9666,7 +9729,10 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         if (input != null && input.getParent() instanceof ViewGroup) {
             ((ViewGroup) input.getParent()).removeView(input);
         }
-        parent.addView(labeledField(label, input), contentParams(-1, dp(76), dp(4)));
+        parent.addView(
+                labeledField(label, input),
+                contentParams(-1, ViewGroup.LayoutParams.WRAP_CONTENT, dp(4))
+        );
     }
 
     private boolean containsMobileKeyword(String value) {
@@ -9992,7 +10058,8 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         button.setMinHeight(dp(34));
         button.setMinWidth(dp(92));
         button.setPadding(dp(12), dp(6), dp(12), dp(6));
-        button.setIncludeFontPadding(false);
+        button.setSingleLine(false);
+        button.setIncludeFontPadding(true);
         return button;
     }
 
@@ -10000,6 +10067,9 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         TextView button = text(label, 12, primaryTextColor(), Typeface.NORMAL);
         button.setTextSize(responsiveTextSize(12));
         button.setGravity(Gravity.CENTER);
+        button.setMinHeight(dp(44));
+        button.setPadding(dp(12), dp(8), dp(12), dp(8));
+        button.setSingleLine(false);
         button.setBackground(roundWithStroke(surfaceColor(), 24, borderColor()));
         return button;
     }
@@ -10821,17 +10891,45 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             Toast.makeText(this, "This adoption listing cannot be deleted.", Toast.LENGTH_LONG).show();
             return;
         }
-        new AlertDialog.Builder(this)
-                .setTitle("Delete adoption listing?")
-                .setMessage(
-                        "Fendly will remove its recorded Facebook and Instagram posts first. "
-                                + "If Meta refuses either removal, the listing stays in Fendly "
-                                + "so an administrator can resolve the issue and retry."
-                )
-                .setNegativeButton("Cancel", null)
-                .setPositiveButton("Delete", (dialog, which) ->
-                        deleteAdminAdoption(listingId, listings, loaded))
-                .show();
+        Dialog confirmDialog = new Dialog(this);
+        confirmDialog.requestWindowFeature(Window.FEATURE_NO_TITLE);
+        LinearLayout content = themedDialogContent(
+                R.drawable.ic_field_lock,
+                "Delete adoption listing?",
+                "Fendly will remove its recorded Facebook and Instagram posts first. "
+                        + "If Meta refuses either removal, the listing stays in Fendly "
+                        + "so an administrator can resolve the issue and retry."
+        );
+        LinearLayout actions = new LinearLayout(this);
+        actions.setOrientation(LinearLayout.HORIZONTAL);
+        actions.setGravity(Gravity.CENTER);
+
+        TextView cancel = filledButton(
+                LanguageManager.profileText(this, "cancel"),
+                LOST_GREEN,
+                LOST_GREEN_ON
+        );
+        cancel.setOnClickListener(view -> confirmDialog.dismiss());
+        actions.addView(cancel, new LinearLayout.LayoutParams(0, dp(44), 1f));
+
+        TextView delete = filledButton(
+                LanguageManager.profileText(this, "delete_report"),
+                Color.rgb(180, 45, 45),
+                Color.WHITE
+        );
+        LinearLayout.LayoutParams deleteParams = new LinearLayout.LayoutParams(0, dp(44), 1f);
+        deleteParams.setMargins(dp(12), 0, 0, 0);
+        actions.addView(delete, deleteParams);
+        delete.setOnClickListener(view -> {
+            confirmDialog.dismiss();
+            deleteAdminAdoption(listingId, listings, loaded);
+        });
+
+        content.addView(actions, new LinearLayout.LayoutParams(-1, dp(44)));
+        confirmDialog.setContentView(content);
+        confirmDialog.setCanceledOnTouchOutside(false);
+        confirmDialog.show();
+        sizeThemedDialog(confirmDialog);
     }
 
     private void deleteAdminAdoption(
@@ -12978,7 +13076,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             langParams.setMargins(dp(6), 0, 0, 0);
             expandedIconsContainer.addView(languageIconView, langParams);
 
-            TextView fontSizeIcon = text("A", 17, secondaryTextColor(), Typeface.NORMAL);
+            TextView fontSizeIcon = text("A", 17, accentColor(), Typeface.NORMAL);
             fontSizeIcon.setGravity(Gravity.CENTER);
             fontSizeIcon.setTextAlignment(View.TEXT_ALIGNMENT_CENTER);
             fontSizeIcon.setIncludeFontPadding(false);
@@ -13736,14 +13834,17 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
     private void showFendlyHelpAssistant() {
         LinearLayout content = new LinearLayout(this);
         content.setOrientation(LinearLayout.VERTICAL);
+        content.setLayoutParams(new ViewGroup.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT
+        ));
         content.setPadding(dp(18), dp(16), dp(18), dp(12));
         content.setBackground(roundWithStroke(surfaceColor(), 20, borderColor()));
-        int popupHeight = Math.min(dp(720), getResources().getDisplayMetrics().heightPixels - dp(48));
-        content.setMinimumHeight(Math.min(dp(560), popupHeight));
+        int popupWidth = Math.min(dp(420), getResources().getDisplayMetrics().widthPixels - dp(32));
 
         LinearLayout header = new LinearLayout(this);
         header.setGravity(Gravity.CENTER_VERTICAL);
-        TextView title = text(assistantUiText("title"), 20, primaryTextColor(), Typeface.BOLD);
+        TextView title = text(assistantUiText("title"), 20, Color.rgb(201, 162, 76), Typeface.BOLD);
         title.setIncludeFontPadding(false);
         header.addView(title, new LinearLayout.LayoutParams(0, -2, 1f));
         TextView closeButton = text("×", 28, secondaryTextColor(), Typeface.NORMAL);
@@ -13796,7 +13897,9 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         composer.addView(askButton, askParams);
         content.addView(composer, new LinearLayout.LayoutParams(-1, -2));
 
-        AlertDialog dialog = new AlertDialog.Builder(this).setView(content).create();
+        Dialog dialog = new Dialog(this);
+        dialog.requestWindowFeature(Window.FEATURE_NO_TITLE);
+        dialog.setContentView(content);
         closeButton.setOnClickListener(view -> dialog.dismiss());
         askButton.setOnClickListener(view -> {
             String question = questionInput.getText().toString().trim();
@@ -13815,51 +13918,45 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                     askButton
             );
         });
-        View activityDecor = getWindow().getDecorView();
-        Runnable centerDialog = () -> {
-            if (dialog.getWindow() == null) return;
-            View dialogDecor = dialog.getWindow().getDecorView();
-            if (activityDecor.getHeight() == 0 || dialogDecor.getHeight() == 0) return;
-            int[] activityLocation = new int[2];
-            int[] dialogLocation = new int[2];
-            activityDecor.getLocationOnScreen(activityLocation);
-            dialogDecor.getLocationOnScreen(dialogLocation);
-            WindowManager.LayoutParams params = dialog.getWindow().getAttributes();
-            params.gravity = Gravity.CENTER;
-            params.y = activityLocation[1] + activityDecor.getHeight() / 2
-                    - dialogLocation[1] - dialogDecor.getHeight() / 2;
-            dialog.getWindow().setAttributes(params);
-        };
-        View.OnLayoutChangeListener recenterOnLayout = (view, left, top, right, bottom,
-                                                         oldLeft, oldTop, oldRight, oldBottom) ->
-                view.post(centerDialog);
-        activityDecor.addOnLayoutChangeListener(recenterOnLayout);
-        dialog.setOnDismissListener(ignored -> activityDecor.removeOnLayoutChangeListener(recenterOnLayout));
         dialog.setOnShowListener(ignored -> {
             if (dialog.getWindow() != null) {
-                dialog.getWindow().setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
-                dialog.getWindow().setGravity(Gravity.CENTER);
-                dialog.getWindow().setLayout(
-                        Math.min(dp(420), getResources().getDisplayMetrics().widthPixels - dp(32)),
-                        popupHeight
+                WindowCompat.setDecorFitsSystemWindows(dialog.getWindow(), true);
+                dialog.getWindow().setSoftInputMode(
+                        WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE
+                                | WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_HIDDEN
                 );
-                dialog.getWindow().getDecorView().post(centerDialog);
+                dialog.getWindow().setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
+                dialog.getWindow().setGravity(Gravity.TOP | Gravity.CENTER_HORIZONTAL);
+                dialog.getWindow().setLayout(
+                        popupWidth,
+                        WindowManager.LayoutParams.MATCH_PARENT
+                );
+                WindowManager.LayoutParams params = dialog.getWindow().getAttributes();
+                params.y = dp(12);
+                dialog.getWindow().setAttributes(params);
             }
         });
         dialog.show();
         if (dialog.getWindow() != null) {
-            dialog.getWindow().setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
-            dialog.getWindow().setGravity(Gravity.CENTER);
-            dialog.getWindow().setLayout(
-                    Math.min(dp(420), getResources().getDisplayMetrics().widthPixels - dp(32)),
-                    popupHeight
+            WindowCompat.setDecorFitsSystemWindows(dialog.getWindow(), true);
+            dialog.getWindow().setSoftInputMode(
+                    WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE
+                            | WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_HIDDEN
             );
-            dialog.getWindow().getDecorView().post(centerDialog);
+            dialog.getWindow().setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
+            dialog.getWindow().setGravity(Gravity.TOP | Gravity.CENTER_HORIZONTAL);
+            dialog.getWindow().setLayout(popupWidth, WindowManager.LayoutParams.MATCH_PARENT);
+            WindowManager.LayoutParams params = dialog.getWindow().getAttributes();
+            params.y = dp(12);
+            dialog.getWindow().setAttributes(params);
         }
     }
 
     private void appendFendlyHelpMessage(LinearLayout conversation, String message, boolean fromUser) {
         TextView bubble = text(message, 14, primaryTextColor(), Typeface.NORMAL);
+        if (!fromUser) {
+            bubble.setText(formatFendlyAssistantMarkdown(message));
+        }
         bubble.setPadding(dp(12), dp(9), dp(12), dp(9));
         bubble.setBackground(roundWithStroke(
                 fromUser ? Color.argb(darkMode ? 42 : 24, 232, 178, 74) : surfaceColor(),
@@ -13875,8 +13972,82 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         conversation.addView(bubble, params);
     }
 
+    private CharSequence formatFendlyAssistantMarkdown(String message) {
+        SpannableStringBuilder formatted = new SpannableStringBuilder();
+        int lineStart = 0;
+        while (lineStart <= message.length()) {
+            int lineEnd = message.indexOf('\n', lineStart);
+            if (lineEnd < 0) lineEnd = message.length();
+
+            int contentStart = lineStart;
+            while (contentStart < lineEnd && Character.isWhitespace(message.charAt(contentStart))) {
+                contentStart++;
+            }
+            formatted.append(message, lineStart, contentStart);
+
+            int bulletLength = 0;
+            if (contentStart + 1 < lineEnd
+                    && (message.charAt(contentStart) == '*' || message.charAt(contentStart) == '-')
+                    && message.charAt(contentStart + 1) == ' ') {
+                bulletLength = 2;
+            } else if (contentStart + 1 < lineEnd
+                    && message.charAt(contentStart) == '\u2022'
+                    && message.charAt(contentStart + 1) == ' ') {
+                bulletLength = 2;
+            }
+            if (bulletLength > 0) {
+                int bulletStart = formatted.length();
+                formatted.append("\u2022 ");
+                formatted.setSpan(
+                        new ForegroundColorSpan(Color.rgb(201, 162, 76)),
+                        bulletStart,
+                        bulletStart + 1,
+                        Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+                );
+                contentStart += bulletLength;
+            }
+
+            int cursor = contentStart;
+            while (cursor < lineEnd) {
+                int boldStart = message.indexOf("**", cursor);
+                if (boldStart < 0 || boldStart >= lineEnd) {
+                    formatted.append(message, cursor, lineEnd);
+                    break;
+                }
+                int boldEnd = message.indexOf("**", boldStart + 2);
+                if (boldEnd < 0 || boldEnd >= lineEnd) {
+                    formatted.append(message, cursor, lineEnd);
+                    break;
+                }
+                formatted.append(message, cursor, boldStart);
+                int spanStart = formatted.length();
+                formatted.append(message, boldStart + 2, boldEnd);
+                if (formatted.length() > spanStart) {
+                    formatted.setSpan(
+                            new StyleSpan(Typeface.BOLD),
+                            spanStart,
+                            formatted.length(),
+                            Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+                    );
+                    formatted.setSpan(
+                            new ForegroundColorSpan(Color.rgb(201, 162, 76)),
+                            spanStart,
+                            formatted.length(),
+                            Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+                    );
+                }
+                cursor = boldEnd + 2;
+            }
+
+            if (lineEnd == message.length()) break;
+            formatted.append('\n');
+            lineStart = lineEnd + 1;
+        }
+        return formatted;
+    }
+
     private void sendFendlyAssistantQuestion(
-            AlertDialog dialog,
+            Dialog dialog,
             String question,
             ArrayList<JSONObject> history,
             LinearLayout conversation,
@@ -13985,7 +14156,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
 
     private String assistantUiText(String key) {
         String[][] labels = {
-                {"Fendly - AI assistant", "Ask Fendly anything about using the app.", "Hi! What would you like to know about Fendly?", "Ask anything about Fendly", "Ask", "Please enter a question.", "Thinking…", "I couldn’t get an answer right now. Please try again.", "Please sign in to use Fendly AI Help."},
+                {"Fendly - AI assistant", "Ask Fendly anything about using the app.", "Hi! What would you like to know about Fendly?", "Ask about Fendly", "Ask", "Please enter a question.", "Thinking…", "I couldn’t get an answer right now. Please try again.", "Please sign in to use Fendly AI Help."},
                 {"Fendly AI सहायता", "Fendly ऐप के उपयोग के बारे में कुछ भी पूछें।", "नमस्ते! Fendly के बारे में क्या जानना चाहते हैं?", "Fendly के बारे में पूछें", "पूछें", "कृपया प्रश्न लिखें।", "सोच रहा है…", "अभी उत्तर नहीं मिल सका। फिर कोशिश करें।", "Fendly AI सहायता के लिए साइन इन करें।"},
                 {"Fendly AI मदत", "Fendly अॅप वापरण्याबद्दल काहीही विचारा.", "नमस्कार! Fendly बद्दल काय जाणून घ्यायचे आहे?", "Fendly बद्दल विचारा", "विचारा", "कृपया प्रश्न लिहा.", "विचार करत आहे…", "आत्ता उत्तर मिळू शकले नाही. पुन्हा प्रयत्न करा.", "Fendly AI मदतीसाठी साइन इन करा."},
                 {"Fendly AI સહાય", "Fendly ઍપનો ઉપયોગ કરવા વિશે કંઈપણ પૂછો.", "નમસ્તે! Fendly વિશે શું જાણવા માંગો છો?", "Fendly વિશે પૂછો", "પૂછો", "કૃપા કરીને પ્રશ્ન લખો.", "વિચારી રહ્યું છે…", "હમણાં જવાબ મળી શક્યો નથી. ફરી પ્રયાસ કરો.", "Fendly AI સહાય માટે સાઇન ઇન કરો."},
@@ -14229,7 +14400,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         String[] english = {
                 "Complete your profile", "A little about you", "This helps neighbours know who they are helping.", "Save and continue",
                 "Login with PIN", "Welcome back.", "Use the username and PIN from your Fendly profile.", "Log in",
-                "Home", "Find what matters.", "Lost or Found? Will ConNect the Dots..", "LOST", "FOUND", "My reports", "My profile",
+                "Home", "Find what matters.", "Lost or Found? Will Connect the Dots..", "LOST", "FOUND", "My reports", "My profile",
                 "Post found item", "Report lost item", "Help it get home.", "Let's find it.", "Add clear details so the right person can recognise it.",
                 "Item name", "Description and identifying details", "Location or landmark", "Date and time", "Upload item image", "Image selected",
                 "Take photo with camera", "Use current location", "Publish found item", "Publish lost item", "Fendly Plus",
