@@ -13738,10 +13738,21 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         content.setOrientation(LinearLayout.VERTICAL);
         content.setPadding(dp(18), dp(16), dp(18), dp(12));
         content.setBackground(roundWithStroke(surfaceColor(), 20, borderColor()));
+        int popupHeight = Math.min(dp(720), getResources().getDisplayMetrics().heightPixels - dp(48));
+        content.setMinimumHeight(Math.min(dp(560), popupHeight));
 
+        LinearLayout header = new LinearLayout(this);
+        header.setGravity(Gravity.CENTER_VERTICAL);
         TextView title = text(assistantUiText("title"), 20, primaryTextColor(), Typeface.BOLD);
         title.setIncludeFontPadding(false);
-        content.addView(title, new LinearLayout.LayoutParams(-1, -2));
+        header.addView(title, new LinearLayout.LayoutParams(0, -2, 1f));
+        TextView closeButton = text("×", 28, secondaryTextColor(), Typeface.NORMAL);
+        closeButton.setGravity(Gravity.CENTER);
+        closeButton.setIncludeFontPadding(false);
+        closeButton.setContentDescription(translate("Close"));
+        closeButton.setBackground(roundWithStroke(surfaceColor(), 12, borderColor()));
+        header.addView(closeButton, new LinearLayout.LayoutParams(dp(40), dp(40)));
+        content.addView(header, new LinearLayout.LayoutParams(-1, -2));
 
         TextView intro = text(assistantUiText("intro"), 13, secondaryTextColor(), Typeface.NORMAL);
         intro.setPadding(0, dp(6), 0, dp(10));
@@ -13765,11 +13776,14 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         EditText questionInput = new EditText(this);
         questionInput.setSingleLine(false);
         questionInput.setMaxLines(3);
+        questionInput.setMinHeight(dp(48));
+        questionInput.setMaxHeight(dp(88));
+        questionInput.setGravity(Gravity.CENTER_VERTICAL | Gravity.START);
         questionInput.setTextSize(14);
         questionInput.setHint(assistantUiText("hint"));
         questionInput.setPadding(dp(12), dp(8), dp(12), dp(8));
         questionInput.setBackground(roundWithStroke(surfaceColor(), 12, borderColor()));
-        LinearLayout.LayoutParams inputParams = new LinearLayout.LayoutParams(0, dp(48), 1f);
+        LinearLayout.LayoutParams inputParams = new LinearLayout.LayoutParams(0, -2, 1f);
         composer.addView(questionInput, inputParams);
 
         TextView askButton = text(assistantUiText("ask"), 14, Color.WHITE, Typeface.BOLD);
@@ -13783,6 +13797,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         content.addView(composer, new LinearLayout.LayoutParams(-1, -2));
 
         AlertDialog dialog = new AlertDialog.Builder(this).setView(content).create();
+        closeButton.setOnClickListener(view -> dialog.dismiss());
         askButton.setOnClickListener(view -> {
             String question = questionInput.getText().toString().trim();
             if (question.isEmpty()) {
@@ -13800,22 +13815,46 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                     askButton
             );
         });
+        View activityDecor = getWindow().getDecorView();
+        Runnable centerDialog = () -> {
+            if (dialog.getWindow() == null) return;
+            View dialogDecor = dialog.getWindow().getDecorView();
+            if (activityDecor.getHeight() == 0 || dialogDecor.getHeight() == 0) return;
+            int[] activityLocation = new int[2];
+            int[] dialogLocation = new int[2];
+            activityDecor.getLocationOnScreen(activityLocation);
+            dialogDecor.getLocationOnScreen(dialogLocation);
+            WindowManager.LayoutParams params = dialog.getWindow().getAttributes();
+            params.gravity = Gravity.CENTER;
+            params.y = activityLocation[1] + activityDecor.getHeight() / 2
+                    - dialogLocation[1] - dialogDecor.getHeight() / 2;
+            dialog.getWindow().setAttributes(params);
+        };
+        View.OnLayoutChangeListener recenterOnLayout = (view, left, top, right, bottom,
+                                                         oldLeft, oldTop, oldRight, oldBottom) ->
+                view.post(centerDialog);
+        activityDecor.addOnLayoutChangeListener(recenterOnLayout);
+        dialog.setOnDismissListener(ignored -> activityDecor.removeOnLayoutChangeListener(recenterOnLayout));
         dialog.setOnShowListener(ignored -> {
             if (dialog.getWindow() != null) {
                 dialog.getWindow().setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
+                dialog.getWindow().setGravity(Gravity.CENTER);
                 dialog.getWindow().setLayout(
                         Math.min(dp(420), getResources().getDisplayMetrics().widthPixels - dp(32)),
-                        Math.min(dp(620), getResources().getDisplayMetrics().heightPixels - dp(80))
+                        popupHeight
                 );
+                dialog.getWindow().getDecorView().post(centerDialog);
             }
         });
         dialog.show();
         if (dialog.getWindow() != null) {
             dialog.getWindow().setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
+            dialog.getWindow().setGravity(Gravity.CENTER);
             dialog.getWindow().setLayout(
                     Math.min(dp(420), getResources().getDisplayMetrics().widthPixels - dp(32)),
-                    Math.min(dp(620), getResources().getDisplayMetrics().heightPixels - dp(80))
+                    popupHeight
             );
+            dialog.getWindow().getDecorView().post(centerDialog);
         }
     }
 
@@ -13945,15 +13984,15 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
 
     private String assistantUiText(String key) {
         String[][] labels = {
-                {"Fendly AI Help · Gemini", "Ask Fendly questions and get answers from Gemini.", "Hi! What would you like to know about Fendly?", "Ask anything about Fendly", "Ask", "Please enter a question.", "Thinking…", "I couldn’t get an answer right now. Please try again.", "Please sign in to use Fendly AI Help."},
-                {"Fendly AI सहायता · Gemini", "Fendly के बारे में पूछें और Gemini से उत्तर पाएँ।", "नमस्ते! Fendly के बारे में क्या जानना चाहते हैं?", "Fendly के बारे में पूछें", "पूछें", "कृपया प्रश्न लिखें।", "सोच रहा है…", "अभी उत्तर नहीं मिल सका। फिर कोशिश करें।", "Fendly AI सहायता के लिए साइन इन करें।"},
-                {"Fendly AI मदत · Gemini", "Fendly बद्दल विचारा आणि Gemini कडून उत्तरे मिळवा.", "नमस्कार! Fendly बद्दल काय जाणून घ्यायचे आहे?", "Fendly बद्दल विचारा", "विचारा", "कृपया प्रश्न लिहा.", "विचार करत आहे…", "आत्ता उत्तर मिळू शकले नाही. पुन्हा प्रयत्न करा.", "Fendly AI मदतीसाठी साइन इन करा."},
-                {"Fendly AI સહાય · Gemini", "Fendly વિશે પૂછો અને Gemini પાસેથી જવાબ મેળવો.", "નમસ્તે! Fendly વિશે શું જાણવા માંગો છો?", "Fendly વિશે પૂછો", "પૂછો", "કૃપા કરીને પ્રશ્ન લખો.", "વિચારી રહ્યું છે…", "હમણાં જવાબ મળી શક્યો નથી. ફરી પ્રયાસ કરો.", "Fendly AI સહાય માટે સાઇન ઇન કરો."},
-                {"Fendly AI সহায়তা · Gemini", "Fendly সম্পর্কে জিজ্ঞাসা করুন; Gemini উত্তর দেবে.", "হ্যালো! Fendly সম্পর্কে কী জানতে চান?", "Fendly সম্পর্কে জিজ্ঞাসা করুন", "জিজ্ঞাসা", "অনুগ্রহ করে প্রশ্ন লিখুন।", "ভাবছে…", "এখন উত্তর পাওয়া যায়নি। আবার চেষ্টা করুন।", "Fendly AI সহায়তা ব্যবহার করতে সাইন ইন করুন।"},
-                {"Fendly AI உதவி · Gemini", "Fendly பற்றி கேளுங்கள்; Gemini பதிலளிக்கும்.", "வணக்கம்! Fendly பற்றி என்ன தெரிந்துகொள்ள விரும்புகிறீர்கள்?", "Fendly பற்றி கேளுங்கள்", "கேளுங்கள்", "கேள்வியை உள்ளிடவும்.", "சிந்திக்கிறது…", "இப்போது பதில் கிடைக்கவில்லை. மீண்டும் முயற்சிக்கவும்.", "Fendly AI உதவிக்கு உள்நுழையவும்."},
-                {"Fendly AI సహాయం · Gemini", "Fendly గురించి అడగండి; Gemini సమాధానం ఇస్తుంది.", "హాయ్! Fendly గురించి ఏమి తెలుసుకోవాలి?", "Fendly గురించి అడగండి", "అడగండి", "దయచేసి ప్రశ్న నమోదు చేయండి.", "ఆలోచిస్తోంది…", "ఇప్పుడు సమాధానం రాలేదు. మళ్లీ ప్రయత్నించండి.", "Fendly AI సహాయం కోసం సైన్ ఇన్ చేయండి."},
-                {"Fendly AI ಸಹಾಯ · Gemini", "Fendly ಬಗ್ಗೆ ಕೇಳಿ; Gemini ಉತ್ತರಿಸುತ್ತದೆ.", "ನಮಸ್ಕಾರ! Fendly ಬಗ್ಗೆ ಏನು ತಿಳಿಯಲು ಬಯಸುತ್ತೀರಿ?", "Fendly ಬಗ್ಗೆ ಕೇಳಿ", "ಕೇಳಿ", "ದಯವಿಟ್ಟು ಪ್ರಶ್ನೆಯನ್ನು ನಮೂದಿಸಿ.", "ಯೋಚಿಸುತ್ತಿದೆ…", "ಈಗ ಉತ್ತರ ಸಿಗಲಿಲ್ಲ. ಮತ್ತೆ ಪ್ರಯತ್ನಿಸಿ.", "Fendly AI ಸಹಾಯಕ್ಕೆ ಸೈನ್ ಇನ್ ಮಾಡಿ."},
-                {"Fendly AI സഹായം · Gemini", "Fendlyയെക്കുറിച്ച് ചോദിക്കൂ; Gemini മറുപടി നൽകും.", "ഹായ്! Fendlyയെക്കുറിച്ച് എന്താണ് അറിയേണ്ടത്?", "Fendlyയെക്കുറിച്ച് ചോദിക്കൂ", "ചോദിക്കൂ", "ദയവായി ഒരു ചോദ്യം നൽകുക.", "ചിന്തിക്കുന്നു…", "ഇപ്പോൾ മറുപടി ലഭിച്ചില്ല. വീണ്ടും ശ്രമിക്കുക.", "Fendly AI സഹായം ഉപയോഗിക്കാൻ സൈൻ ഇൻ ചെയ്യുക."}
+                {"Fendly - AI assistant", "Ask Fendly anything about using the app.", "Hi! What would you like to know about Fendly?", "Ask anything about Fendly", "Ask", "Please enter a question.", "Thinking…", "I couldn’t get an answer right now. Please try again.", "Please sign in to use Fendly AI Help."},
+                {"Fendly AI सहायता", "Fendly ऐप के उपयोग के बारे में कुछ भी पूछें।", "नमस्ते! Fendly के बारे में क्या जानना चाहते हैं?", "Fendly के बारे में पूछें", "पूछें", "कृपया प्रश्न लिखें।", "सोच रहा है…", "अभी उत्तर नहीं मिल सका। फिर कोशिश करें।", "Fendly AI सहायता के लिए साइन इन करें।"},
+                {"Fendly AI मदत", "Fendly अॅप वापरण्याबद्दल काहीही विचारा.", "नमस्कार! Fendly बद्दल काय जाणून घ्यायचे आहे?", "Fendly बद्दल विचारा", "विचारा", "कृपया प्रश्न लिहा.", "विचार करत आहे…", "आत्ता उत्तर मिळू शकले नाही. पुन्हा प्रयत्न करा.", "Fendly AI मदतीसाठी साइन इन करा."},
+                {"Fendly AI સહાય", "Fendly ઍપનો ઉપયોગ કરવા વિશે કંઈપણ પૂછો.", "નમસ્તે! Fendly વિશે શું જાણવા માંગો છો?", "Fendly વિશે પૂછો", "પૂછો", "કૃપા કરીને પ્રશ્ન લખો.", "વિચારી રહ્યું છે…", "હમણાં જવાબ મળી શક્યો નથી. ફરી પ્રયાસ કરો.", "Fendly AI સહાય માટે સાઇન ઇન કરો."},
+                {"Fendly AI সহায়তা", "Fendly অ্যাপ ব্যবহার সম্পর্কে যেকোনো কিছু জিজ্ঞাসা করুন।", "হ্যালো! Fendly সম্পর্কে কী জানতে চান?", "Fendly সম্পর্কে জিজ্ঞাসা করুন", "জিজ্ঞাসা", "অনুগ্রহ করে প্রশ্ন লিখুন।", "ভাবছে…", "এখন উত্তর পাওয়া যায়নি। আবার চেষ্টা করুন।", "Fendly AI সহায়তা ব্যবহার করতে সাইন ইন করুন।"},
+                {"Fendly AI உதவி", "Fendly செயலியைப் பயன்படுத்துவது பற்றி எதையும் கேளுங்கள்.", "வணக்கம்! Fendly பற்றி என்ன தெரிந்துகொள்ள விரும்புகிறீர்கள்?", "Fendly பற்றி கேளுங்கள்", "கேளுங்கள்", "கேள்வியை உள்ளிடவும்.", "சிந்திக்கிறது…", "இப்போது பதில் கிடைக்கவில்லை. மீண்டும் முயற்சிக்கவும்.", "Fendly AI உதவிக்கு உள்நுழையவும்."},
+                {"Fendly AI సహాయం", "Fendly యాప్‌ను ఉపయోగించడం గురించి ఏదైనా అడగండి.", "హాయ్! Fendly గురించి ఏమి తెలుసుకోవాలి?", "Fendly గురించి అడగండి", "అడగండి", "దయచేసి ప్రశ్న నమోదు చేయండి.", "ఆలోచిస్తోంది…", "ఇప్పుడు సమాధానం రాలేదు. మళ్లీ ప్రయత్నించండి.", "Fendly AI సహాయం కోసం సైన్ ఇన్ చేయండి."},
+                {"Fendly AI ಸಹಾಯ", "Fendly ಆ್ಯಪ್ ಬಳಸುವ ಬಗ್ಗೆ ಏನನ್ನಾದರೂ ಕೇಳಿ.", "ನಮಸ್ಕಾರ! Fendly ಬಗ್ಗೆ ಏನು ತಿಳಿಯಲು ಬಯಸುತ್ತೀರಿ?", "Fendly ಬಗ್ಗೆ ಕೇಳಿ", "ಕೇಳಿ", "ದಯವಿಟ್ಟು ಪ್ರಶ್ನೆಯನ್ನು ನಮೂದಿಸಿ.", "ಯೋಚಿಸುತ್ತಿದೆ…", "ಈಗ ಉತ್ತರ ಸಿಗಲಿಲ್ಲ. ಮತ್ತೆ ಪ್ರಯತ್ನಿಸಿ.", "Fendly AI ಸಹಾಯಕ್ಕೆ ಸೈನ್ ಇನ್ ಮಾಡಿ."},
+                {"Fendly AI സഹായം", "Fendly ആപ്പ് ഉപയോഗിക്കുന്നതിനെക്കുറിച്ച് എന്തും ചോദിക്കൂ.", "ഹായ്! Fendlyയെക്കുറിച്ച് എന്താണ് അറിയേണ്ടത്?", "Fendlyയെക്കുറിച്ച് ചോദിക്കൂ", "ചോദിക്കൂ", "ദയവായി ഒരു ചോദ്യം നൽകുക.", "ചിന്തിക്കുന്നു…", "ഇപ്പോൾ മറുപടി ലഭിച്ചില്ല. വീണ്ടും ശ്രമിക്കുക.", "Fendly AI സഹായം ഉപയോഗിക്കാൻ സൈൻ ഇൻ ചെയ്യുക."}
         };
         int language = Math.max(0, Math.min(selectedLanguage, labels.length - 1));
         int labelIndex;
