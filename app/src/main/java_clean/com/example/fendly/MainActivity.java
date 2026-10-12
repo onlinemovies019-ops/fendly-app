@@ -1541,12 +1541,12 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         authTaglineBottom.setTextAlignment(View.TEXT_ALIGNMENT_CENTER);
         authTaglineBottom.setIncludeFontPadding(false);
         authTaglineBottom.setMaxLines(2);
-        authTaglineBottom.setTextSize(responsiveTextSize(16));
+        authTaglineBottom.setTextSize(responsiveTextSize(17));
         if (taglineTypeface != null) {
             authTaglineBottom.setSingleLine(true);
-            authTaglineBottom.setTextSize(responsiveTextSize(12));
+            authTaglineBottom.setTextSize(responsiveTextSize(13));
             TextViewCompat.setAutoSizeTextTypeUniformWithConfiguration(
-                    authTaglineBottom, 8, Math.round(responsiveTextSize(12)), 1,
+                    authTaglineBottom, 8, Math.round(responsiveTextSize(13)), 1,
                     TypedValue.COMPLEX_UNIT_SP);
         }
         emblemContent.addView(authTaglineBottom, new LinearLayout.LayoutParams(-1, dp(48)));
@@ -6435,17 +6435,31 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                 }
                 image.setOnClickListener(view -> showFullImagePreview(imageSlot));
             } else {
-                image.setScaleType(ImageView.ScaleType.FIT_CENTER);
-                int pad = dp(22);
-                image.setPadding(pad, pad, pad, pad);
-                image.setImageResource(R.drawable.add_image);
-                image.setColorFilter(accentColor());
-                image.setScaleX(1f);
-                image.setScaleY(1f);
-                image.setOnClickListener(view -> showImageOptions(imageSlot));
+                LinearLayout addPhotoContent = new LinearLayout(this);
+                addPhotoContent.setOrientation(LinearLayout.VERTICAL);
+                addPhotoContent.setGravity(Gravity.CENTER);
+                addPhotoContent.setClickable(true);
+                addPhotoContent.setFocusable(true);
+                addPhotoContent.setOnClickListener(view -> showImageOptions(imageSlot));
+
+                TextView addIcon = text("+", 26, accentColor(), Typeface.NORMAL);
+                addIcon.setGravity(Gravity.CENTER);
+                addPhotoContent.addView(addIcon, new LinearLayout.LayoutParams(-1, dp(32)));
+
+                TextView addLabel = text(
+                        LanguageManager.adoptionText(this, "adopt_add_photo"),
+                        11,
+                        secondaryTextColor(),
+                        Typeface.NORMAL
+                );
+                addLabel.setGravity(Gravity.CENTER);
+                addPhotoContent.addView(addLabel, new LinearLayout.LayoutParams(-1, dp(20)));
+                slotView.addView(addPhotoContent, new FrameLayout.LayoutParams(-1, -1));
             }
 
-            slotView.addView(image, new FrameLayout.LayoutParams(-1, -1));
+            if (hasImage) {
+                slotView.addView(image, new FrameLayout.LayoutParams(-1, -1));
+            }
 
             if (hasImage) {
                 ImageView remove = new ImageView(this);
@@ -6505,9 +6519,46 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
 
     private void openGalleryForSlot(int slot) {
         pendingImageSlot = slot;
-        Intent intent = new Intent(Intent.ACTION_GET_CONTENT);
-        intent.setType("image/*");
-        startActivityForResult(intent, 710 + slot);
+        int availableSlots = 0;
+        for (int index = 0; index < reportImages.length; index++) {
+            if (reportImages[index] == null && reportCameraImages[index] == null
+                    && (editingReportImageUrls[index] == null || editingReportImageUrls[index].trim().isEmpty())) {
+                availableSlots++;
+            }
+        }
+        if (availableSlots == 0) {
+            Toast.makeText(this, "All three image slots are already filled", Toast.LENGTH_SHORT).show();
+            return;
+        }
+
+        Intent intent;
+        if (availableSlots > 1 && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            intent = new Intent(MediaStore.ACTION_PICK_IMAGES);
+            intent.setType("image/*");
+            intent.putExtra(MediaStore.EXTRA_PICK_IMAGES_MAX, availableSlots);
+        } else {
+            intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+            intent.setType("image/*");
+            intent.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true);
+            intent.addCategory(Intent.CATEGORY_OPENABLE);
+        }
+        try {
+            startActivityForResult(intent, 710 + slot);
+        } catch (ActivityNotFoundException error) {
+            if (intent.getAction().equals(MediaStore.ACTION_PICK_IMAGES)) {
+                Intent fallback = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+                fallback.setType("image/*");
+                fallback.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true);
+                fallback.addCategory(Intent.CATEGORY_OPENABLE);
+                try {
+                    startActivityForResult(fallback, 710 + slot);
+                } catch (ActivityNotFoundException fallbackError) {
+                    Toast.makeText(this, "No image picker is available", Toast.LENGTH_SHORT).show();
+                }
+            } else {
+                Toast.makeText(this, "No image picker is available", Toast.LENGTH_SHORT).show();
+            }
+        }
     }
 
     private void openCameraForSlot(int slot) {
@@ -10440,10 +10491,32 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             selectedImage = null;
             if (currentReportType != null) showReport(currentReportType);
         }
-        if (requestCode >= 710 && requestCode <= 712 && resultCode == RESULT_OK && data != null && data.getData() != null) {
-            int slot = requestCode - 710;
-            reportImages[slot] = data.getData();
-            reportCameraImages[slot] = null;
+        if (requestCode >= 710 && requestCode <= 712 && resultCode == RESULT_OK && data != null) {
+            LinkedHashSet<Uri> selectedUris = new LinkedHashSet<>();
+            if (data.getClipData() != null) {
+                for (int index = 0; index < data.getClipData().getItemCount(); index++) {
+                    Uri imageUri = data.getClipData().getItemAt(index).getUri();
+                    if (imageUri != null) selectedUris.add(imageUri);
+                }
+            }
+            if (data.getData() != null) selectedUris.add(data.getData());
+
+            int nextSlot = 0;
+            for (Uri imageUri : selectedUris) {
+                int searchedSlots = 0;
+                while (searchedSlots < reportImages.length
+                        && (reportImages[nextSlot] != null || reportCameraImages[nextSlot] != null
+                        || (editingReportImageUrls[nextSlot] != null
+                        && !editingReportImageUrls[nextSlot].trim().isEmpty()))) {
+                    nextSlot = (nextSlot + 1) % reportImages.length;
+                    searchedSlots++;
+                }
+                if (searchedSlots == reportImages.length) break;
+                reportImages[nextSlot] = imageUri;
+                reportCameraImages[nextSlot] = null;
+                editingReportImageUrls[nextSlot] = null;
+                nextSlot = (nextSlot + 1) % reportImages.length;
+            }
             selectedImage = reportImages[0];
             if (currentReportType != null) showReport(currentReportType);
         }
@@ -14393,6 +14466,10 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
     }
 
     private String translate(String value) {
+        if ("Lost or Found? Will Connect the Dots..".equals(value)
+                || "Lost | FouNd | AdopT. Will Connect the Dots..".equals(value)) {
+            return LanguageManager.profileText(this, "home_tagline");
+        }
         String targetedTranslation = translateUi(value);
         if (targetedTranslation != null) return localizeDigits(targetedTranslation);
         String extraTranslation = translateExtra(value);
@@ -14400,7 +14477,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         String[] english = {
                 "Complete your profile", "A little about you", "This helps neighbours know who they are helping.", "Save and continue",
                 "Login with PIN", "Welcome back.", "Use the username and PIN from your Fendly profile.", "Log in",
-                "Home", "Find what matters.", "Lost or Found? Will Connect the Dots..", "LOST", "FOUND", "My reports", "My profile",
+                "Home", "Find what matters.", "Lost | FouNd | AdopT. Will Connect the Dots..", "LOST", "FOUND", "My reports", "My profile",
                 "Post found item", "Report lost item", "Help it get home.", "Let's find it.", "Add clear details so the right person can recognise it.",
                 "Item name", "Description and identifying details", "Location or landmark", "Date and time", "Upload item image", "Image selected",
                 "Take photo with camera", "Use current location", "Publish found item", "Publish lost item", "Fendly Plus",

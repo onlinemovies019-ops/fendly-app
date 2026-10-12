@@ -29,9 +29,10 @@ Required environment variables:
 - `PUBLIC_BASE_URL`: Public API URL used for Fendly link generation.
 - `OPENAI_API_KEY`: Required in production for fail-closed moderation of report
   text and report images before storage. Moderation uses
-  `OPENAI_MODERATION_MODEL` (default `omni-moderation-latest`) and
-  `OPENAI_MODERATION_URL` (default OpenAI's moderation endpoint). If the key is
-  missing or the provider is unavailable, submissions are rejected with a
+  `OPENAI_MODERATION_MODEL` (default `omni-moderation-latest`) for text; image
+  moderation always uses the multimodal `omni-moderation-latest` model.
+  `OPENAI_MODERATION_URL` defaults to OpenAI's moderation endpoint. If the key
+  is missing or the provider is unavailable, submissions are rejected with a
   temporary-service error; there is no keyword-only fallback.
 - `CORS_ORIGINS`: Comma-separated browser origins allowed to call the API.
   Defaults to the production API origin; wildcard entries are ignored in

@@ -122,6 +122,23 @@ def download_storage_image(bucket: str, object_key: str) -> bytes:
     return _storage_client().storage.from_(bucket).download(object_key)
 
 
+def get_private_image_for_moderation(image_url: str) -> tuple[bytes, str] | None:
+    storage_object = _storage_object(image_url)
+    if storage_object is None:
+        return None
+    bucket, object_key = storage_object
+    extension = object_key.rsplit(".", 1)[-1].lower() if "." in object_key else ""
+    content_type = {
+        "jpg": "image/jpeg",
+        "jpeg": "image/jpeg",
+        "png": "image/png",
+        "webp": "image/webp",
+    }.get(extension)
+    if content_type is None:
+        raise ValueError("Private image has an unsupported file extension")
+    return download_storage_image(bucket, object_key), content_type
+
+
 def delete_storage_image(bucket: str, object_key: str) -> None:
     if bucket not in {BUCKET_NAME, *LEGACY_BUCKET_NAMES} or not object_key:
         raise ValueError("Image object is not in a supported private storage bucket")

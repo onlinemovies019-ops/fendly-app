@@ -9,6 +9,7 @@ import android.util.LruCache
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
+import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -488,10 +489,36 @@ private fun AdoptionScreen(onBack: () -> Unit) {
         refreshFeed()
         loadMine()
     }
-    val photoPicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
-        if (uri != null && selectedPhotoSlot in selectedPhotos.indices) {
-            selectedPhotos[selectedPhotoSlot] = AdoptionPhoto(uri = uri)
+    fun addSelectedPhotos(uris: List<Uri>) {
+        val emptySlots = selectedPhotos.indices.filter { selectedPhotos[it] == null }
+        val targetSlots = if (selectedPhotoSlot in selectedPhotos.indices
+            && selectedPhotos[selectedPhotoSlot] != null
+        ) {
+            listOf(selectedPhotoSlot) + emptySlots.filter { it != selectedPhotoSlot }
+        } else {
+            emptySlots
         }
+        uris.distinct().take(targetSlots.size).forEachIndexed { index, uri ->
+            selectedPhotos[targetSlots[index]] = AdoptionPhoto(uri = uri)
+        }
+    }
+    val availablePhotoSlots = (
+        selectedPhotos.count { it == null } +
+            if (selectedPhotoSlot in selectedPhotos.indices
+                && selectedPhotos[selectedPhotoSlot] != null
+            ) 1 else 0
+        ).coerceIn(1, selectedPhotos.size)
+    val singlePhotoPicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.PickVisualMedia(),
+    ) { uri ->
+        if (uri != null) addSelectedPhotos(listOf(uri))
+    }
+    val multiplePhotoPicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.PickMultipleVisualMedia(
+            maxItems = availablePhotoSlots.coerceAtLeast(2),
+        ),
+    ) { uris ->
+        addSelectedPhotos(uris)
     }
     val cameraLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.TakePicturePreview(),
@@ -1034,7 +1061,14 @@ private fun AdoptionScreen(onBack: () -> Unit) {
                             TextButton(
                                 onClick = {
                                     showPhotoSource = false
-                                    photoPicker.launch("image/*")
+                                    val request = PickVisualMediaRequest(
+                                        ActivityResultContracts.PickVisualMedia.ImageOnly,
+                                    )
+                                    if (availablePhotoSlots == 1) {
+                                        singlePhotoPicker.launch(request)
+                                    } else {
+                                        multiplePhotoPicker.launch(request)
+                                    }
                                 },
                             ) { Text(t("adopt_choose_gallery")) }
                         },
