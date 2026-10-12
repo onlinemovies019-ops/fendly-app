@@ -50,6 +50,13 @@ def _connection_credentials(
     provider: str,
     account: SocialAccount | None,
 ) -> tuple[str, str] | None:
+    if account is not None and account.account_id and account.access_token_encrypted:
+        if not GRAPH_ID_PATTERN.fullmatch(account.account_id):
+            raise RuntimeError(
+                f"The saved {provider.title()} account ID is invalid; reconnect Meta"
+            )
+        return account.account_id, _decrypt_connected_token(account.access_token_encrypted)
+
     id_environment_name = (
         "META_FACEBOOK_PAGE_ID" if provider == "facebook" else "META_INSTAGRAM_ACCOUNT_ID"
     )
@@ -90,12 +97,6 @@ def _connection_credentials(
                 f"{id_environment_name} or a saved Meta account is required with "
                 "META_PAGE_ACCESS_TOKEN"
             )
-    if account is not None and account.account_id and account.access_token_encrypted:
-        if not GRAPH_ID_PATTERN.fullmatch(account.account_id):
-            raise RuntimeError(
-                f"The saved {provider.title()} account ID is invalid; reconnect Meta"
-            )
-        return account.account_id, _decrypt_connected_token(account.access_token_encrypted)
     if direct_id and not direct_token:
         raise RuntimeError(
             "META_PAGE_ACCESS_TOKEN is required with the configured Meta account ID"
@@ -124,9 +125,9 @@ def _meta_error_message(response: httpx.Response, access_token: str) -> str:
         for phrase in ("session has expired", "access token has expired", "error validating access token")
     ):
         return (
-            "Meta rejected the expired or revoked access token. Replace the server-side "
-            "Meta Page access token with a newly generated token that has Facebook Page "
-            "and Instagram publishing permissions, then retry publishing."
+            "Meta rejected the expired or revoked access token. Open the admin workspace, "
+            "choose Connect / reconnect Facebook and Instagram, complete Meta authorization, "
+            "then retry publishing."
         )
     return _redact_meta_error(
         message or f"Meta Graph API returned HTTP {response.status_code}",
@@ -285,16 +286,18 @@ def delete_adoption_publications(
         if not post_id:
             continue
         try:
-            credentials = _connection_credentials(provider, account)
-            if credentials is None:
-                raise RuntimeError(f"No connected {provider.title()} account is available")
-            account_id, access_token = credentials
             if (
                 provider == "instagram"
                 and account is not None
                 and account.deletion_access_token_encrypted
             ):
+                account_id = account.account_id
                 access_token = _decrypt_connected_token(account.deletion_access_token_encrypted)
+            else:
+                credentials = _connection_credentials(provider, account)
+                if credentials is None:
+                    raise RuntimeError(f"No connected {provider.title()} account is available")
+                account_id, access_token = credentials
             if not GRAPH_ID_PATTERN.fullmatch(account_id):
                 raise RuntimeError(f"The saved {provider.title()} account ID is invalid")
             _graph_delete(

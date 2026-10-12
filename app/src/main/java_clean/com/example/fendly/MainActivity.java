@@ -10804,6 +10804,10 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             }
         });
 
+        TextView metaAccountsButton = actionButton("Connect / reconnect Facebook and Instagram", true);
+        metaAccountsButton.setOnClickListener(view -> showAdminMetaConnectionPage());
+        root.addView(metaAccountsButton, contentParams(-1, dp(46), dp(10)));
+
         LinearLayout overview = new LinearLayout(this);
         overview.setOrientation(LinearLayout.HORIZONTAL);
         TextView lostCount = adminSummary("LOST", LOST_GREEN);
@@ -10891,6 +10895,125 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         root.post(() -> {
             if (currentPage == PAGE_ADMIN) fetchPendingNotificationCount();
         });
+    }
+
+    private void showAdminMetaConnectionPage() {
+        currentPage = PAGE_ADMIN;
+        adminEnglishUi = true;
+        screenRenderer = this::showAdminMetaConnectionPage;
+        LinearLayout root = screenBase("");
+
+        TextView back = actionButton("Back to admin workspace", false);
+        back.setOnClickListener(view -> showAdminDashboard());
+        root.addView(back, contentParams(-1, dp(42), dp(10)));
+
+        TextView title = text("Meta account connection", 20, primaryTextColor(), Typeface.NORMAL);
+        title.setGravity(Gravity.CENTER);
+        root.addView(title, contentParams(-1, dp(32), dp(8)));
+
+        TextView explanation = text(
+                "Reconnect the Fendly Facebook Page and its linked Instagram professional account. "
+                        + "The refreshed Meta authorization is saved securely for adoption posts.",
+                13,
+                secondaryTextColor(),
+                Typeface.NORMAL
+        );
+        explanation.setGravity(Gravity.CENTER);
+        explanation.setLineSpacing(dp(3), 1f);
+        root.addView(explanation, contentParams(-1, -2, dp(12)));
+
+        TextView status = text("Checking saved Meta connection…", 14, primaryTextColor(), Typeface.NORMAL);
+        status.setGravity(Gravity.CENTER);
+        root.addView(status, contentParams(-1, -2, dp(16)));
+
+        TextView connect = actionButton("Connect / reconnect Meta", true);
+        connect.setOnClickListener(view -> startMetaConnection(status, connect));
+        root.addView(connect, contentParams(-1, dp(46), dp(8)));
+
+        TextView refresh = actionButton("Refresh connection status", false);
+        refresh.setOnClickListener(view -> loadMetaConnectionStatus(status));
+        root.addView(refresh, contentParams(-1, dp(44), dp(8)));
+        loadMetaConnectionStatus(status);
+    }
+
+    private void loadMetaConnectionStatus(TextView status) {
+        FirebaseUser adminUser = FirebaseAuth.getInstance().getCurrentUser();
+        if (adminUser == null) {
+            status.setText("Sign in with an administrator account to manage Meta.");
+            return;
+        }
+        status.setText("Checking saved Meta connection…");
+        adminUser.getIdToken(false).addOnSuccessListener(token -> network.execute(() -> {
+            AuthorizedResponse response = authorizedRequest(
+                    "GET", "/api/social/status", token.getToken());
+            runOnUiThread(() -> {
+                if (response.statusCode < 200 || response.statusCode >= 300) {
+                    status.setText("Could not check Meta connection. "
+                            + authorizedRequestError(response));
+                    return;
+                }
+                try {
+                    JSONObject result = new JSONObject(response.body);
+                    JSONObject facebook = result.optJSONObject("facebook");
+                    JSONObject instagram = result.optJSONObject("instagram");
+                    String facebookStatus = facebook != null && facebook.optBoolean("connected")
+                            ? "Connected: " + facebook.optString("account_name", "Facebook Page")
+                            : "Not connected";
+                    String instagramStatus = instagram != null && instagram.optBoolean("connected")
+                            ? "Connected: " + instagram.optString("account_name", "Instagram")
+                            : "Not connected";
+                    status.setText("Facebook Page: " + facebookStatus
+                            + "\nInstagram: " + instagramStatus);
+                } catch (Exception error) {
+                    Log.e("META_CONNECTION", "Could not read Meta account status", error);
+                    status.setText("Meta connection status could not be read.");
+                }
+            });
+        })).addOnFailureListener(error -> runOnUiThread(() ->
+                status.setText("Could not verify your Fendly sign-in.")));
+    }
+
+    private void startMetaConnection(TextView status, TextView connectButton) {
+        FirebaseUser adminUser = FirebaseAuth.getInstance().getCurrentUser();
+        if (adminUser == null) {
+            status.setText("Sign in with an administrator account to reconnect Meta.");
+            return;
+        }
+        connectButton.setEnabled(false);
+        status.setText("Preparing secure Meta authorization…");
+        adminUser.getIdToken(false).addOnSuccessListener(token -> network.execute(() -> {
+            AuthorizedResponse response = authorizedRequest(
+                    "POST", "/api/social/connect/meta", token.getToken());
+            runOnUiThread(() -> {
+                connectButton.setEnabled(true);
+                if (response.statusCode < 200 || response.statusCode >= 300) {
+                    status.setText("Could not start Meta reconnect. "
+                            + authorizedRequestError(response));
+                    return;
+                }
+                try {
+                    String authorizationUrl = new JSONObject(response.body)
+                            .optString("authorization_url", "");
+                    Uri uri = Uri.parse(authorizationUrl);
+                    String host = uri.getHost();
+                    boolean allowedHost = "facebook.com".equalsIgnoreCase(host)
+                            || (host != null && host.toLowerCase(Locale.ROOT)
+                                    .endsWith(".facebook.com"));
+                    if (!"https".equalsIgnoreCase(uri.getScheme()) || !allowedHost) {
+                        throw new IllegalArgumentException("Unexpected Meta authorization URL");
+                    }
+                    status.setText(
+                            "Complete authorization in Meta, return to Fendly, then refresh status.");
+                    startActivity(new Intent(Intent.ACTION_VIEW, uri));
+                } catch (Exception error) {
+                    Log.e("META_CONNECTION", "Could not open Meta authorization", error);
+                    status.setText("The server returned an invalid Meta authorization link.");
+                }
+            });
+        })).addOnFailureListener(error -> runOnUiThread(() -> {
+            connectButton.setEnabled(true);
+            status.setText("Could not verify your Fendly sign-in.");
+        }));
     }
 
     private void loadAdminSuccessStories(

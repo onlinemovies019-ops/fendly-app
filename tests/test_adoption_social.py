@@ -10,7 +10,7 @@ from adoption_social import delete_adoption_publications, publish_adoption_listi
 from models import AdoptionListing, SocialAccount
 
 
-def test_direct_meta_credentials_override_saved_accounts_for_both_publications(monkeypatch):
+def test_reconnected_meta_accounts_override_stale_direct_credentials(monkeypatch):
     secret = "test-adoption-social-secret-that-is-long-enough"
     monkeypatch.setenv("APP_SECRET_KEY", secret)
     monkeypatch.delenv("META_FACEBOOK_PAGE_ID", raising=False)
@@ -90,10 +90,10 @@ def test_direct_meta_credentials_override_saved_accounts_for_both_publications(m
     ]
     assert len(requests) == 3
     assert all("Milo" in request[1].get("caption", "") for request in requests[:2])
-    assert requests[0][0].endswith("/1111111111/photos")
-    assert requests[0][1]["access_token"] == "incorrect-direct-token"
-    assert requests[1][0].endswith("/2222222222/media")
-    assert requests[1][1]["access_token"] == "incorrect-direct-token"
+    assert requests[0][0].endswith("/1234567890/photos")
+    assert requests[0][1]["access_token"] == "page-token"
+    assert requests[1][0].endswith("/9876543210/media")
+    assert requests[1][1]["access_token"] == "page-token"
     assert requests[0][1]["url"] == "https://storage.example/social-posters/milo.jpg"
     assert requests[1][1]["image_url"] == "https://storage.example/social-posters/milo.jpg"
     assert "#AdoptDontShop" in requests[0][1]["caption"]
@@ -185,9 +185,9 @@ def test_expired_meta_token_error_explains_how_to_reconnect_and_retry(monkeypatc
     _, errors = publish_adoption_listing(listing, lambda *_: None)
 
     expected = (
-        "Meta rejected the expired or revoked access token. Replace the server-side "
-        "Meta Page access token with a newly generated token that has Facebook Page "
-        "and Instagram publishing permissions, then retry publishing."
+        "Meta rejected the expired or revoked access token. Open the admin workspace, "
+        "choose Connect / reconnect Facebook and Instagram, complete Meta authorization, "
+        "then retry publishing."
     )
     assert errors == [f"Facebook: {expected}", f"Instagram: {expected}"]
 

@@ -31,6 +31,7 @@ from routers.payments import router as payments_router
 from routers.imei import router as imei_router
 from routers.vault import router as vault_router
 from routers.assistant import router as assistant_router
+from routers.social_accounts import router as social_accounts_router
 from schemas import ItemResponse, MatchResponse
 
 logger = logging.getLogger(__name__)
@@ -352,6 +353,7 @@ app.include_router(payments_router)
 app.include_router(imei_router)
 app.include_router(vault_router)
 app.include_router(assistant_router)
+app.include_router(social_accounts_router)
 
 
 @app.get("/health")

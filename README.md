@@ -146,15 +146,22 @@ where identifiable.
 Apply `supabase/migrations/20261011150000_add_adoption_module.sql` before
 deploying the adoption feature. It creates API-only adoption tables and the
 public `adoption-images` bucket; Lost/Found photos remain private in
-`report-images`. Adoption auto-posting uses direct Render environment
-credentials when configured; these override any older saved Meta connection.
-Otherwise, it reuses the Facebook Page and Instagram account connection saved
-by Fendly's Meta OAuth flow in `social_accounts`, decrypting the Page token
-with the existing `APP_SECRET_KEY`. The Graph API version defaults to
+`report-images`. Adoption auto-posting uses the Facebook Page and Instagram account saved
+through the admin workspace's **Connect / reconnect Facebook and Instagram**
+control. Reconnecting in Fendly refreshes the encrypted saved connection and
+takes precedence over any legacy `META_PAGE_ACCESS_TOKEN` fallback in Render.
+If no saved connection is present, direct Render credentials may still be used.
+Saved access tokens are encrypted with the existing `APP_SECRET_KEY`; keep that
+key stable or reconnect the accounts after rotating it. The Graph API version defaults to
 `v23.0`; set
 `APP_DOWNLOAD_URL` only if the app's Play Store link differs from the default.
-For direct configuration, set `META_FACEBOOK_PAGE_ID` (or its `META_PAGE_ID`
-alias) and `META_PAGE_ACCESS_TOKEN`. `META_INSTAGRAM_ACCOUNT_ID` may be set to the
+For OAuth setup, configure `META_APP_ID`, `META_APP_SECRET`,
+`META_LOGIN_CONFIG_ID`, `APP_SECRET_KEY`, and an HTTPS `PUBLIC_BASE_URL` or
+`META_REDIRECT_URI`; register the resulting `/api/social/callback/meta` URL in
+the Meta app. `META_PAGE_ID` can select the intended Page if the Meta account
+has multiple Pages. For direct fallback configuration, set
+`META_FACEBOOK_PAGE_ID` (or its `META_PAGE_ID` alias) and
+`META_PAGE_ACCESS_TOKEN`. `META_INSTAGRAM_ACCOUNT_ID` may be set to the
 numeric Instagram professional account ID; when it is missing or malformed,
 the API discovers the account linked to `META_PAGE_ID`. Never put an access
 token in either ID variable. The Page token and Meta app must have the
@@ -164,10 +171,8 @@ version, and login configuration ID do not replace these granted permissions
 or the Page access token. If the lister opts in but publishing is unavailable
 or fails, the adoption listing remains available and returns a separate
 social-post status for retry. Meta access tokens can expire or be revoked;
-Fendly cannot renew a token after Meta invalidates it. Generate a fresh Page
-access token with the required publishing permissions, replace
-`META_PAGE_ACCESS_TOKEN` in Render (or replace the saved server-side Meta
-connection when direct credentials are not configured), then retry the
+Fendly cannot renew a token after Meta invalidates it. Reconnect Meta from the
+admin workspace to replace the saved server-side credentials, then retry the
 listing's social post through the admin retry endpoint.
 
 The FastAPI startup applies
