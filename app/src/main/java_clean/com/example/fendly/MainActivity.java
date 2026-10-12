@@ -320,6 +320,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
     private String adminReportFilter = "";
     private String adminReportCategory = "items";
     private String myReportsCategory = "items";
+    private final LinkedHashSet<String> expandedMyReportIds = new LinkedHashSet<>();
     private int unreadUserNotificationCount = 0;
     private TextView userNotificationBadge;
     private boolean accountCreated;
@@ -6966,9 +6967,40 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                 reportCardContainer.setBackground(roundWithStroke(surfaceColor(), 18, borderColor()));
                 reportCard.setBackgroundColor(Color.TRANSPARENT);
                 reportCard.setOnClickListener(view -> showReportDetailsDialog(report, false, true));
-                reportCardContainer.addView(reportCard, new LinearLayout.LayoutParams(-1, -2));
-                reportCardContainer.addView(createReportStatusTracker(report));
-                reportCardContainer.setOnClickListener(view -> showReportDetailsDialog(report, false, true));
+                LinearLayout reportHeader = new LinearLayout(this);
+                reportHeader.setOrientation(LinearLayout.HORIZONTAL);
+                reportHeader.setGravity(Gravity.CENTER_VERTICAL);
+                reportHeader.addView(reportCard, new LinearLayout.LayoutParams(0, -2, 1f));
+                TextView expandToggle = actionButton(
+                        expandedMyReportIds.contains(reportId) ? "▲" : "▼",
+                        false
+                );
+                expandToggle.setContentDescription(localizeReportsText(
+                        expandedMyReportIds.contains(reportId) ? "Collapse" : "Expand"
+                ));
+                LinearLayout.LayoutParams expandToggleParams = new LinearLayout.LayoutParams(dp(40), dp(40));
+                expandToggleParams.setMargins(dp(4), 0, dp(4), 0);
+                reportHeader.addView(expandToggle, expandToggleParams);
+                reportCardContainer.addView(reportHeader, new LinearLayout.LayoutParams(-1, -2));
+
+                LinearLayout expandedReportContent = new LinearLayout(this);
+                expandedReportContent.setOrientation(LinearLayout.VERTICAL);
+                expandedReportContent.setVisibility(
+                        expandedMyReportIds.contains(reportId) ? View.VISIBLE : View.GONE
+                );
+                reportCardContainer.addView(expandedReportContent, new LinearLayout.LayoutParams(-1, -2));
+                expandedReportContent.addView(createReportStatusTracker(report));
+                expandToggle.setOnClickListener(view -> {
+                    boolean expand = expandedReportContent.getVisibility() != View.VISIBLE;
+                    if (expand) {
+                        expandedMyReportIds.add(reportId);
+                    } else {
+                        expandedMyReportIds.remove(reportId);
+                    }
+                    expandedReportContent.setVisibility(expand ? View.VISIBLE : View.GONE);
+                    expandToggle.setText(expand ? "▲" : "▼");
+                    expandToggle.setContentDescription(localizeReportsText(expand ? "Collapse" : "Expand"));
+                });
                 TextView reunionButton = actionButton(
                         isCompleted ? "Edit reunion story consent" : "Mark as reunited",
                         false
@@ -6976,7 +7008,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                 LinearLayout.LayoutParams reunionButtonParams =
                         new LinearLayout.LayoutParams(-1, dp(44));
                 reunionButtonParams.setMargins(dp(12), dp(8), dp(12), 0);
-                reportCardContainer.addView(reunionButton, reunionButtonParams);
+                expandedReportContent.addView(reunionButton, reunionButtonParams);
                 reunionButton.setOnClickListener(view -> showReunionConsentDialog(
                         report,
                         "FOUND".equalsIgnoreCase(type) ? "found" : "lost",
@@ -6988,7 +7020,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                     LinearLayout.LayoutParams reopenButtonParams =
                             new LinearLayout.LayoutParams(-1, dp(44));
                     reopenButtonParams.setMargins(dp(12), dp(6), dp(12), 0);
-                    reportCardContainer.addView(reopenButton, reopenButtonParams);
+                    expandedReportContent.addView(reopenButton, reopenButtonParams);
                     reopenButton.setOnClickListener(view -> submitReportResolution(
                             "FOUND".equalsIgnoreCase(type) ? "found" : "lost",
                             reportId,
@@ -6998,7 +7030,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                 }
                 if (!isCompleted
                         && ("LOST".equalsIgnoreCase(type) || "FOUND".equalsIgnoreCase(type))) {
-                    addCommunityPosterAction(reportCardContainer, report, dp(8), dp(12));
+                    addCommunityPosterAction(expandedReportContent, report, dp(8), dp(12));
                 }
                 if (isHighPriorityReport(report)) {
                     TextView shareAlert = actionButton(
@@ -7009,7 +7041,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                     shareAlert.setBackground(round(Color.rgb(190, 45, 55), 14));
                     LinearLayout.LayoutParams shareParams = new LinearLayout.LayoutParams(-1, dp(44));
                     shareParams.setMargins(dp(12), dp(8), dp(12), 0);
-                    reportCardContainer.addView(shareAlert, shareParams);
+                    expandedReportContent.addView(shareAlert, shareParams);
                     shareAlert.setOnClickListener(view -> showShareAlertCardDialog(report));
                 }
                 LinearLayout.LayoutParams reportCardParams = new LinearLayout.LayoutParams(-1, -2);
@@ -15106,6 +15138,8 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         if (value == null) return null;
         String[][] entries = {
                 {"Loading reports...", "रिपोर्ट लोड हो रही हैं...", "अहवाल लोड होत आहेत...", "રિપોર્ટ લોડ થઈ રહ્યા છે...", "রিপোর্ট লোড হচ্ছে...", "அறிக்கைகள் ஏற்றப்படுகின்றன...", "రిపోర్టులు లోడ్ అవుతున్నాయి...", "ವರದಿಗಳನ್ನು ಲೋಡ್ ಮಾಡಲಾಗುತ್ತಿದೆ...", "റിപ്പോർട്ടുകൾ ലോഡ് ചെയ്യുന്നു..."},
+                {"Expand", "विस्तार करें", "विस्तृत करा", "વિસ્તૃત કરો", "বিস্তারিত দেখুন", "விரிவாக்கு", "విస్తరించండి", "ವಿಸ್ತರಿಸಿ", "വികസിപ്പിക്കുക"},
+                {"Collapse", "समेटें", "लपवा", "સંકોચો", "সংক্ষিপ্ত করুন", "சுருக்கு", "కుదించండి", "ಕುಗ್ಗಿಸಿ", "ചുരുക്കുക"},
                 {"Only you and Fendly administrators can see the reports you submit.", "आपके द्वारा जमा की गई रिपोर्ट केवल आप और Fendly के व्यवस्थापक देख सकते हैं।", "तुम्ही सादर केलेले अहवाल फक्त तुम्ही आणि Fendly प्रशासक पाहू शकतात.", "તમે સબમિટ કરેલા અહેવાલો ફક્ત તમે અને Fendly એડમિન જોઈ શકે છે.", "আপনার জমা দেওয়া প্রতিবেদনগুলো শুধু আপনি এবং Fendly প্রশাসকেরা দেখতে পারেন।", "நீங்கள் சமர்ப்பிக்கும் அறிக்கைகளை நீங்கள் மற்றும் Fendly நிர்வாகிகள் மட்டுமே பார்க்க முடியும்.", "మీరు సమర్పించిన నివేదికలను మీరు మరియు Fendly నిర్వాహకులు మాత్రమే చూడగలరు.", "ನೀವು ಸಲ್ಲಿಸಿದ ವರದಿಗಳನ್ನು ನೀವು ಮತ್ತು Fendly ನಿರ್ವಾಹಕರು ಮಾತ್ರ ನೋಡಬಹುದು.", "നിങ്ങൾ സമർപ്പിക്കുന്ന റിപ്പോർട്ടുകൾ നിങ്ങൾക്കും Fendly അഡ്മിനിസ്ട്രേറ്റർമാർക്കും മാത്രമേ കാണാനാകൂ."},
                 {"No reports yet.", "अभी तक कोई रिपोर्ट नहीं है।", "अद्याप कोणतेही अहवाल नाहीत.", "હજુ સુધી કોઈ રિપોર્ટ નથી.", "এখনও কোনো রিপোর্ট নেই।", "இதுவரை அறிக்கைகள் எதுவும் இல்லை.", "ఇంకా ఎటువంటి రిపోర్ట్లు లేవు.", "ಇನ್ನೂ ಯಾವುದೇ ವರದಿಗಳಿಲ್ಲ.", "ഇതുവരെ റിപ്പോർട്ടുകൾ ഇല്ല."},
                 {"Sign in to view reports.", "रिपोर्ट देखने के लिए साइन इन करें।", "अहवाल पाहण्यासाठी साइन इन करा.", "રિપોર્ટ જોવા માટે સાઇન ઇન કરો.", "রিপোর্ট দেখতে সাইন ইন করুন।", "அறிக்கைகளைப் பார்க்க உள்நுழைவும்.", "రిపోర్టులు చూసేందుకు సైన్ ఇన్ చేయండి.", "ವರದಿಗಳನ್ನು ವೀಕ್ಷಿಸಲು ಸೈನ್ ઇન ಮಾಡಿ.", "റിപ്പോർട്ടുകൾ കാണാൻ സൈൻ ഇൻ ചെയ്യുക."},

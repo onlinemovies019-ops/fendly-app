@@ -151,7 +151,7 @@ private data class AdoptionListing(
     val healthStatus: String,
     val description: String,
     val city: String,
-    val image: String,
+    val images: List<String>,
     val imageCount: Int,
     val status: String,
     val socialStatus: String,
@@ -179,23 +179,31 @@ private data class MyAdoptionApplication(
     val listerPhone: String,
 )
 
-private fun adoptionListing(json: JSONObject) = AdoptionListing(
-    id = json.optString("id"),
-    petName = json.optString("pet_name"),
-    species = json.optString("species"),
-    breed = json.optString("breed"),
-    ageMonths = json.optInt("age_months"),
-    gender = json.optString("gender"),
-    healthStatus = json.optString("health_status"),
-    description = json.optString("description"),
-    city = json.optString("location_city"),
-    image = json.optJSONArray("images")?.optString(0).orEmpty(),
-    imageCount = json.optJSONArray("images")?.length() ?: 0,
-    status = json.optString("status"),
-    socialStatus = json.optString("social_post_status"),
-    socialError = json.optString("social_post_error"),
-    socialPosterImage = json.optString("social_post_image_url"),
-)
+private fun adoptionListing(json: JSONObject): AdoptionListing {
+    val imagesJson = json.optJSONArray("images")
+    val images = imagesJson?.let { array ->
+        (0 until array.length())
+            .map { array.optString(it).trim() }
+            .filter(String::isNotEmpty)
+    }.orEmpty()
+    return AdoptionListing(
+        id = json.optString("id"),
+        petName = json.optString("pet_name"),
+        species = json.optString("species"),
+        breed = json.optString("breed"),
+        ageMonths = json.optInt("age_months"),
+        gender = json.optString("gender"),
+        healthStatus = json.optString("health_status"),
+        description = json.optString("description"),
+        city = json.optString("location_city"),
+        images = images,
+        imageCount = images.size,
+        status = json.optString("status"),
+        socialStatus = json.optString("social_post_status"),
+        socialError = json.optString("social_post_error"),
+        socialPosterImage = json.optString("social_post_image_url"),
+    )
+}
 
 private fun adoptionRequest(
     method: String,
@@ -1414,16 +1422,16 @@ private fun ListingCard(
                 }
             }
             if (expanded) {
-                if (listing.image.isNotBlank()) {
-                    AdoptionImage(listing.image, t("adopt_photo_content_description"))
+                if (listing.images.isNotEmpty()) {
+                    AdoptionImageCarousel(
+                        images = listing.images,
+                        contentDescription = t("adopt_photo_content_description"),
+                    )
                 }
                 Text("${listing.species.replaceFirstChar { if (it.isLowerCase()) it.titlecase(Locale.getDefault()) else it.toString() }}${if (listing.breed.isBlank()) "" else " · ${listing.breed}"}")
                 Text("${listing.ageMonths} ${t("adopt_months")} · ${listing.gender} · ${listing.city}")
                 Text("${t("adopt_health_label")}: ${listing.healthStatus}")
                 Text(listing.description)
-                if (listing.imageCount > 1) {
-                    Text(t("adopt_more_photos").replace("{count}", (listing.imageCount - 1).toString()))
-                }
                 if (listing.socialStatus.isNotBlank()) {
                     Text(
                         if (listing.socialStatus == "failed") {
@@ -1449,6 +1457,44 @@ private fun ListingCard(
                     }
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun AdoptionImageCarousel(images: List<String>, contentDescription: String) {
+    var imageIndex by remember(images) { mutableStateOf(0) }
+    Box {
+        AdoptionImage(images[imageIndex], contentDescription)
+        if (images.size > 1) {
+            TextButton(
+                modifier = Modifier
+                    .align(Alignment.CenterStart)
+                    .padding(8.dp)
+                    .background(Color.Black.copy(alpha = 0.65f), CircleShape),
+                onClick = { imageIndex = (imageIndex - 1 + images.size) % images.size },
+            ) {
+                Text("‹", color = Color.White, style = MaterialTheme.typography.titleLarge)
+            }
+            TextButton(
+                modifier = Modifier
+                    .align(Alignment.CenterEnd)
+                    .padding(8.dp)
+                    .background(Color.Black.copy(alpha = 0.65f), CircleShape),
+                onClick = { imageIndex = (imageIndex + 1) % images.size },
+            ) {
+                Text("›", color = Color.White, style = MaterialTheme.typography.titleLarge)
+            }
+            Text(
+                text = "${imageIndex + 1} / ${images.size}",
+                color = Color.White,
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(bottom = 8.dp)
+                    .background(Color.Black.copy(alpha = 0.65f), RoundedCornerShape(12.dp))
+                    .padding(horizontal = 10.dp, vertical = 4.dp),
+                style = MaterialTheme.typography.labelSmall,
+            )
         }
     }
 }
