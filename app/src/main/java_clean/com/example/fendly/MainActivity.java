@@ -4994,7 +4994,15 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                         String message = ReportSubmissionMessages.buildSubmissionSuccessMessage(paidLostReport, submission.errorMessage, null);
                         Toast.makeText(this, message, Toast.LENGTH_LONG).show();
                         clearReportDraftState();
-                        showReports();
+                        JSONObject createdReport = submission.createdReport;
+                        if (createdReport != null) {
+                            myReportsCategory = discoveryReportMatchesCategory(createdReport, "people")
+                                    ? "people"
+                                    : discoveryReportMatchesCategory(createdReport, "animals")
+                                            ? "animals"
+                                            : "items";
+                        }
+                        showReports(createdReport);
                     } else {
                         if (code == 402 && "LOST".equalsIgnoreCase(type)) {
                             publish.setText(getString(R.string.report_continue_payment));
@@ -5020,10 +5028,16 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
     private static final class ItemSubmissionResult {
         final int statusCode;
         final String errorMessage;
+        final JSONObject createdReport;
 
         ItemSubmissionResult(int statusCode, String errorMessage) {
+            this(statusCode, errorMessage, null);
+        }
+
+        ItemSubmissionResult(int statusCode, String errorMessage, JSONObject createdReport) {
             this.statusCode = statusCode;
             this.errorMessage = errorMessage;
+            this.createdReport = createdReport;
         }
     }
 
@@ -5053,7 +5067,9 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                 return new ItemSubmissionResult(response.getStatusCode(), lastSubmissionError);
             }
 
-            return new ItemSubmissionResult(response.getStatusCode(), lastSubmissionError);
+            JSONObject createdReport = new JSONObject(response.getBody());
+            createdReport.put("type", type.toUpperCase(Locale.US));
+            return new ItemSubmissionResult(response.getStatusCode(), lastSubmissionError, createdReport);
         } catch (Exception error) {
             lastSubmissionError = "Could not save report: " + error.getClass().getSimpleName();
             return new ItemSubmissionResult(-1, lastSubmissionError);
@@ -6682,6 +6698,10 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
     }
 
     private void showReports() {
+        showReports(null);
+    }
+
+    private void showReports(JSONObject recentlySubmittedReport) {
         currentPage = PAGE_REPORTS;
         screenRenderer = this::showReports;
         LinearLayout root = screenBase(translate("My reports"));
@@ -6689,11 +6709,18 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                 translate("Your reports"),
                 localizeReportsText("Only you and Fendly administrators can see the reports you submit.")
         );
-        TextView loading = text(localizeReportsText("Loading reports..."), 16, secondaryTextColor(), Typeface.NORMAL);
+        final TextView loading = text(
+                localizeReportsText("Loading reports..."), 16, secondaryTextColor(), Typeface.NORMAL
+        );
         addField(root, loading);
-        ReportsLoadingView loadingSkeleton = new ReportsLoadingView(this);
+        final ReportsLoadingView loadingSkeleton = new ReportsLoadingView(this);
         loadingSkeleton.setTag("wrapField");
         addField(root, loadingSkeleton);
+        if (recentlySubmittedReport != null) {
+            List<JSONObject> immediateReports = new ArrayList<>();
+            immediateReports.add(recentlySubmittedReport);
+            renderMergedReports(immediateReports, Collections.emptyList());
+        }
 
         FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
         if (user == null) {
@@ -6710,6 +6737,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
 
             network.execute(() -> {
                 List<JSONObject> backendReports = new ArrayList<>();
+                String loadError = null;
                 if (idToken != null) {
                     HttpURLConnection connection = null;
                     try {
@@ -6718,31 +6746,65 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                         connection.setConnectTimeout(8000);
                         connection.setReadTimeout(10000);
                         connection.setRequestProperty("Authorization", "Bearer " + idToken);
-                        if (connection.getResponseCode() >= 200 && connection.getResponseCode() < 300) {
-                            String response = readStream(connection.getInputStream());
-                            if (response != null && !response.trim().isEmpty()) {
-                                JSONArray arr = new JSONArray(response);
-                                for (int i = 0; i < arr.length(); i++) {
-                                    JSONObject item = arr.optJSONObject(i);
-                                    if (item != null) backendReports.add(item);
-                                }
+                        int responseCode = connection.getResponseCode();
+                        if (responseCode < 200 || responseCode >= 300) {
+                            throw new java.io.IOException("My reports request returned HTTP " + responseCode);
+                        }
+                        String response = readStream(connection.getInputStream());
+                        if (response != null && !response.trim().isEmpty()) {
+                            JSONArray arr = new JSONArray(response);
+                            for (int i = 0; i < arr.length(); i++) {
+                                JSONObject item = arr.optJSONObject(i);
+                                if (item != null) backendReports.add(item);
                             }
                         }
-                    } catch (Exception ignored) {
+                    } catch (Exception error) {
+                        Log.e("MY_REPORTS", "Could not refresh the user's reports", error);
+                        loadError = error.getMessage();
                     } finally {
                         if (connection != null) connection.disconnect();
                     }
+                } else {
+                    loadError = "Authentication token is unavailable";
                 }
 
-                runOnUiThread(() -> renderMergedReports(backendReports, Collections.emptyList()));
+                final String requestError = loadError;
+                runOnUiThread(() -> {
+                    if (isFinishing() || isDestroyed() || currentPage != PAGE_REPORTS) return;
+                    if (requestError != null && recentlySubmittedReport == null) {
+                        showReportsLoadError();
+                        return;
+                    }
+                    if (recentlySubmittedReport != null) {
+                        backendReports.add(recentlySubmittedReport);
+                    }
+                    renderMergedReports(backendReports, Collections.emptyList());
+                });
             });
         }).addOnFailureListener(error -> {
+            if (recentlySubmittedReport != null) return;
             loading.setText(localizeReportsText("Your reports could not be loaded."));
             loadingSkeleton.setVisibility(View.GONE);
             TextView home = actionButton(translate("Back home"), false);
             home.setOnClickListener(v -> showHome());
             addField(root, home);
         });
+    }
+
+    private void showReportsLoadError() {
+        LinearLayout root = screenBase(translate("My reports"));
+        addHeading(
+                translate("Your reports"),
+                localizeReportsText("Only you and Fendly administrators can see the reports you submit.")
+        );
+        addField(root, text(localizeReportsText("Your reports could not be loaded."), 16,
+                secondaryTextColor(), Typeface.NORMAL));
+        TextView retry = actionButton(translate("Retry"), true);
+        retry.setOnClickListener(view -> showReports());
+        addField(root, retry);
+        TextView home = actionButton(translate("Back home"), false);
+        home.setOnClickListener(view -> showHome());
+        addField(root, home);
     }
 
     private void renderMergedReports(List<JSONObject> backendReports, List<JSONObject> firestoreReports) {
