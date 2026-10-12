@@ -164,6 +164,7 @@ public final class LanguageActivity extends AppCompatActivity {
         continueButton.setGravity(Gravity.CENTER);
         continueButton.setBackground(round(GOLD, 24));
         continueButton.setElevation(dp(5));
+        ButtonPressAnimator.attach(continueButton);
         continueButton.setOnClickListener(view -> continueToApp());
         LinearLayout.LayoutParams buttonParams = new LinearLayout.LayoutParams(-1, dp(52));
         buttonParams.setMargins(0, dp(16), 0, 0);
@@ -183,6 +184,7 @@ public final class LanguageActivity extends AppCompatActivity {
         card.setOrientation(LinearLayout.VERTICAL);
         card.setGravity(Gravity.CENTER);
         card.setPadding(dp(10), dp(12), dp(10), dp(10));
+        ButtonPressAnimator.attach(card);
 
         // Selection update on card tap (No premature recreate)
         card.setOnClickListener(view -> {

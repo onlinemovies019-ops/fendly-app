@@ -21,7 +21,12 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.PlatformTextStyle
 import androidx.compose.ui.text.style.TextAlign
@@ -37,10 +42,24 @@ fun FendlyPrimaryButton(
     modifier: Modifier = Modifier,
     enabled: Boolean = true,
 ) {
+    val interactionSource = MutableInteractionSource()
+    val isPressed = interactionSource.collectIsPressedAsState()
+    val scale = animateFloatAsState(
+        targetValue = if (isPressed.value) 0.96f else 1f,
+        animationSpec = spring(stiffness = 700f),
+        label = "primaryButtonPressScale",
+    )
     Button(
         onClick = onClick,
-        modifier = modifier.fillMaxWidth().heightIn(min = 52.dp),
+        modifier = modifier
+            .fillMaxWidth()
+            .heightIn(min = 52.dp)
+            .graphicsLayer {
+                scaleX = scale.value
+                scaleY = scale.value
+            },
         enabled = enabled,
+        interactionSource = interactionSource,
         shape = RoundedCornerShape(26.dp),
         colors = ButtonDefaults.buttonColors(
             containerColor = MaterialTheme.colorScheme.primary,
@@ -66,9 +85,23 @@ fun FendlySecondaryButton(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val interactionSource = MutableInteractionSource()
+    val isPressed = interactionSource.collectIsPressedAsState()
+    val scale = animateFloatAsState(
+        targetValue = if (isPressed.value) 0.96f else 1f,
+        animationSpec = spring(stiffness = 700f),
+        label = "secondaryButtonPressScale",
+    )
     OutlinedButton(
         onClick = onClick,
-        modifier = modifier.fillMaxWidth().heightIn(min = 52.dp),
+        modifier = modifier
+            .fillMaxWidth()
+            .heightIn(min = 52.dp)
+            .graphicsLayer {
+                scaleX = scale.value
+                scaleY = scale.value
+            },
+        interactionSource = interactionSource,
         shape = RoundedCornerShape(26.dp),
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
         colors = ButtonDefaults.outlinedButtonColors(

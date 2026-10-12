@@ -204,6 +204,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
     private Bitmap capturedImage;
     private final Uri[] reportImages = new Uri[3];
     private final Bitmap[] reportCameraImages = new Bitmap[3];
+    private final Uri[] pendingReportCameraUris = new Uri[3];
     private int pendingImageSlot = -1;
     private static final int REQUEST_CAMERA_PERMISSION = 705;
     private double currentLat;
@@ -6586,7 +6587,23 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             ActivityCompat.requestPermissions(this, new String[]{Manifest.permission.CAMERA}, REQUEST_CAMERA_PERMISSION);
             return;
         }
-        startActivityForResult(new Intent(MediaStore.ACTION_IMAGE_CAPTURE), 720 + slot);
+        try {
+            File imageDir = new File(getFilesDir(), "image_provider");
+            if (!imageDir.exists() && !imageDir.mkdirs()) {
+                Toast.makeText(this, "Could not prepare camera capture", Toast.LENGTH_SHORT).show();
+                return;
+            }
+            File imageFile = new File(imageDir, "report_capture_" + System.currentTimeMillis() + ".jpg");
+            pendingReportCameraUris[slot] = FileProvider.getUriForFile(
+                    this, getPackageName() + ".fileprovider", imageFile);
+            Intent intent = new Intent(MediaStore.ACTION_IMAGE_CAPTURE);
+            intent.putExtra(MediaStore.EXTRA_OUTPUT, pendingReportCameraUris[slot]);
+            intent.addFlags(Intent.FLAG_GRANT_WRITE_URI_PERMISSION | Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            startActivityForResult(intent, 720 + slot);
+        } catch (ActivityNotFoundException | IllegalArgumentException error) {
+            pendingReportCameraUris[slot] = null;
+            Toast.makeText(this, "Could not open camera", Toast.LENGTH_SHORT).show();
+        }
     }
 
     private void configureDateField(EditText date) {
@@ -10169,6 +10186,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
 
     private TextView filledButton(String label, int background, int foreground) {
         TextView button = text(label, 12, foreground, Typeface.NORMAL);
+        ButtonPressAnimator.attach(button);
         button.setTextSize(responsiveTextSize(12));
         button.setTextColor(background == LOST_GREEN ? Color.WHITE : foreground);
         button.setGravity(Gravity.CENTER);
@@ -10186,6 +10204,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
 
     private TextView outlinedButton(String label) {
         TextView button = text(label, 12, primaryTextColor(), Typeface.NORMAL);
+        ButtonPressAnimator.attach(button);
         button.setTextSize(responsiveTextSize(12));
         button.setGravity(Gravity.CENTER);
         button.setMinHeight(dp(44));
@@ -10205,6 +10224,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
 
     private TextView reportTypeToggle(String label, boolean selected, int selectedBackground, int selectedForeground) {
         TextView toggle = text(label, 11, selected ? selectedForeground : secondaryTextColor(), Typeface.NORMAL);
+        ButtonPressAnimator.attach(toggle);
         if (selected && selectedBackground == LOST_GREEN) toggle.setTextColor(Color.WHITE);
         toggle.setGravity(Gravity.CENTER);
         toggle.setBackground(selected
@@ -10590,23 +10610,24 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             selectedImage = reportImages[0];
             if (currentReportType != null) showReport(currentReportType);
         }
-        if (requestCode >= 720 && requestCode <= 722 && resultCode == RESULT_OK && data != null && data.getExtras() != null) {
+        if (requestCode >= 720 && requestCode <= 722) {
             int slot = requestCode - 720;
-            Bitmap captured = PhotoCropActivity.getBitmapExtra(data, "data");
-            if (captured != null) {
+            Uri capturedUri = pendingReportCameraUris[slot];
+            pendingReportCameraUris[slot] = null;
+            if (resultCode == RESULT_OK && capturedUri != null) {
                 Intent cropIntent = new Intent(this, PhotoCropActivity.class)
-                        .putExtra(PhotoCropActivity.EXTRA_BITMAP, captured);
+                        .putExtra(PhotoCropActivity.EXTRA_IMAGE_URI, capturedUri.toString());
                 startActivityForResult(cropIntent, 723 + slot);
             }
         }
         if (requestCode >= 723 && requestCode <= 725 && resultCode == RESULT_OK && data != null) {
             int slot = requestCode - 723;
-            Bitmap cropped = PhotoCropActivity.getBitmapExtra(
-                    data, PhotoCropActivity.EXTRA_CROPPED_BITMAP);
-            if (cropped != null) {
-                reportCameraImages[slot] = cropped;
-                reportImages[slot] = null;
-                capturedImage = reportCameraImages[0];
+            String croppedUriValue = data.getStringExtra(PhotoCropActivity.EXTRA_CROPPED_IMAGE_URI);
+            if (croppedUriValue != null && !croppedUriValue.trim().isEmpty()) {
+                reportCameraImages[slot] = null;
+                reportImages[slot] = Uri.parse(croppedUriValue);
+                capturedImage = null;
+                selectedImage = reportImages[0];
                 if (currentReportType != null) showReport(currentReportType);
             }
         }

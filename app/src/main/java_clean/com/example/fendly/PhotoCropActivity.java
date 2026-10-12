@@ -2,13 +2,17 @@ package com.example.fendly;
 
 import android.app.Activity;
 import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
 import android.graphics.Canvas;
 import android.graphics.Color;
+import android.graphics.Matrix;
 import android.graphics.Paint;
 import android.graphics.Path;
 import android.graphics.RectF;
 import android.os.Build;
 import android.os.Bundle;
+import android.net.Uri;
+import android.util.TypedValue;
 import android.view.Gravity;
 import android.view.MotionEvent;
 import android.view.View;
@@ -16,12 +20,30 @@ import android.widget.Button;
 import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 import android.widget.TextView;
+import android.widget.Toast;
+
+import androidx.core.content.FileProvider;
+import androidx.core.view.WindowInsetsControllerCompat;
+import androidx.exifinterface.media.ExifInterface;
+
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.io.InputStream;
 
 public final class PhotoCropActivity extends Activity {
     public static final String EXTRA_BITMAP = "com.example.fendly.extra.CROP_BITMAP";
-    public static final String EXTRA_CROPPED_BITMAP = "com.example.fendly.extra.CROPPED_BITMAP";
+    public static final String EXTRA_IMAGE_URI = "com.example.fendly.extra.CROP_IMAGE_URI";
+    public static final String EXTRA_CROPPED_IMAGE_URI = "com.example.fendly.extra.CROPPED_IMAGE_URI";
 
     private CropImageView cropImageView;
+    private boolean darkMode;
+    private int backgroundColor;
+    private int surfaceColor;
+    private int primaryTextColor;
+    private int secondaryTextColor;
+    private int accentColor;
+    private int onAccentColor;
 
     public static Bitmap getBitmapExtra(android.content.Intent intent, String key) {
         if (intent == null) return null;
@@ -33,26 +55,43 @@ public final class PhotoCropActivity extends Activity {
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
+        darkMode = getSharedPreferences("fendly_settings", MODE_PRIVATE)
+                .getBoolean("dark_mode", false);
+        setTheme(darkMode ? R.style.Theme_Fendly_Dark : R.style.Theme_Fendly);
         super.onCreate(savedInstanceState);
-        Bitmap bitmap = getBitmapExtra(getIntent(), EXTRA_BITMAP);
+        backgroundColor = darkMode ? Color.rgb(18, 19, 25) : Color.rgb(247, 243, 238);
+        surfaceColor = darkMode ? Color.rgb(24, 29, 36) : Color.WHITE;
+        primaryTextColor = darkMode ? Color.rgb(247, 249, 252) : Color.rgb(35, 37, 43);
+        secondaryTextColor = darkMode ? Color.rgb(190, 195, 204) : Color.rgb(83, 86, 94);
+        accentColor = Color.rgb(232, 178, 74);
+        onAccentColor = Color.rgb(43, 29, 5);
+
+        Bitmap bitmap = loadSourceBitmap();
         if (bitmap == null || bitmap.isRecycled()) {
+            Toast.makeText(
+                    this,
+                    LanguageManager.adoptionText(this, "adopt_camera_unavailable"),
+                    Toast.LENGTH_LONG).show();
             setResult(RESULT_CANCELED);
             finish();
             return;
         }
 
-        getWindow().setStatusBarColor(Color.rgb(24, 29, 36));
-        getWindow().setNavigationBarColor(Color.rgb(24, 29, 36));
-        getWindow().getDecorView().setSystemUiVisibility(0);
+        getWindow().setStatusBarColor(backgroundColor);
+        getWindow().setNavigationBarColor(backgroundColor);
+        WindowInsetsControllerCompat insetsController =
+                new WindowInsetsControllerCompat(getWindow(), getWindow().getDecorView());
+        insetsController.setAppearanceLightStatusBars(!darkMode);
+        insetsController.setAppearanceLightNavigationBars(!darkMode);
 
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
-        root.setBackgroundColor(Color.rgb(18, 19, 25));
+        root.setBackgroundColor(backgroundColor);
         root.setPadding(dp(20), dp(16), dp(20), dp(16));
 
         TextView title = new TextView(this);
         title.setText(LanguageManager.adoptionText(this, "crop_photo"));
-        title.setTextColor(Color.WHITE);
+        title.setTextColor(primaryTextColor);
         title.setTextSize(22);
         title.setGravity(Gravity.CENTER);
         root.addView(title, new LinearLayout.LayoutParams(
@@ -60,7 +99,7 @@ public final class PhotoCropActivity extends Activity {
 
         TextView instructions = new TextView(this);
         instructions.setText(LanguageManager.adoptionText(this, "crop_photo_instructions"));
-        instructions.setTextColor(Color.rgb(190, 195, 204));
+        instructions.setTextColor(secondaryTextColor);
         instructions.setTextSize(14);
         instructions.setGravity(Gravity.CENTER);
         LinearLayout.LayoutParams instructionParams = new LinearLayout.LayoutParams(
@@ -84,7 +123,9 @@ public final class PhotoCropActivity extends Activity {
         root.addView(actions, actionsParams);
 
         Button cancel = new Button(this);
+        ButtonPressAnimator.attach(cancel);
         cancel.setText(LanguageManager.adoptionText(this, "adopt_cancel"));
+        styleButton(cancel, surfaceColor, primaryTextColor);
         cancel.setOnClickListener(view -> {
             setResult(RESULT_CANCELED);
             finish();
@@ -92,13 +133,81 @@ public final class PhotoCropActivity extends Activity {
         actions.addView(cancel, new LinearLayout.LayoutParams(0, -1, 1f));
 
         Button confirm = new Button(this);
+        ButtonPressAnimator.attach(confirm);
         confirm.setText(LanguageManager.adoptionText(this, "crop_photo_confirm"));
+        styleButton(confirm, accentColor, onAccentColor);
         confirm.setOnClickListener(view -> confirmCrop());
         LinearLayout.LayoutParams confirmParams = new LinearLayout.LayoutParams(0, -1, 1f);
         confirmParams.leftMargin = dp(12);
         actions.addView(confirm, confirmParams);
 
         setContentView(root);
+        WindowInsetsHelper.applySafeArea(root);
+    }
+
+    private Bitmap loadSourceBitmap() {
+        Bitmap bitmap = getBitmapExtra(getIntent(), EXTRA_BITMAP);
+        if (bitmap != null) return bitmap;
+        String uriValue = getIntent().getStringExtra(EXTRA_IMAGE_URI);
+        if (uriValue == null || uriValue.isBlank()) return null;
+        Uri uri = Uri.parse(uriValue);
+        try (InputStream input = getContentResolver().openInputStream(uri)) {
+            if (input == null) return null;
+            BitmapFactory.Options bounds = new BitmapFactory.Options();
+            bounds.inJustDecodeBounds = true;
+            BitmapFactory.decodeStream(input, null, bounds);
+            if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null;
+            int sampleSize = 1;
+            while (Math.max(bounds.outWidth / sampleSize, bounds.outHeight / sampleSize) > 3072) {
+                sampleSize *= 2;
+            }
+            BitmapFactory.Options options = new BitmapFactory.Options();
+            options.inSampleSize = sampleSize;
+            options.inPreferredConfig = Bitmap.Config.ARGB_8888;
+            Bitmap decoded;
+            try (InputStream imageInput = getContentResolver().openInputStream(uri)) {
+                if (imageInput == null) return null;
+                decoded = BitmapFactory.decodeStream(imageInput, null, options);
+            }
+            return applyExifOrientation(uri, decoded);
+        } catch (Exception error) {
+            return null;
+        }
+    }
+
+    private Bitmap applyExifOrientation(Uri uri, Bitmap bitmap) {
+        if (bitmap == null) return null;
+        try (InputStream input = getContentResolver().openInputStream(uri)) {
+            if (input == null) return bitmap;
+            int orientation = new ExifInterface(input).getAttributeInt(
+                    ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL);
+            Matrix matrix = new Matrix();
+            switch (orientation) {
+                case ExifInterface.ORIENTATION_ROTATE_90:
+                    matrix.postRotate(90);
+                    break;
+                case ExifInterface.ORIENTATION_ROTATE_180:
+                    matrix.postRotate(180);
+                    break;
+                case ExifInterface.ORIENTATION_ROTATE_270:
+                    matrix.postRotate(270);
+                    break;
+                case ExifInterface.ORIENTATION_FLIP_HORIZONTAL:
+                    matrix.postScale(-1, 1);
+                    break;
+                case ExifInterface.ORIENTATION_FLIP_VERTICAL:
+                    matrix.postScale(1, -1);
+                    break;
+                default:
+                    return bitmap;
+            }
+            Bitmap oriented = Bitmap.createBitmap(
+                    bitmap, 0, 0, bitmap.getWidth(), bitmap.getHeight(), matrix, true);
+            if (oriented != bitmap) bitmap.recycle();
+            return oriented;
+        } catch (Exception error) {
+            return bitmap;
+        }
     }
 
     private void confirmCrop() {
@@ -108,8 +217,46 @@ public final class PhotoCropActivity extends Activity {
             finish();
             return;
         }
-        setResult(RESULT_OK, new android.content.Intent().putExtra(EXTRA_CROPPED_BITMAP, cropped));
-        finish();
+        File directory = new File(getFilesDir(), "image_provider");
+        if (!directory.exists() && !directory.mkdirs()) {
+            cropped.recycle();
+            showCropFailure();
+            return;
+        }
+        File output = new File(directory, "cropped_" + System.currentTimeMillis() + ".jpg");
+        try (FileOutputStream stream = new FileOutputStream(output)) {
+            if (!cropped.compress(Bitmap.CompressFormat.JPEG, 92, stream)) {
+                throw new IllegalStateException("Could not encode cropped photo");
+            }
+            stream.flush();
+            Uri imageUri = FileProvider.getUriForFile(
+                    this, getPackageName() + ".fileprovider", output);
+            setResult(RESULT_OK, new android.content.Intent()
+                    .putExtra(EXTRA_CROPPED_IMAGE_URI, imageUri.toString()));
+            finish();
+        } catch (IOException | IllegalStateException error) {
+            showCropFailure();
+            setResult(RESULT_CANCELED);
+            finish();
+        } finally {
+            cropped.recycle();
+        }
+    }
+
+    private void showCropFailure() {
+        Toast.makeText(
+                this,
+                LanguageManager.adoptionText(this, "adopt_camera_unavailable"),
+                Toast.LENGTH_LONG).show();
+    }
+
+    private void styleButton(Button button, int fillColor, int textColor) {
+        button.setAllCaps(false);
+        button.setTextColor(textColor);
+        button.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15);
+        button.setBackgroundColor(fillColor);
+        button.setElevation(dp(2));
+        button.setPadding(dp(16), dp(8), dp(16), dp(8));
     }
 
     private int dp(float value) {

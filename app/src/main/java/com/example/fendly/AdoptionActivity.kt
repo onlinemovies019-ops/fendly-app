@@ -1,12 +1,14 @@
 package com.example.fendly
 
 import android.Manifest
+import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.graphics.BitmapFactory
 import android.graphics.Bitmap
 import android.net.Uri
 import android.os.Bundle
 import android.util.LruCache
+import androidx.core.content.FileProvider
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
@@ -84,6 +86,7 @@ import com.example.fendly.ui.theme.FendlyTextField
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.File
 import org.json.JSONArray
 import org.json.JSONObject
 import java.net.HttpURLConnection
@@ -536,33 +539,58 @@ private fun AdoptionScreen(onBack: () -> Unit) {
     ) { uris ->
         addSelectedPhotos(uris)
     }
+    var cameraPhotoUri by remember { mutableStateOf<Uri?>(null) }
     val photoCropLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.StartActivityForResult(),
     ) { result ->
         if (result.resultCode == android.app.Activity.RESULT_OK) {
-            val croppedBitmap = PhotoCropActivity.getBitmapExtra(
-                result.data,
-                PhotoCropActivity.EXTRA_CROPPED_BITMAP,
-            )
-            if (croppedBitmap != null && selectedPhotoSlot in selectedPhotos.indices) {
-                selectedPhotos[selectedPhotoSlot] = AdoptionPhoto(bitmap = croppedBitmap)
+            val croppedPhotoUri = result.data
+                ?.getStringExtra(PhotoCropActivity.EXTRA_CROPPED_IMAGE_URI)
+                ?.let(Uri::parse)
+            if (croppedPhotoUri != null && selectedPhotoSlot in selectedPhotos.indices) {
+                selectedPhotos[selectedPhotoSlot] = AdoptionPhoto(uri = croppedPhotoUri)
             }
         }
     }
     val cameraLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.TakePicturePreview(),
-    ) { bitmap ->
-        if (bitmap != null && selectedPhotoSlot in selectedPhotos.indices) {
+        ActivityResultContracts.TakePicture(),
+    ) { captured ->
+        val capturedPhotoUri = cameraPhotoUri
+        cameraPhotoUri = null
+        if (captured && capturedPhotoUri != null) {
             val cropIntent = Intent(context, PhotoCropActivity::class.java)
-                .putExtra(PhotoCropActivity.EXTRA_BITMAP, bitmap)
+                .putExtra(PhotoCropActivity.EXTRA_IMAGE_URI, capturedPhotoUri.toString())
             photoCropLauncher.launch(cropIntent)
+        }
+    }
+    fun startCameraCapture() {
+        try {
+            val directory = File(context.filesDir, "image_provider")
+            if (!directory.exists() && !directory.mkdirs()) {
+                message = t("adopt_camera_unavailable")
+                return
+            }
+            val captureFile = File(directory, "camera_${System.currentTimeMillis()}.jpg")
+            val captureUri = FileProvider.getUriForFile(
+                context,
+                "${context.packageName}.fileprovider",
+                captureFile,
+            )
+            cameraPhotoUri = captureUri
+            cameraLauncher.launch(captureUri)
+        } catch (error: ActivityNotFoundException) {
+            cameraPhotoUri = null
+            message = t("adopt_camera_unavailable")
+        } catch (error: IllegalArgumentException) {
+            cameraPhotoUri = null
+            message = t("adopt_camera_unavailable")
         }
     }
     val cameraPermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission(),
     ) { granted ->
         if (granted) {
-            cameraLauncher.launch(null)
+            startCameraCapture()
         } else {
             message = t("adopt_camera_permission")
         }
@@ -1127,7 +1155,7 @@ private fun AdoptionScreen(onBack: () -> Unit) {
                                                 Manifest.permission.CAMERA,
                                             ) == android.content.pm.PackageManager.PERMISSION_GRANTED
                                         ) {
-                                            cameraLauncher.launch(null)
+                                            startCameraCapture()
                                         } else {
                                             cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
                                         }
