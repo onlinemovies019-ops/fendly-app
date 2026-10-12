@@ -36,6 +36,7 @@ def adoption_client(monkeypatch):
     current_uid = ["lister"]
     main.app.dependency_overrides[database.get_db] = override_get_db
     main.app.dependency_overrides[adoptions_module.get_current_user] = lambda: current_uid[0]
+    main.app.dependency_overrides[adoptions_module.get_optional_current_user] = lambda: current_uid[0]
     main.app.dependency_overrides[admin_module.get_current_user] = lambda: current_uid[0]
     monkeypatch.setattr(adoptions_module, "moderate_content", allow_content)
     monkeypatch.setattr(adoptions_module, "_check_image", lambda data, mime_type: "jpg")
@@ -57,6 +58,7 @@ def adoption_client(monkeypatch):
     client.close()
     main.app.dependency_overrides.pop(database.get_db, None)
     main.app.dependency_overrides.pop(adoptions_module.get_current_user, None)
+    main.app.dependency_overrides.pop(adoptions_module.get_optional_current_user, None)
     main.app.dependency_overrides.pop(admin_module.get_current_user, None)
     engine.dispose()
 
@@ -319,6 +321,46 @@ def test_public_feed_filters_and_hides_owner_and_social_fields(adoption_client):
     assert "social_post_status" not in response.json()[0]
 
 
+def test_authenticated_browse_feed_excludes_the_listers_own_listings(adoption_client):
+    client, session_factory, current_uid = adoption_client
+    current_uid[0] = "owner"
+    with Session(session_factory.kw["bind"]) as session:
+        session.add_all(
+            [
+                AdoptionListing(
+                    id="owners-pet",
+                    lister_user_id="owner",
+                    pet_name="Milo",
+                    species="dog",
+                    age_months=18,
+                    gender="male",
+                    health_status="Vaccinated",
+                    description="Friendly",
+                    location_city="Pune",
+                    images=[],
+                ),
+                AdoptionListing(
+                    id="other-owners-pet",
+                    lister_user_id="another-owner",
+                    pet_name="Luna",
+                    species="cat",
+                    age_months=24,
+                    gender="female",
+                    health_status="Healthy",
+                    description="Calm",
+                    location_city="Pune",
+                    images=[],
+                ),
+            ]
+        )
+        session.commit()
+
+    response = client.get("/api/adoptions")
+
+    assert response.status_code == 200
+    assert [listing["id"] for listing in response.json()] == ["other-owners-pet"]
+
+
 def test_applications_may_be_multiple_pending_and_only_lister_can_approve(adoption_client):
     client, session_factory, current_uid = adoption_client
     try:
@@ -421,7 +463,9 @@ def test_social_poster_url_is_returned_only_to_listing_owner(adoption_client):
     poster_url = created.json()["social_post_image_url"]
 
     mine = client.get("/api/adoptions/mine")
+    main.app.dependency_overrides[adoptions_module.get_optional_current_user] = lambda: None
     public_feed = client.get("/api/adoptions")
+    main.app.dependency_overrides[adoptions_module.get_optional_current_user] = lambda: current_uid[0]
 
     assert mine.status_code == 200
     assert mine.json()[0]["social_post_image_url"] == poster_url

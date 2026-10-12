@@ -289,29 +289,43 @@ private fun AdoptionScreen(onBack: () -> Unit) {
             }
     }
 
+    suspend fun fetchFeed(token: String?) {
+        try {
+            val query = buildList {
+                if (speciesFilter.isNotBlank()) add("species=${Uri.encode(speciesFilter.trim())}")
+                if (cityFilter.isNotBlank()) add("city=${Uri.encode(cityFilter.trim())}")
+                minimumAge.toIntOrNull()?.let { add("min_age_months=$it") }
+                maximumAge.toIntOrNull()?.let { add("max_age_months=$it") }
+            }.joinToString("&").let { if (it.isBlank()) "" else "?$it" }
+            val result = withContext(Dispatchers.IO) {
+                JSONArray(adoptionRequest("GET", "/api/adoptions$query", token))
+            }
+            feed.clear()
+            for (index in 0 until result.length()) feed.add(adoptionListing(result.getJSONObject(index)))
+            message = ""
+        } catch (error: Exception) {
+            message = t("adopt_load_feed_failed")
+        } finally {
+            busy = false
+        }
+    }
+
     fun refreshFeed() {
         busy = true
         message = ""
-        scope.launch {
-            try {
-                val query = buildList {
-                    if (speciesFilter.isNotBlank()) add("species=${Uri.encode(speciesFilter.trim())}")
-                    if (cityFilter.isNotBlank()) add("city=${Uri.encode(cityFilter.trim())}")
-                    minimumAge.toIntOrNull()?.let { add("min_age_months=$it") }
-                    maximumAge.toIntOrNull()?.let { add("max_age_months=$it") }
-                }.joinToString("&").let { if (it.isBlank()) "" else "?$it" }
-                val result = withContext(Dispatchers.IO) {
-                    JSONArray(adoptionRequest("GET", "/api/adoptions$query"))
-                }
-                feed.clear()
-                for (index in 0 until result.length()) feed.add(adoptionListing(result.getJSONObject(index)))
-                message = ""
-            } catch (error: Exception) {
-                message = t("adopt_load_feed_failed")
-            } finally {
+        val user = FirebaseAuth.getInstance().currentUser
+        if (user == null) {
+            scope.launch { fetchFeed(null) }
+            return
+        }
+        user.getIdToken(false)
+            .addOnSuccessListener { result ->
+                scope.launch { fetchFeed(result.token) }
+            }
+            .addOnFailureListener {
+                message = t("adopt_auth_failed")
                 busy = false
             }
-        }
     }
 
     fun loadMine() {

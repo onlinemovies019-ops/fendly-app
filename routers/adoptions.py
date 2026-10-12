@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 from adoption_social import publish_adoption_listing
 from adoption_poster import render_adoption_poster
 from adoption_storage import delete_adoption_image, store_adoption_image
-from auth import get_current_user
+from auth import get_current_user, get_optional_current_user
 from database import get_db
 from models import (
     AdoptionApplication,
@@ -148,6 +148,7 @@ def list_adoptions(
     max_age_months: int | None = None,
     city: str | None = None,
     session: Session = Depends(get_db),
+    uid: str | None = Depends(get_optional_current_user),
 ) -> list[dict[str, object]]:
     if min_age_months is not None and not 0 <= min_age_months <= 600:
         raise HTTPException(422, "min_age_months must be between 0 and 600")
@@ -162,6 +163,8 @@ def list_adoptions(
     query = select(AdoptionListing).where(
         AdoptionListing.status.in_(("available", "pending"))
     )
+    if uid is not None:
+        query = query.where(AdoptionListing.lister_user_id != uid)
     if species and species.strip():
         query = query.where(AdoptionListing.species.ilike(species.strip()))
     if min_age_months is not None:
