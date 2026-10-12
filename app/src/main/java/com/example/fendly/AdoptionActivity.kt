@@ -217,8 +217,10 @@ private fun adoptionRequest(
     val connection = URL("${BuildConfig.API_BASE_URL}$path").openConnection() as HttpURLConnection
     try {
         connection.requestMethod = method
+        connection.useCaches = false
         connection.connectTimeout = 15000
         connection.readTimeout = 30000
+        connection.setRequestProperty("Cache-Control", "no-cache, no-store")
         if (token != null) connection.setRequestProperty("Authorization", "Bearer $token")
         if (body != null) {
             connection.doOutput = true

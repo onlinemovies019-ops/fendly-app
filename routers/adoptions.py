@@ -4,7 +4,7 @@ import os
 import re
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Response, UploadFile, status
 from PIL import Image, UnidentifiedImageError
 from pydantic import BaseModel, Field
 from sqlalchemy import desc, select
@@ -181,9 +181,11 @@ def list_adoptions(
 
 @router.get("/mine")
 def list_my_adoptions(
+    response: Response,
     session: Session = Depends(get_db),
     uid: str = Depends(get_current_user),
 ) -> list[dict[str, object]]:
+    response.headers["Cache-Control"] = "private, no-store"
     listings = session.scalars(
         select(AdoptionListing)
         .where(AdoptionListing.lister_user_id == uid)

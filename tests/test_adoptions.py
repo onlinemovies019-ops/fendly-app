@@ -484,6 +484,7 @@ def test_social_poster_url_is_returned_only_to_listing_owner(adoption_client):
     main.app.dependency_overrides[adoptions_module.get_optional_current_user] = lambda: current_uid[0]
 
     assert mine.status_code == 200
+    assert mine.headers["cache-control"] == "private, no-store"
     assert mine.json()[0]["social_post_image_url"] == poster_url
     assert public_feed.status_code == 200
     assert "social_post_image_url" not in public_feed.json()[0]
