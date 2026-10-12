@@ -291,6 +291,7 @@ private fun AdoptionScreen(onBack: () -> Unit) {
 
     fun refreshFeed() {
         busy = true
+        message = ""
         scope.launch {
             try {
                 val query = buildList {
@@ -316,6 +317,7 @@ private fun AdoptionScreen(onBack: () -> Unit) {
     fun loadMine() {
         mineLoaded = false
         mineLoading = true
+        message = ""
         withToken(
             onFailure = { mineLoading = false },
         ) { token ->
@@ -487,7 +489,6 @@ private fun AdoptionScreen(onBack: () -> Unit) {
 
     LaunchedEffect(Unit) {
         refreshFeed()
-        loadMine()
     }
     fun addSelectedPhotos(uris: List<Uri>) {
         val emptySlots = selectedPhotos.indices.filter { selectedPhotos[it] == null }
@@ -576,10 +577,7 @@ private fun AdoptionScreen(onBack: () -> Unit) {
                     Tab(selected = tab == index, onClick = {
                         tab = index
                         when (index) {
-                            0 -> {
-                                refreshFeed()
-                                loadMine()
-                            }
+                            0 -> refreshFeed()
                             1 -> loadMine()
                             else -> loadMyApplications()
                         }
@@ -656,24 +654,15 @@ private fun AdoptionScreen(onBack: () -> Unit) {
                         )
                     }
                     TextButton(onClick = {
-                        loadMine()
                         refreshFeed()
                     }) { Text(t("adopt_refresh")) }
-                    if (!mineLoaded) {
+                    if (feed.isEmpty() && busy) {
                         Column(
                             modifier = Modifier.weight(1f).fillMaxWidth(),
                             horizontalAlignment = Alignment.CenterHorizontally,
                             verticalArrangement = Arrangement.Center,
                         ) {
-                            if (mineLoading) {
-                                CircularProgressIndicator(Modifier.size(28.dp))
-                            } else {
-                                Text(t("adopt_load_listings_failed"))
-                                TextButton(onClick = {
-                                    loadMine()
-                                    refreshFeed()
-                                }) { Text(t("adopt_refresh")) }
-                            }
+                            CircularProgressIndicator(Modifier.size(28.dp))
                         }
                     } else {
                         LazyColumn(
@@ -693,17 +682,42 @@ private fun AdoptionScreen(onBack: () -> Unit) {
                                     }
                                 }
                             }
+                            if (feed.isEmpty() && message.isNotBlank()) {
+                                item {
+                                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                        Text(message, color = MaterialTheme.colorScheme.error)
+                                        TextButton(onClick = { refreshFeed() }) {
+                                            Text(t("adopt_refresh"))
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
                 }
-                1 -> LazyColumn(
-                    modifier = Modifier.weight(1f),
-                    verticalArrangement = Arrangement.spacedBy(10.dp),
-                ) {
-                    if (mine.isEmpty()) {
-                        item { Text(t("adopt_no_listings")) }
+                1 -> when {
+                    mineLoading -> Box(
+                        modifier = Modifier.weight(1f).fillMaxWidth(),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        CircularProgressIndicator(Modifier.size(28.dp))
                     }
-                    items(mine, key = AdoptionListing::id) { listing ->
+                    !mineLoaded -> Column(
+                        modifier = Modifier.weight(1f).fillMaxWidth(),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.Center,
+                    ) {
+                        Text(t("adopt_load_listings_failed"))
+                        TextButton(onClick = { loadMine() }) { Text(t("adopt_refresh")) }
+                    }
+                    else -> LazyColumn(
+                        modifier = Modifier.weight(1f),
+                        verticalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
+                        if (mine.isEmpty()) {
+                            item { Text(t("adopt_no_listings")) }
+                        }
+                        items(mine, key = AdoptionListing::id) { listing ->
                         ListingCard(
                             listing = listing,
                             t = ::t,
@@ -800,6 +814,7 @@ private fun AdoptionScreen(onBack: () -> Unit) {
                             }
                         }
                     }
+                }
                 }
                 else -> Column(Modifier.weight(1f)) {
                     Text(
