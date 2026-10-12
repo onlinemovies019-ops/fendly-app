@@ -1,5 +1,6 @@
 import asyncio
 import os
+from collections.abc import Sequence
 from urllib.parse import quote, unquote, urlsplit
 
 from supabase import Client, create_client
@@ -104,6 +105,48 @@ def refresh_private_image_url(image_url: str | None) -> str | None:
     if storage_object is None:
         return image_url
     return _make_signed_url(image_url)
+
+
+def refresh_private_image_urls(image_urls: Sequence[str | None]) -> list[str | None]:
+    refreshed = list(image_urls)
+    grouped_objects: dict[str, list[tuple[int, str]]] = {}
+    for index, image_url in enumerate(image_urls):
+        if not image_url:
+            continue
+        try:
+            storage_object = _storage_object(image_url)
+        except RuntimeError:
+            if urlsplit(image_url).scheme == "storage":
+                raise
+            continue
+        if storage_object is None:
+            continue
+        bucket, object_key = storage_object
+        grouped_objects.setdefault(bucket, []).append((index, object_key))
+
+    if not grouped_objects:
+        return refreshed
+
+    supabase_url, _ = _storage_config()
+    client = _storage_client()
+    for bucket, entries in grouped_objects.items():
+        signed_entries = client.storage.from_(bucket).create_signed_urls(
+            [object_key for _, object_key in entries],
+            SIGNED_URL_TTL_SECONDS,
+        )
+        if len(signed_entries) != len(entries):
+            raise RuntimeError("Supabase Storage returned an incomplete signed URL batch")
+        for (index, _), signed_entry in zip(entries, signed_entries):
+            if signed_entry.get("error"):
+                raise RuntimeError("Supabase Storage could not sign a private report photo")
+            signed_url = signed_entry.get("signedURL") or signed_entry.get("signedUrl")
+            if not isinstance(signed_url, str) or not signed_url:
+                raise RuntimeError("Supabase Storage did not return a signed image URL")
+            refreshed[index] = (
+                signed_url if signed_url.startswith("https://")
+                else f"{supabase_url}/storage/v1/{signed_url.lstrip('/')}"
+            )
+    return refreshed
 
 
 def private_image_reference(image_url: str | None) -> str | None:

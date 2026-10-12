@@ -10,6 +10,7 @@ class FakeBucket:
     def __init__(self):
         self.uploaded = []
         self.signed = []
+        self.signed_batches = []
         self.deleted = []
 
     def upload(self, path, data, file_options):
@@ -19,6 +20,16 @@ class FakeBucket:
     def create_signed_url(self, path, expires_in):
         self.signed.append((path, expires_in))
         return {"signedURL": f"/object/sign/report-images/{path}?token=short-lived"}
+
+    def create_signed_urls(self, paths, expires_in):
+        self.signed_batches.append((paths, expires_in))
+        return [
+            {
+                "signedURL": f"/object/sign/report-images/{path}?token=short-lived",
+                "error": None,
+            }
+            for path in paths
+        ]
 
     def remove(self, paths):
         self.deleted.extend(paths)
@@ -102,6 +113,31 @@ def test_refresh_private_image_url_signs_the_stable_reference(monkeypatch):
         "https://project.supabase.co/storage/v1/object/sign/"
         "report-images/report/photo.jpg?token=short-lived"
     )
+
+
+def test_refresh_private_image_urls_signs_private_photos_in_one_batch(monkeypatch):
+    client, bucket = configure_storage(monkeypatch)
+
+    result = image_storage.refresh_private_image_urls([
+        "storage://report-images/lost/photo-one.jpg",
+        "https://res.cloudinary.com/fendly/legacy.jpg",
+        "storage://report-images/found/photo-two.jpg",
+        None,
+    ])
+
+    assert bucket.signed_batches == [(
+        ["lost/photo-one.jpg", "found/photo-two.jpg"],
+        image_storage.SIGNED_URL_TTL_SECONDS,
+    )]
+    assert client.storage.requested_buckets == ["report-images"]
+    assert result == [
+        "https://project.supabase.co/storage/v1/object/sign/report-images/"
+        "lost/photo-one.jpg?token=short-lived",
+        "https://res.cloudinary.com/fendly/legacy.jpg",
+        "https://project.supabase.co/storage/v1/object/sign/report-images/"
+        "found/photo-two.jpg?token=short-lived",
+        None,
+    ]
 
 
 def test_external_image_urls_remain_unchanged_during_legacy_migration(monkeypatch):

@@ -367,6 +367,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
      */
     private static final boolean REQUIRE_MOBILE_OTP_FOR_PROFILE_SAVE = true;
     private final ExecutorService network = Executors.newSingleThreadExecutor();
+    private final ExecutorService adminPanelNetwork = Executors.newFixedThreadPool(2);
     private volatile String lastSubmissionError;
 
     private String normalizeDocumentKey(String rawUsername) {
@@ -10781,11 +10782,14 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         root.addView(successStories, contentParams(-1, -2, 0));
         successStories.setVisibility(View.GONE);
         boolean[] successStoriesLoaded = {false};
+        boolean[] successStoriesLoading = {false};
         successStoriesButton.setOnClickListener(view -> {
             boolean show = successStories.getVisibility() != View.VISIBLE;
             successStories.setVisibility(show ? View.VISIBLE : View.GONE);
-            if (show && !successStoriesLoaded[0]) {
-                loadAdminSuccessStories(successStories, successStoriesLoaded);
+            if (show && !successStoriesLoaded[0] && !successStoriesLoading[0]) {
+                loadAdminSuccessStories(
+                        successStories, successStoriesLoaded, successStoriesLoading,
+                        successStoriesButton);
             }
         });
 
@@ -10796,11 +10800,14 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         root.addView(adoptionListings, contentParams(-1, -2, 0));
         adoptionListings.setVisibility(View.GONE);
         boolean[] adoptionListingsLoaded = {false};
+        boolean[] adoptionListingsLoading = {false};
         adoptionListingsButton.setOnClickListener(view -> {
             boolean show = adoptionListings.getVisibility() != View.VISIBLE;
             adoptionListings.setVisibility(show ? View.VISIBLE : View.GONE);
-            if (show && !adoptionListingsLoaded[0]) {
-                loadAdminAdoptions(adoptionListings, adoptionListingsLoaded);
+            if (show && !adoptionListingsLoaded[0] && !adoptionListingsLoading[0]) {
+                loadAdminAdoptions(
+                        adoptionListings, adoptionListingsLoaded, adoptionListingsLoading,
+                        adoptionListingsButton);
             }
         });
 
@@ -11016,16 +11023,42 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         }));
     }
 
+    private void showAdminPanelLoading(LinearLayout panel, String message) {
+        panel.removeAllViews();
+        LinearLayout loadingRow = new LinearLayout(this);
+        loadingRow.setGravity(Gravity.CENTER_VERTICAL);
+        loadingRow.setOrientation(LinearLayout.HORIZONTAL);
+        ProgressBar progress = new ProgressBar(this);
+        loadingRow.addView(progress, new LinearLayout.LayoutParams(dp(26), dp(26)));
+        TextView label = text(message, 13, secondaryTextColor(), Typeface.NORMAL);
+        LinearLayout.LayoutParams labelParams = new LinearLayout.LayoutParams(-2, -2);
+        labelParams.setMargins(dp(10), 0, 0, 0);
+        loadingRow.addView(label, labelParams);
+        panel.addView(loadingRow, contentParams(-1, dp(44), dp(6)));
+    }
+
+    private void showAdminPanelMessage(LinearLayout panel, String message) {
+        panel.removeAllViews();
+        panel.addView(text(message, 13, secondaryTextColor(), Typeface.NORMAL),
+                contentParams(-1, -2, dp(8)));
+    }
+
     private void loadAdminSuccessStories(
             LinearLayout stories,
-            boolean[] loaded
+            boolean[] loaded,
+            boolean[] loading,
+            TextView trigger
     ) {
+        if (loading[0] || loaded[0]) return;
         FirebaseUser adminUser = FirebaseAuth.getInstance().getCurrentUser();
         if (adminUser == null) {
-            Toast.makeText(this, "Sign in to review reunion stories.", Toast.LENGTH_LONG).show();
+            showAdminPanelMessage(stories, "Sign in to review reunion stories.");
             return;
         }
-        adminUser.getIdToken(false).addOnSuccessListener(token -> network.execute(() -> {
+        loading[0] = true;
+        trigger.setText("Loading...");
+        showAdminPanelLoading(stories, "Loading opted-in reunion stories...");
+        adminUser.getIdToken(false).addOnSuccessListener(token -> adminPanelNetwork.execute(() -> {
             AuthorizedResponse response = authorizedRequest(
                     "GET",
                     "/api/admin/success-stories",
@@ -11033,12 +11066,12 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             );
             runOnUiThread(() -> {
                 if (response.statusCode < 200 || response.statusCode >= 300) {
-                    Toast.makeText(
-                            this,
+                    loading[0] = false;
+                    trigger.setText("Opt-in reunion stories");
+                    showAdminPanelMessage(
+                            stories,
                             "Could not load opted-in reunion stories. "
-                                    + authorizedRequestError(response),
-                            Toast.LENGTH_LONG
-                    ).show();
+                                    + authorizedRequestError(response));
                     return;
                 }
                 try {
@@ -11094,22 +11127,38 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                         });
                     }
                     loaded[0] = true;
+                    loading[0] = false;
+                    trigger.setText("Opt-in reunion stories");
                 } catch (Exception error) {
                     Log.e("ADMIN_SUCCESS_STORIES", "Could not read success stories", error);
-                    Toast.makeText(this, "Reunion stories could not be read.", Toast.LENGTH_LONG).show();
+                    loading[0] = false;
+                    trigger.setText("Opt-in reunion stories");
+                    showAdminPanelMessage(stories, "Reunion stories could not be read.");
                 }
             });
-        })).addOnFailureListener(error -> Toast.makeText(
-                this, "Could not verify your Fendly sign-in.", Toast.LENGTH_LONG).show());
+        })).addOnFailureListener(error -> runOnUiThread(() -> {
+            loading[0] = false;
+            trigger.setText("Opt-in reunion stories");
+            showAdminPanelMessage(stories, "Could not verify your Fendly sign-in.");
+        }));
     }
 
-    private void loadAdminAdoptions(LinearLayout listings, boolean[] loaded) {
+    private void loadAdminAdoptions(
+            LinearLayout listings,
+            boolean[] loaded,
+            boolean[] loading,
+            TextView trigger
+    ) {
+        if (loading[0] || loaded[0]) return;
         FirebaseUser adminUser = FirebaseAuth.getInstance().getCurrentUser();
         if (adminUser == null) {
-            Toast.makeText(this, "Sign in to manage adoption listings.", Toast.LENGTH_LONG).show();
+            showAdminPanelMessage(listings, "Sign in to manage adoption listings.");
             return;
         }
-        adminUser.getIdToken(false).addOnSuccessListener(token -> network.execute(() -> {
+        loading[0] = true;
+        trigger.setText("Loading...");
+        showAdminPanelLoading(listings, "Loading adoption listings...");
+        adminUser.getIdToken(false).addOnSuccessListener(token -> adminPanelNetwork.execute(() -> {
             AuthorizedResponse response = authorizedRequest(
                     "GET",
                     "/api/admin/adoptions",
@@ -11117,11 +11166,11 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             );
             runOnUiThread(() -> {
                 if (response.statusCode < 200 || response.statusCode >= 300) {
-                    Toast.makeText(
-                            this,
-                            "Could not load adoption listings. " + authorizedRequestError(response),
-                            Toast.LENGTH_LONG
-                    ).show();
+                    loading[0] = false;
+                    trigger.setText("Adoption listings");
+                    showAdminPanelMessage(
+                            listings,
+                            "Could not load adoption listings. " + authorizedRequestError(response));
                     return;
                 }
                 try {
@@ -11169,22 +11218,32 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                         deleteParams.setMargins(0, dp(8), 0, 0);
                         card.addView(delete, deleteParams);
                         delete.setOnClickListener(v ->
-                                confirmAdminAdoptionRemoval(listing, listings, loaded));
+                                confirmAdminAdoptionRemoval(
+                                        listing, listings, loaded, loading, trigger));
                     }
                     loaded[0] = true;
+                    loading[0] = false;
+                    trigger.setText("Adoption listings");
                 } catch (Exception error) {
                     Log.e("ADMIN_ADOPTIONS", "Could not read adoption listings", error);
-                    Toast.makeText(this, "Adoption listings could not be read.", Toast.LENGTH_LONG).show();
+                    loading[0] = false;
+                    trigger.setText("Adoption listings");
+                    showAdminPanelMessage(listings, "Adoption listings could not be read.");
                 }
             });
-        })).addOnFailureListener(error -> Toast.makeText(
-                this, "Could not verify your Fendly sign-in.", Toast.LENGTH_LONG).show());
+        })).addOnFailureListener(error -> runOnUiThread(() -> {
+            loading[0] = false;
+            trigger.setText("Adoption listings");
+            showAdminPanelMessage(listings, "Could not verify your Fendly sign-in.");
+        }));
     }
 
     private void confirmAdminAdoptionRemoval(
             JSONObject listing,
             LinearLayout listings,
-            boolean[] loaded
+            boolean[] loaded,
+            boolean[] loading,
+            TextView trigger
     ) {
         String listingId = listing.optString("id", "").trim();
         if (listingId.isEmpty()) {
@@ -11222,7 +11281,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         actions.addView(delete, deleteParams);
         delete.setOnClickListener(view -> {
             confirmDialog.dismiss();
-            deleteAdminAdoption(listingId, listings, loaded);
+            deleteAdminAdoption(listingId, listings, loaded, loading, trigger);
         });
 
         content.addView(actions, new LinearLayout.LayoutParams(-1, dp(44)));
@@ -11235,7 +11294,9 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
     private void deleteAdminAdoption(
             String listingId,
             LinearLayout listings,
-            boolean[] loaded
+            boolean[] loaded,
+            boolean[] loading,
+            TextView trigger
     ) {
         FirebaseUser adminUser = FirebaseAuth.getInstance().getCurrentUser();
         if (adminUser == null) {
@@ -11260,7 +11321,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                 }
                 loaded[0] = false;
                 listings.removeAllViews();
-                loadAdminAdoptions(listings, loaded);
+                loadAdminAdoptions(listings, loaded, loading, trigger);
                 Toast.makeText(
                         this,
                         "Adoption listing and its Meta posts were deleted.",

@@ -374,7 +374,7 @@ async def create_adoption(
     if auto_post_social:
         try:
             poster_data = render_adoption_poster(
-                prepared[0][0],
+                [photo_data for photo_data, _, _ in prepared],
                 pet_name=pet_name.strip(),
                 species=species.strip().lower(),
                 breed=breed.strip() if breed else None,

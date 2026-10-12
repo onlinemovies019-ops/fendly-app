@@ -346,8 +346,11 @@ def test_admin_success_stories_returns_only_resolved_opted_in_minimal_fields(
     main.app.dependency_overrides[admin_module.get_current_user] = lambda: "admin-uid"
     monkeypatch.setattr(
         admin_module,
-        "refresh_private_image_url",
-        lambda image_url: "https://signed.example/photo" if image_url else None,
+        "refresh_private_image_urls",
+        lambda image_urls: [
+            "https://signed.example/photo" if image_url else None
+            for image_url in image_urls
+        ],
     )
     try:
         with Session(session_factory.kw["bind"]) as session:

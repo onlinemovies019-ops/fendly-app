@@ -115,3 +115,45 @@ def test_adoption_poster_renders_a_social_ready_jpeg():
     with Image.open(BytesIO(content)) as poster:
         assert poster.format == "JPEG"
         assert poster.size == (1080, 1350)
+
+
+@pytest.mark.parametrize(
+    ("colors", "samples"),
+    [
+        (
+            [(220, 40, 40), (40, 80, 220)],
+            [((300, 600), (220, 40, 40)), ((780, 600), (40, 80, 220))],
+        ),
+        (
+            [(220, 40, 40), (40, 180, 70), (40, 80, 220)],
+            [
+                ((300, 600), (220, 40, 40)),
+                ((850, 500), (40, 180, 70)),
+                ((850, 820), (40, 80, 220)),
+            ],
+        ),
+    ],
+)
+def test_adoption_poster_collage_includes_two_or_three_pet_photos(colors, samples):
+    photo_data = []
+    for color in colors:
+        photo = BytesIO()
+        Image.new("RGB", (100, 100), color=color).save(photo, format="JPEG")
+        photo_data.append(photo.getvalue())
+
+    content = render_adoption_poster(
+        photo_data,
+        pet_name="Milo",
+        species="dog",
+        breed="Indie",
+        age_months=18,
+        location_city="Pune",
+        health_status="Vaccinated",
+        download_url="https://fendly.app",
+    )
+
+    with Image.open(BytesIO(content)) as poster:
+        image = poster.convert("RGB")
+        for point, expected in samples:
+            actual = image.getpixel(point)
+            assert all(abs(actual[channel] - expected[channel]) < 25 for channel in range(3))

@@ -90,6 +90,22 @@ def _create_listing(
     return response
 
 
+def test_adoption_social_poster_receives_every_uploaded_photo(adoption_client, monkeypatch):
+    client, _, _ = adoption_client
+    captured = {}
+
+    def capture_poster(photos, **_kwargs):
+        captured["photos"] = photos
+        return b"framed adoption collage"
+
+    monkeypatch.setattr(adoptions_module, "render_adoption_poster", capture_poster)
+
+    response = _create_listing(client, auto_post_social="true", image_count=3)
+
+    assert response.status_code == 201, response.text
+    assert captured["photos"] == [b"valid image", b"valid image", b"valid image"]
+
+
 def test_adoption_listing_rejects_more_than_three_photos(adoption_client):
     client, _, _ = adoption_client
 

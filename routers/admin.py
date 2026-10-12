@@ -19,7 +19,7 @@ from adoption_storage import delete_adoption_image
 from auth import get_current_user
 from database import get_db
 from image_matching import cosine_similarity, create_image_embedding
-from image_storage import refresh_private_image_url
+from image_storage import refresh_private_image_url, refresh_private_image_urls
 from models import (
     AdminMatchAlert,
     AdoptionApplication,
@@ -393,14 +393,17 @@ def list_opted_in_success_stories(
             select(User).where(User.firebase_uid.in_(owner_ids))
         ).all()
     } if owner_ids else {}
+    photo_urls = refresh_private_image_urls(
+        [report.image_url for _, report in reports]
+    )
     return [
         {
             "type": item_type,
             "category": report.category,
             "city": cities.get(report.created_by) or "",
-            "photo_url": refresh_private_image_url(report.image_url),
+            "photo_url": photo_url,
         }
-        for item_type, report in reports
+        for (item_type, report), photo_url in zip(reports, photo_urls)
     ]
 
 

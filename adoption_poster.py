@@ -1,4 +1,5 @@
 import io
+from collections.abc import Sequence
 from pathlib import Path
 from textwrap import wrap
 
@@ -58,7 +59,7 @@ def _load_photo(data: bytes) -> Image.Image:
 
 
 def render_adoption_poster(
-    photo_data: bytes,
+    photo_data: bytes | Sequence[bytes],
     *,
     pet_name: str,
     species: str,
@@ -68,7 +69,12 @@ def render_adoption_poster(
     health_status: str,
     download_url: str,
 ) -> bytes:
-    photo = _load_photo(photo_data)
+    photo_data_items = (
+        [photo_data] if isinstance(photo_data, bytes) else list(photo_data)
+    )[:3]
+    if not photo_data_items:
+        raise ValueError("At least one pet photo is required for an adoption poster")
+    photos = [_load_photo(data) for data in photo_data_items]
     poster = Image.new("RGB", POSTER_SIZE, BACKGROUND)
     draw = ImageDraw.Draw(poster)
 
@@ -91,19 +97,40 @@ def render_adoption_poster(
         radius=38,
         fill=(255, 255, 255),
     )
-    fitted = ImageOps.fit(
-        photo,
-        (photo_box[2] - photo_box[0], photo_box[3] - photo_box[1]),
-        method=Image.Resampling.LANCZOS,
-        centering=(0.5, 0.45),
-    )
-    mask = Image.new("L", fitted.size, 0)
-    ImageDraw.Draw(mask).rounded_rectangle(
-        (0, 0, fitted.width - 1, fitted.height - 1),
-        radius=30,
-        fill=255,
-    )
-    poster.paste(fitted, photo_box[:2], mask)
+    left, top, right, bottom = photo_box
+    gutter = 12
+    if len(photos) == 1:
+        tiles = [photo_box]
+    elif len(photos) == 2:
+        tile_width = (right - left - gutter) // 2
+        tiles = [
+            (left, top, left + tile_width, bottom),
+            (left + tile_width + gutter, top, right, bottom),
+        ]
+    else:
+        main_width = (right - left - gutter) * 2 // 3
+        secondary_top = top + (bottom - top - gutter) // 2
+        tiles = [
+            (left, top, left + main_width, bottom),
+            (left + main_width + gutter, top, right, secondary_top),
+            (left + main_width + gutter, secondary_top + gutter, right, bottom),
+        ]
+
+    for photo, tile in zip(photos, tiles):
+        tile_size = (tile[2] - tile[0], tile[3] - tile[1])
+        fitted = ImageOps.fit(
+            photo,
+            tile_size,
+            method=Image.Resampling.LANCZOS,
+            centering=(0.5, 0.45),
+        )
+        mask = Image.new("L", tile_size, 0)
+        ImageDraw.Draw(mask).rounded_rectangle(
+            (0, 0, tile_size[0] - 1, tile_size[1] - 1),
+            radius=30,
+            fill=255,
+        )
+        poster.paste(fitted, tile[:2], mask)
 
     badge = (730, 354, 978, 414)
     draw.rounded_rectangle(badge, radius=30, fill=GOLD)
