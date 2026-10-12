@@ -11,7 +11,9 @@ import android.view.View;
 import android.util.Log;
 import android.widget.RemoteViews;
 
-import com.google.android.gms.tasks.Tasks;
+import androidx.work.ExistingWorkPolicy;
+import androidx.work.OneTimeWorkRequest;
+import androidx.work.WorkManager;
 import com.google.firebase.auth.FirebaseAuth;
 import com.google.firebase.auth.FirebaseUser;
 
@@ -27,8 +29,6 @@ import java.net.HttpURLConnection;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.util.Locale;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 
 public final class FendlyWidgetProvider extends AppWidgetProvider {
@@ -40,19 +40,19 @@ public final class FendlyWidgetProvider extends AppWidgetProvider {
     private static final String KEY_FOUND = "found_count";
     private static final String KEY_UNREAD = "unread_count";
     private static final String KEY_USER_UID = "user_uid";
-    private static final ExecutorService EXECUTOR = Executors.newSingleThreadExecutor();
+    private static final String REFRESH_WORK_NAME = "fendly_widget_refresh";
 
     public static void refresh(Context context) {
-        Intent intent = new Intent(context, FendlyWidgetProvider.class)
-                .setAction(ACTION_REFRESH)
-                .setPackage(context.getPackageName());
-        context.sendBroadcast(intent);
+        OneTimeWorkRequest request = new OneTimeWorkRequest.Builder(FendlyWidgetRefreshWorker.class)
+                .build();
+        WorkManager.getInstance(context.getApplicationContext())
+                .enqueueUniqueWork(REFRESH_WORK_NAME, ExistingWorkPolicy.KEEP, request);
     }
 
     @Override
     public void onReceive(Context context, Intent intent) {
         if (ACTION_REFRESH.equals(intent.getAction())) {
-            refreshWidgets(context);
+            refresh(context);
             return;
         }
         super.onReceive(context, intent);
@@ -60,37 +60,30 @@ public final class FendlyWidgetProvider extends AppWidgetProvider {
 
     @Override
     public void onUpdate(Context context, AppWidgetManager appWidgetManager, int[] appWidgetIds) {
-        refreshWidgets(context);
+        refresh(context);
     }
 
-    private void refreshWidgets(Context context) {
-        Context applicationContext = context.getApplicationContext();
-        AppWidgetManager manager = AppWidgetManager.getInstance(applicationContext);
-        int[] widgetIds = manager.getAppWidgetIds(
-                new ComponentName(applicationContext, FendlyWidgetProvider.class));
-        if (widgetIds.length == 0) {
-            return;
-        }
+    static void refreshWidgetsInBackground(Context applicationContext) {
         renderWidgets(applicationContext);
-        PendingResult pendingResult = goAsync();
-        EXECUTOR.execute(() -> {
-            try {
-                refreshCounts(applicationContext);
-            } catch (Exception error) {
-                Log.e(TAG, "Unable to refresh widget counts; keeping the last saved values", error);
-            } finally {
-                try {
-                    renderWidgets(applicationContext);
-                } catch (RuntimeException error) {
-                    Log.e(TAG, "Unable to render refreshed widget counts", error);
-                } finally {
-                    pendingResult.finish();
-                }
-            }
-        });
+        try {
+            refreshCounts(applicationContext);
+        } catch (Exception error) {
+            Log.e(TAG, "Unable to refresh widget counts; keeping the last saved values", error);
+        }
+        try {
+            renderWidgets(applicationContext);
+        } catch (RuntimeException error) {
+            Log.e(TAG, "Unable to render refreshed widget counts", error);
+        }
     }
 
     private static void refreshCounts(Context context) throws Exception {
+        AppWidgetManager manager = AppWidgetManager.getInstance(context);
+        int[] widgetIds = manager.getAppWidgetIds(
+                new ComponentName(context, FendlyWidgetProvider.class));
+        if (widgetIds.length == 0) {
+            return;
+        }
         FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
         SharedPreferences preferences = context.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE);
         if (user == null) {
@@ -103,7 +96,9 @@ public final class FendlyWidgetProvider extends AppWidgetProvider {
             return;
         }
 
-        String idToken = Tasks.await(user.getIdToken(false), 10, TimeUnit.SECONDS).getToken();
+        String idToken = com.google.android.gms.tasks.Tasks.await(
+                user.getIdToken(false), 10, TimeUnit.SECONDS
+        ).getToken();
         if (idToken == null || idToken.isEmpty()) {
             throw new IOException("Firebase returned an empty authentication token");
         }
