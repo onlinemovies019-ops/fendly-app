@@ -6762,11 +6762,23 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                         connection = (HttpURLConnection) new URL(API_BASE + "/api/items/mine").openConnection();
                         connection.setRequestMethod("GET");
                         connection.setConnectTimeout(8000);
-                        connection.setReadTimeout(10000);
+                        connection.setReadTimeout(30000);
                         connection.setRequestProperty("Authorization", "Bearer " + idToken);
                         int responseCode = connection.getResponseCode();
                         if (responseCode < 200 || responseCode >= 300) {
-                            throw new java.io.IOException("My reports request returned HTTP " + responseCode);
+                            InputStream errorStream = connection.getErrorStream();
+                            String errorBody = errorStream == null ? "" : readStream(errorStream);
+                            String detail = "";
+                            try {
+                                detail = new JSONObject(errorBody).optString("detail", "");
+                            } catch (Exception parseError) {
+                                Log.w("MY_REPORTS", "Reports endpoint returned a non-JSON error");
+                            }
+                            throw new java.io.IOException(
+                                    detail.isEmpty()
+                                            ? "My reports request returned HTTP " + responseCode
+                                            : detail
+                            );
                         }
                         String response = readStream(connection.getInputStream());
                         if (response != null && !response.trim().isEmpty()) {
@@ -6790,7 +6802,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                 runOnUiThread(() -> {
                     if (isFinishing() || isDestroyed() || currentPage != PAGE_REPORTS) return;
                     if (requestError != null && recentlySubmittedReport == null) {
-                        showReportsLoadError();
+                        showReportsLoadError(requestError);
                         return;
                     }
                     if (recentlySubmittedReport != null) {
@@ -6809,14 +6821,17 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         });
     }
 
-    private void showReportsLoadError() {
+    private void showReportsLoadError(String reason) {
         LinearLayout root = screenBase(translate("My reports"));
         addHeading(
                 translate("Your reports"),
                 localizeReportsText("Only you and Fendly administrators can see the reports you submit.")
         );
-        addField(root, text(localizeReportsText("Your reports could not be loaded."), 16,
-                secondaryTextColor(), Typeface.NORMAL));
+        String message = localizeReportsText("Your reports could not be loaded.");
+        if (reason != null && !reason.isEmpty()) {
+            message += "\n" + reason;
+        }
+        addField(root, text(message, 16, secondaryTextColor(), Typeface.NORMAL));
         TextView retry = actionButton(translate("Retry"), true);
         retry.setOnClickListener(view -> showReports());
         addField(root, retry);

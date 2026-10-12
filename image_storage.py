@@ -109,7 +109,7 @@ def refresh_private_image_url(image_url: str | None) -> str | None:
 
 def refresh_private_image_urls(image_urls: Sequence[str | None]) -> list[str | None]:
     refreshed = list(image_urls)
-    grouped_objects: dict[str, list[tuple[int, str]]] = {}
+    grouped_objects: dict[str, dict[str, list[int]]] = {}
     for index, image_url in enumerate(image_urls):
         if not image_url:
             continue
@@ -122,30 +122,32 @@ def refresh_private_image_urls(image_urls: Sequence[str | None]) -> list[str | N
         if storage_object is None:
             continue
         bucket, object_key = storage_object
-        grouped_objects.setdefault(bucket, []).append((index, object_key))
+        grouped_objects.setdefault(bucket, {}).setdefault(object_key, []).append(index)
 
     if not grouped_objects:
         return refreshed
 
     supabase_url, _ = _storage_config()
     client = _storage_client()
-    for bucket, entries in grouped_objects.items():
+    for bucket, objects in grouped_objects.items():
         signed_entries = client.storage.from_(bucket).create_signed_urls(
-            [object_key for _, object_key in entries],
+            list(objects),
             SIGNED_URL_TTL_SECONDS,
         )
-        if len(signed_entries) != len(entries):
+        if len(signed_entries) != len(objects):
             raise RuntimeError("Supabase Storage returned an incomplete signed URL batch")
-        for (index, _), signed_entry in zip(entries, signed_entries):
+        for (object_key, indices), signed_entry in zip(objects.items(), signed_entries):
             if signed_entry.get("error"):
                 raise RuntimeError("Supabase Storage could not sign a private report photo")
             signed_url = signed_entry.get("signedURL") or signed_entry.get("signedUrl")
             if not isinstance(signed_url, str) or not signed_url:
                 raise RuntimeError("Supabase Storage did not return a signed image URL")
-            refreshed[index] = (
+            signed_image_url = (
                 signed_url if signed_url.startswith("https://")
                 else f"{supabase_url}/storage/v1/{signed_url.lstrip('/')}"
             )
+            for index in indices:
+                refreshed[index] = signed_image_url
     return refreshed
 
 

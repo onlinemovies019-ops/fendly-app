@@ -30,6 +30,7 @@ from report_deletion import delete_report_from_app
 from image_storage import (
     private_image_reference,
     refresh_private_image_url,
+    refresh_private_image_urls,
     store_image as store_private_image,
 )
 from routers.payments import require_lost_report_entitlement
@@ -678,8 +679,25 @@ async def list_my_items(
             if (alert.review_status or "").strip().lower() == "confirmed":
                 matched_report_ids.update((alert.lost_item_id, alert.found_item_id))
 
+    image_urls_to_sign: list[str | None] = []
+    report_image_urls: dict[int, list[str | None]] = {}
+    for _, item in items:
+        urls = item.image_urls or ([item.image_url] if item.image_url else [])
+        report_image_urls[id(item)] = urls
+        image_urls_to_sign.extend(urls)
+        image_urls_to_sign.append(item.image_url)
+    signed_image_urls = refresh_private_image_urls(image_urls_to_sign)
+    image_url_iterator = iter(signed_image_urls)
+
     results = []
     for item_type, item in items:
+        urls = report_image_urls[id(item)]
+        refreshed_report_image_urls = [
+            url
+            for url in (next(image_url_iterator) for _ in urls)
+            if url
+        ]
+        refreshed_primary_image_url = next(image_url_iterator)
         result = {
             "id": item.id,
             "type": item_type,
@@ -690,7 +708,8 @@ async def list_my_items(
             "lng": item.lng,
             "report_date": item.report_date or _stored_report_field(item.description, "Date"),
             "report_location": item.report_location or _stored_report_field(item.description, "Location"),
-            **_report_image_fields(item),
+            "image_url": refreshed_primary_image_url,
+            "image_urls": refreshed_report_image_urls,
             "edit_count": item.edit_count,
             "created_at": item.created_at,
             "can_delete": _within_user_report_deletion_window(item.created_at),

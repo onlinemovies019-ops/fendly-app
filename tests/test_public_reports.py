@@ -448,6 +448,69 @@ def test_my_reports_only_marks_recent_reports_as_deletable(reports_client, monke
         main.app.dependency_overrides.pop(items_module.get_current_user, None)
 
 
+def test_my_reports_batches_private_photo_signing(reports_client, monkeypatch):
+    client, session_factory = reports_client
+    main.app.dependency_overrides[items_module.get_current_user] = lambda: "report-owner"
+    signed_batches = []
+
+    def sign_urls(image_urls):
+        signed_batches.append(list(image_urls))
+        return [
+            f"https://signed.example/{index}" if image_url else None
+            for index, image_url in enumerate(image_urls)
+        ]
+
+    monkeypatch.setattr(items_module, "refresh_private_image_urls", sign_urls)
+    try:
+        with Session(session_factory.kw["bind"]) as session:
+            session.add_all([
+                LostItem(
+                    id="photo-report-one",
+                    created_by="report-owner",
+                    title="Lost cat",
+                    description="First report",
+                    image_url="storage://report-images/one/primary.jpg",
+                    image_urls=[
+                        "storage://report-images/one/primary.jpg",
+                        "storage://report-images/one/extra.jpg",
+                    ],
+                    lat=0,
+                    lng=0,
+                ),
+                FoundItem(
+                    id="photo-report-two",
+                    created_by="report-owner",
+                    title="Found dog",
+                    description="Second report",
+                    image_url="storage://report-images/two/photo.jpg",
+                    lat=0,
+                    lng=0,
+                ),
+            ])
+            session.commit()
+
+        response = client.get("/api/items/mine")
+
+        assert response.status_code == 200, response.text
+        reports = {report["id"]: report for report in response.json()}
+        assert signed_batches == [[
+            "storage://report-images/one/primary.jpg",
+            "storage://report-images/one/extra.jpg",
+            "storage://report-images/one/primary.jpg",
+            "storage://report-images/two/photo.jpg",
+            "storage://report-images/two/photo.jpg",
+        ]]
+        assert reports["photo-report-one"]["image_url"] == "https://signed.example/2"
+        assert reports["photo-report-one"]["image_urls"] == [
+            "https://signed.example/0",
+            "https://signed.example/1",
+        ]
+        assert reports["photo-report-two"]["image_url"] == "https://signed.example/4"
+        assert reports["photo-report-two"]["image_urls"] == ["https://signed.example/3"]
+    finally:
+        main.app.dependency_overrides.pop(items_module.get_current_user, None)
+
+
 def test_non_admin_cannot_remove_report(reports_client, monkeypatch):
     client, session_factory = reports_client
     monkeypatch.setenv("ADMIN_FIREBASE_UIDS", "admin-uid")
