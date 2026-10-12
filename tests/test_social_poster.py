@@ -1,7 +1,7 @@
 from io import BytesIO
 
 import pytest
-from PIL import Image
+from PIL import Image, ImageDraw
 
 from adoption_poster import render_adoption_poster
 from social_poster import POSTER_HEIGHT, POSTER_WIDTH, render_community_poster
@@ -25,6 +25,40 @@ def test_community_poster_renders_distinct_lost_and_found_designs():
         with Image.open(BytesIO(content)) as poster:
             assert poster.format == "JPEG"
             assert poster.size == (POSTER_WIDTH, POSTER_HEIGHT)
+
+
+@pytest.mark.parametrize(
+    ("title", "category", "photo_label"),
+    [
+        ("My Aunt", "people", "LOST PERSON"),
+        ("Meow", "Pets & Animals", "LOST ANIMAL"),
+        ("Tie", "Accessories", "LOST ITEM"),
+    ],
+)
+def test_community_poster_photo_tag_matches_report_subject(
+    monkeypatch,
+    title,
+    category,
+    photo_label,
+):
+    drawn_text = []
+    original_text = ImageDraw.ImageDraw.text
+
+    def capture_text(draw, xy, text, *args, **kwargs):
+        drawn_text.append(text)
+        return original_text(draw, xy, text, *args, **kwargs)
+
+    monkeypatch.setattr(ImageDraw.ImageDraw, "text", capture_text)
+    render_community_poster(
+        title=title,
+        report_type="LOST",
+        category=category,
+        report_url="https://fendly.app/item/example",
+        photo=Image.new("RGB", (80, 80), color=(120, 145, 160)),
+    )
+
+    assert "FENDLY  ·  LOST ITEM ALERT" in drawn_text
+    assert photo_label in drawn_text
 
 
 @pytest.mark.parametrize(

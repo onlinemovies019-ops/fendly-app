@@ -119,6 +119,8 @@ def render_community_poster(
     report_label = "FOUND ITEM" if is_found else "LOST ITEM"
     accent = (22, 104, 79) if is_found else (174, 59, 54)
     subject = _home_subject(title, category).lower()
+    subject_label = "PERSON" if subject == "person" else "ANIMAL" if subject != "item" else "ITEM"
+    photo_label = f"{'FOUND' if is_found else 'LOST'} {subject_label}"
     headline = (
         f"Help reunite this {subject} with its owner"
         if is_found
@@ -185,8 +187,11 @@ def render_community_poster(
             tile_bounds = (tile[2] - tile[0], tile[3] - tile[1])
             fitted_photo = _rounded_photo(image, tile_bounds)
             poster.paste(fitted_photo, tile[:2], fitted_photo.getchannel("A"))
-    draw.rounded_rectangle((158, 356, 340, 410), radius=27, fill=accent)
-    draw.text((180, 369), report_label, fill="white", font=_font(21, bold=True))
+    photo_label_font = _font(21, bold=True)
+    photo_label_width = draw.textbbox((0, 0), photo_label, font=photo_label_font)[2]
+    photo_label_bounds = (158, 356, 180 + photo_label_width + 22, 410)
+    draw.rounded_rectangle(photo_label_bounds, radius=27, fill=accent)
+    draw.text((180, 369), photo_label, fill="white", font=photo_label_font)
 
     qr = cast(Image.Image, qrcode.make(report_url)).convert("RGB").resize(
         (150, 150), Image.Resampling.NEAREST
