@@ -72,6 +72,11 @@
             android:label="Adopt" />
 
         <activity
+            android:name=".PhotoCropActivity"
+            android:exported="false"
+            android:label="Crop photo" />
+
+        <activity
             android:name=".LanguageActivity"
             android:exported="false"
             android:theme="@style/Theme.Fendly"

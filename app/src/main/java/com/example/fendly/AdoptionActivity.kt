@@ -1,6 +1,7 @@
 package com.example.fendly
 
 import android.Manifest
+import android.content.Intent
 import android.graphics.BitmapFactory
 import android.graphics.Bitmap
 import android.net.Uri
@@ -535,11 +536,26 @@ private fun AdoptionScreen(onBack: () -> Unit) {
     ) { uris ->
         addSelectedPhotos(uris)
     }
+    val photoCropLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult(),
+    ) { result ->
+        if (result.resultCode == android.app.Activity.RESULT_OK) {
+            val croppedBitmap = PhotoCropActivity.getBitmapExtra(
+                result.data,
+                PhotoCropActivity.EXTRA_CROPPED_BITMAP,
+            )
+            if (croppedBitmap != null && selectedPhotoSlot in selectedPhotos.indices) {
+                selectedPhotos[selectedPhotoSlot] = AdoptionPhoto(bitmap = croppedBitmap)
+            }
+        }
+    }
     val cameraLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.TakePicturePreview(),
     ) { bitmap ->
         if (bitmap != null && selectedPhotoSlot in selectedPhotos.indices) {
-            selectedPhotos[selectedPhotoSlot] = AdoptionPhoto(bitmap = bitmap)
+            val cropIntent = Intent(context, PhotoCropActivity::class.java)
+                .putExtra(PhotoCropActivity.EXTRA_BITMAP, bitmap)
+            photoCropLauncher.launch(cropIntent)
         }
     }
     val cameraPermissionLauncher = rememberLauncherForActivityResult(

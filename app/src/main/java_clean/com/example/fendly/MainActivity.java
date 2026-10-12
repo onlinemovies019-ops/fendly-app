@@ -10592,10 +10592,23 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         }
         if (requestCode >= 720 && requestCode <= 722 && resultCode == RESULT_OK && data != null && data.getExtras() != null) {
             int slot = requestCode - 720;
-            reportCameraImages[slot] = (Bitmap) data.getExtras().get("data");
-            reportImages[slot] = null;
-            capturedImage = reportCameraImages[0];
-            if (currentReportType != null) showReport(currentReportType);
+            Bitmap captured = PhotoCropActivity.getBitmapExtra(data, "data");
+            if (captured != null) {
+                Intent cropIntent = new Intent(this, PhotoCropActivity.class)
+                        .putExtra(PhotoCropActivity.EXTRA_BITMAP, captured);
+                startActivityForResult(cropIntent, 723 + slot);
+            }
+        }
+        if (requestCode >= 723 && requestCode <= 725 && resultCode == RESULT_OK && data != null) {
+            int slot = requestCode - 723;
+            Bitmap cropped = PhotoCropActivity.getBitmapExtra(
+                    data, PhotoCropActivity.EXTRA_CROPPED_BITMAP);
+            if (cropped != null) {
+                reportCameraImages[slot] = cropped;
+                reportImages[slot] = null;
+                capturedImage = reportCameraImages[0];
+                if (currentReportType != null) showReport(currentReportType);
+            }
         }
         if (requestCode == REQUEST_PROFILE_IMAGE && resultCode == RESULT_OK && data != null && data.getData() != null) {
             Uri imageUri = data.getData();
