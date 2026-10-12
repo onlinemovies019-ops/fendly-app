@@ -109,6 +109,31 @@ def _redact_meta_error(message: str, access_token: str) -> str:
     return re.sub(r"\bEAA[A-Za-z0-9]{20,}\b", "[redacted Meta access token]", message)
 
 
+def _meta_error_message(response: httpx.Response, access_token: str) -> str:
+    try:
+        error = response.json().get("error", {})
+    except (ValueError, AttributeError):
+        error = {}
+    if not isinstance(error, dict):
+        error = {}
+    message = error.get("message", "")
+    if not isinstance(message, str):
+        message = ""
+    if error.get("code") == 190 or any(
+        phrase in message.casefold()
+        for phrase in ("session has expired", "access token has expired", "error validating access token")
+    ):
+        return (
+            "Meta rejected the expired or revoked access token. Replace the server-side "
+            "Meta Page access token with a newly generated token that has Facebook Page "
+            "and Instagram publishing permissions, then retry publishing."
+        )
+    return _redact_meta_error(
+        message or f"Meta Graph API returned HTTP {response.status_code}",
+        access_token,
+    )[:400]
+
+
 def _instagram_account_for_page(page_id: str, access_token: str) -> str:
     graph_version = os.getenv("META_GRAPH_API_VERSION", DEFAULT_GRAPH_VERSION).strip()
     endpoint = f"https://graph.facebook.com/{graph_version}/{page_id}"
@@ -124,11 +149,7 @@ def _instagram_account_for_page(page_id: str, access_token: str) -> str:
         response.raise_for_status()
         result = response.json()
     except httpx.HTTPStatusError as exc:
-        try:
-            graph_error = exc.response.json().get("error", {}).get("message", "")
-        except (ValueError, AttributeError):
-            graph_error = ""
-        message = graph_error or f"Meta Graph API returned HTTP {exc.response.status_code}"
+        message = _meta_error_message(exc.response, access_token)
         raise RuntimeError(_redact_meta_error(message[:400], access_token)) from exc
     except (httpx.HTTPError, ValueError) as exc:
         raise RuntimeError("Could not discover the Instagram account linked to META_PAGE_ID") from exc
@@ -154,13 +175,8 @@ def _graph_post(
         response.raise_for_status()
         result = response.json()
     except httpx.HTTPStatusError as exc:
-        try:
-            graph_error = exc.response.json().get("error", {}).get("message", "")
-        except (ValueError, AttributeError):
-            graph_error = ""
-        message = graph_error or f"Meta Graph API returned HTTP {exc.response.status_code}"
         access_token = payload.get("access_token", "")
-        message = _redact_meta_error(message, access_token)
+        message = _meta_error_message(exc.response, access_token)
         if "publish_actions" in message.casefold():
             message = (
                 "Meta rejected Facebook publishing because publish_actions is deprecated. "
@@ -200,11 +216,7 @@ def _wait_for_instagram_container(
             response.raise_for_status()
             result = response.json()
         except httpx.HTTPStatusError as exc:
-            try:
-                graph_error = exc.response.json().get("error", {}).get("message", "")
-            except (ValueError, AttributeError):
-                graph_error = ""
-            message = graph_error or f"Meta Graph API returned HTTP {exc.response.status_code}"
+            message = _meta_error_message(exc.response, access_token)
             raise RuntimeError(
                 _redact_meta_error(message[:400], access_token)
             ) from exc

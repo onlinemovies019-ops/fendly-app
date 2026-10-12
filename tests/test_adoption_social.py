@@ -146,6 +146,52 @@ def test_meta_api_failures_include_graph_error_in_render_logs(monkeypatch, caplo
     assert "Instagram publishing failed: Meta permission denied" in caplog.text
 
 
+def test_expired_meta_token_error_explains_how_to_reconnect_and_retry(monkeypatch):
+    monkeypatch.setenv("META_PAGE_ID", "1234567890")
+    monkeypatch.setenv("META_INSTAGRAM_ACCOUNT_ID", "9876543210")
+    monkeypatch.setenv("META_PAGE_ACCESS_TOKEN", "test-token")
+
+    def fail_post(endpoint, *, data, timeout):
+        request = httpx.Request("POST", endpoint)
+        response = httpx.Response(
+            400,
+            request=request,
+            json={
+                "error": {
+                    "message": "Error validating access token: Session has expired.",
+                    "type": "OAuthException",
+                    "code": 190,
+                }
+            },
+        )
+        raise httpx.HTTPStatusError("Meta request failed", request=request, response=response)
+
+    monkeypatch.setattr("adoption_social.httpx.post", fail_post)
+    listing = AdoptionListing(
+        id="listing-expired-token",
+        lister_user_id="owner",
+        pet_name="Milo",
+        species="dog",
+        breed="",
+        age_months=18,
+        gender="male",
+        health_status="Vaccinated",
+        description="Friendly and active.",
+        location_city="Pune",
+        images=["https://storage.example/pet.jpg"],
+        auto_post_social=True,
+    )
+
+    _, errors = publish_adoption_listing(listing, lambda *_: None)
+
+    expected = (
+        "Meta rejected the expired or revoked access token. Replace the server-side "
+        "Meta Page access token with a newly generated token that has Facebook Page "
+        "and Instagram publishing permissions, then retry publishing."
+    )
+    assert errors == [f"Facebook: {expected}", f"Instagram: {expected}"]
+
+
 def test_meta_page_id_requires_page_access_token(monkeypatch):
     monkeypatch.setenv("META_PAGE_ID", "1234567890")
     monkeypatch.delenv("META_FACEBOOK_PAGE_ID", raising=False)

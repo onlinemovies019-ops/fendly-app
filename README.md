@@ -163,7 +163,12 @@ token in either ID variable. The Page token and Meta app must have the
 version, and login configuration ID do not replace these granted permissions
 or the Page access token. If the lister opts in but publishing is unavailable
 or fails, the adoption listing remains available and returns a separate
-social-post status for retry.
+social-post status for retry. Meta access tokens can expire or be revoked;
+Fendly cannot renew a token after Meta invalidates it. Generate a fresh Page
+access token with the required publishing permissions, replace
+`META_PAGE_ACCESS_TOKEN` in Render (or replace the saved server-side Meta
+connection when direct credentials are not configured), then retry the
+listing's social post through the admin retry endpoint.
 
 The FastAPI startup applies
 `supabase/migrations/20261011000000_private_match_workflow.sql` to PostgreSQL
