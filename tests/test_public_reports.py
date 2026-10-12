@@ -69,11 +69,16 @@ def test_owned_report_community_poster_uses_the_shared_poster_renderer(
 
     generated = []
 
-    async def render_poster(report, report_type, image_url=None):
-        generated.append((report.id, report_type))
+    async def render_poster(report, report_type, image_urls=None):
+        generated.append((report.id, report_type, image_urls))
         return b"canonical-poster"
 
     monkeypatch.setattr("social_poster.render_report_poster", render_poster)
+    monkeypatch.setattr(
+        items_module,
+        "refresh_private_image_url",
+        lambda image_url: f"signed:{image_url}" if image_url else None,
+    )
     main.app.dependency_overrides[items_module.get_current_user] = lambda: "report-owner"
     try:
         with Session(session_factory.kw["bind"]) as session:
@@ -84,6 +89,8 @@ def test_owned_report_community_poster_uses_the_shared_poster_renderer(
                     title="Lost squirrel",
                     description="Brown squirrel",
                     report_date="10/10/2026",
+                    image_url="photo-1",
+                    image_urls=["photo-1", "photo-2", "photo-3"],
                     lat=0,
                     lng=0,
                 )
@@ -95,7 +102,9 @@ def test_owned_report_community_poster_uses_the_shared_poster_renderer(
         assert response.content == b"canonical-poster"
         assert response.headers["content-type"] == "image/jpeg"
         assert response.headers["cache-control"] == "no-store"
-        assert generated == [("poster-report", "lost")]
+        assert generated == [
+            ("poster-report", "lost", ["signed:photo-1", "signed:photo-2", "signed:photo-3"])
+        ]
     finally:
         main.app.dependency_overrides.pop(items_module.get_current_user, None)
 

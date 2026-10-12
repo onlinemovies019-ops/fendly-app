@@ -3,6 +3,7 @@ import io
 import logging
 import os
 import re
+from collections.abc import Sequence
 from pathlib import Path
 from typing import cast
 from urllib.parse import urlsplit
@@ -109,7 +110,9 @@ def _rounded_photo(
 
 def render_community_poster(
     title: str, report_type: str, category: str,
-    report_url: str, photo: Image.Image | None, date: str = "",
+    report_url: str,
+    photo: Image.Image | Sequence[Image.Image] | None,
+    date: str = "",
 ) -> bytes:
     normalized_type = report_type.strip().casefold()
     is_found = normalized_type == "found"
@@ -146,15 +149,42 @@ def render_community_poster(
         radius=38,
         fill=(255, 255, 255),
     )
-    if photo is None:
+    photos = [photo] if isinstance(photo, Image.Image) else list(photo or ())
+    photos = photos[:3]
+    if not photos:
         draw.rounded_rectangle(image_bounds, radius=28, fill=(231, 229, 218))
         _draw_wrapped(draw, "Photo not available", (290, 552), 500, _font(30, bold=True), 1)
-    else:
+    elif len(photos) == 1:
         fitted_photo = _rounded_photo(
-            photo,
+            photos[0],
             (image_bounds[2] - image_bounds[0], image_bounds[3] - image_bounds[1]),
         )
         poster.paste(fitted_photo, image_bounds[:2], fitted_photo.getchannel("A"))
+    else:
+        left, top, right, bottom = image_bounds
+        gutter = 12
+        if len(photos) == 2:
+            tile_width = (right - left - gutter) // 2
+            tiles = [
+                (left, top, left + tile_width, bottom),
+                (left + tile_width + gutter, top, right, bottom),
+            ]
+        else:
+            main_width = (right - left - gutter) * 2 // 3
+            tiles = [
+                (left, top, left + main_width, bottom),
+                (left + main_width + gutter, top, right, top + (bottom - top - gutter) // 2),
+                (
+                    left + main_width + gutter,
+                    top + (bottom - top + gutter) // 2,
+                    right,
+                    bottom,
+                ),
+            ]
+        for image, tile in zip(photos, tiles):
+            tile_bounds = (tile[2] - tile[0], tile[3] - tile[1])
+            fitted_photo = _rounded_photo(image, tile_bounds)
+            poster.paste(fitted_photo, tile[:2], fitted_photo.getchannel("A"))
     draw.rounded_rectangle((158, 356, 340, 410), radius=27, fill=accent)
     draw.text((180, 369), report_label, fill="white", font=_font(21, bold=True))
 
@@ -218,23 +248,31 @@ async def _load_report_photo(image_url: str) -> Image.Image:
 async def render_report_poster(
     report: LostItem | FoundItem,
     report_type: str,
-    image_url: str | None = None,
+    image_urls: Sequence[str] | None = None,
 ) -> bytes:
     title = sanitize_public_title(report.title) or "Reported item"
     report_url = fendly_report_url(report.id)
-    photo = None
-    poster_image_url = image_url if image_url is not None else report.image_url
-    if poster_image_url:
+    poster_image_urls = list(image_urls or ())
+    if not poster_image_urls:
+        poster_image_urls = report.image_urls or ([report.image_url] if report.image_url else [])
+    photos: list[Image.Image] = []
+    for image_index, poster_image_url in enumerate(poster_image_urls[:3], start=1):
+        if not poster_image_url:
+            continue
         try:
-            photo = await _load_report_photo(poster_image_url)
+            photos.append(await _load_report_photo(poster_image_url))
         except (httpx.HTTPError, RuntimeError, ValueError, OSError):
-            logger.exception("Could not load report photo for social poster %s", report.id)
+            logger.exception(
+                "Could not load report photo %s for social poster %s",
+                image_index,
+                report.id,
+            )
     return await asyncio.to_thread(
         render_community_poster,
         title,
         report_type,
         report.category or "",
         report_url,
-        photo,
+        photos,
         report.report_date or "",
     )

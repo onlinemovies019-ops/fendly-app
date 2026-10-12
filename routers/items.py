@@ -609,10 +609,20 @@ async def get_community_poster(
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Report not found")
     from social_poster import render_report_poster
 
+    stored_image_urls = list(report.image_urls or [])
+    if report.image_url and report.image_url not in stored_image_urls:
+        stored_image_urls.insert(0, report.image_url)
+    poster_image_urls = list(
+        dict.fromkeys(
+            refreshed_url
+            for image_url in stored_image_urls
+            if (refreshed_url := refresh_private_image_url(image_url))
+        )
+    )
     poster = await render_report_poster(
         report,
         item_type.strip().casefold(),
-        image_url=refresh_private_image_url(report.image_url),
+        image_urls=poster_image_urls,
     )
     return Response(
         content=poster,
