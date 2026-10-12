@@ -31,6 +31,7 @@ import androidx.core.os.LocaleListCompat;
 import androidx.core.widget.TextViewCompat;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.SystemClock;
 import android.speech.tts.UtteranceProgressListener;
 import android.text.InputFilter;
 import android.text.TextUtils;
@@ -6690,10 +6691,14 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         );
         TextView loading = text(localizeReportsText("Loading reports..."), 16, secondaryTextColor(), Typeface.NORMAL);
         addField(root, loading);
+        ReportsLoadingView loadingSkeleton = new ReportsLoadingView(this);
+        loadingSkeleton.setTag("wrapField");
+        addField(root, loadingSkeleton);
 
         FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
         if (user == null) {
             loading.setText(localizeReportsText("Sign in to view reports."));
+            loadingSkeleton.setVisibility(View.GONE);
             TextView home = actionButton(translate("Back home"), false);
             home.setOnClickListener(v -> showHome());
             addField(root, home);
@@ -6733,6 +6738,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             });
         }).addOnFailureListener(error -> {
             loading.setText(localizeReportsText("Your reports could not be loaded."));
+            loadingSkeleton.setVisibility(View.GONE);
             TextView home = actionButton(translate("Back home"), false);
             home.setOnClickListener(v -> showHome());
             addField(root, home);
@@ -12914,6 +12920,109 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             Paint.FontMetrics metrics = paint.getFontMetrics();
             float baseline = (getHeight() - metrics.bottom - metrics.top) / 2f;
             canvas.drawText(label, 0, baseline, paint);
+        }
+    }
+
+    private final class ReportsLoadingView extends View {
+        private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private boolean attached;
+
+        ReportsLoadingView(Context context) {
+            super(context);
+            setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+        }
+
+        @Override protected void onMeasure(int widthMeasureSpec, int heightMeasureSpec) {
+            int width = MeasureSpec.getSize(widthMeasureSpec);
+            setMeasuredDimension(width, dp(348));
+        }
+
+        @Override protected void onAttachedToWindow() {
+            super.onAttachedToWindow();
+            attached = true;
+            invalidate();
+        }
+
+        @Override protected void onDetachedFromWindow() {
+            attached = false;
+            super.onDetachedFromWindow();
+        }
+
+        @Override protected void onDraw(Canvas canvas) {
+            super.onDraw(canvas);
+            int cardColor = surfaceColor();
+            int placeholderColor = darkMode
+                    ? Color.rgb(62, 68, 66)
+                    : Color.rgb(231, 234, 228);
+            float cardRadius = dp(18);
+            float startY = dp(6);
+            float cardHeight = dp(104);
+            float gap = dp(12);
+            float left = dp(2);
+            float right = getWidth() - dp(2);
+            float imageSize = dp(76);
+            float imageInset = dp(14);
+            float bandWidth = dp(110);
+            float progress = (SystemClock.uptimeMillis() % 1800L) / 1800f;
+            float bandLeft = -bandWidth + progress * (getWidth() + bandWidth);
+            int clear = Color.TRANSPARENT;
+            int highlight = Color.argb(darkMode ? 34 : 115, 255, 255, 255);
+            Shader shimmer = new LinearGradient(
+                    bandLeft,
+                    0,
+                    bandLeft + bandWidth,
+                    0,
+                    new int[]{clear, highlight, clear},
+                    new float[]{0f, 0.5f, 1f},
+                    Shader.TileMode.CLAMP
+            );
+
+            for (int index = 0; index < 3; index++) {
+                float top = startY + index * (cardHeight + gap);
+                RectF card = new RectF(left, top, right, top + cardHeight);
+                paint.setShader(null);
+                paint.setStyle(Paint.Style.FILL);
+                paint.setColor(cardColor);
+                canvas.drawRoundRect(card, cardRadius, cardRadius, paint);
+                paint.setStyle(Paint.Style.STROKE);
+                paint.setStrokeWidth(dp(1));
+                paint.setColor(borderColor());
+                canvas.drawRoundRect(card, cardRadius, cardRadius, paint);
+                paint.setStyle(Paint.Style.FILL);
+                paint.setColor(placeholderColor);
+                canvas.drawRoundRect(
+                        new RectF(left + imageInset, top + imageInset,
+                                left + imageInset + imageSize, top + imageInset + imageSize),
+                        dp(12), dp(12), paint
+                );
+                float textLeft = left + imageInset + imageSize + dp(14);
+                drawPlaceholder(canvas, textLeft, top + dp(24), Math.min(dp(154), right - textLeft - dp(14)), dp(12), placeholderColor);
+                drawPlaceholder(canvas, textLeft, top + dp(47), Math.min(dp(220), right - textLeft - dp(14)), dp(9), placeholderColor);
+                drawPlaceholder(canvas, textLeft, top + dp(67), Math.min(dp(120), right - textLeft - dp(14)), dp(9), placeholderColor);
+
+                canvas.save();
+                Path clip = new Path();
+                clip.addRoundRect(card, cardRadius, cardRadius, Path.Direction.CW);
+                canvas.clipPath(clip);
+                paint.setShader(shimmer);
+                canvas.drawRect(left, top, right, top + cardHeight, paint);
+                paint.setShader(null);
+                canvas.restore();
+            }
+            if (attached) postInvalidateDelayed(32);
+        }
+
+        private void drawPlaceholder(Canvas canvas, float left, float top, float width, float height, int color) {
+            if (width <= 0) return;
+            paint.setShader(null);
+            paint.setStyle(Paint.Style.FILL);
+            paint.setColor(color);
+            canvas.drawRoundRect(
+                    new RectF(left, top, left + width, top + height),
+                    height / 2f,
+                    height / 2f,
+                    paint
+            );
         }
     }
 
