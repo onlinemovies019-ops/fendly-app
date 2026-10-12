@@ -39,6 +39,7 @@ import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Tab
@@ -1417,8 +1418,22 @@ private fun ListingCard(
                     Text("${t("adopt_status")}: ${t("adopt_${listing.status}")}")
                 }
                 if (ownerActions != null) {
-                    TextButton(onClick = onToggleExpand) {
-                        Text(t(if (expanded) "adopt_collapse" else "adopt_expand"))
+                    IconButton(
+                        onClick = onToggleExpand,
+                        modifier = Modifier
+                            .size(40.dp)
+                            .background(MaterialTheme.colorScheme.surface, CircleShape)
+                            .border(1.dp, MaterialTheme.colorScheme.outline, CircleShape)
+                            .semantics {
+                                contentDescription = t(
+                                    if (expanded) "adopt_collapse" else "adopt_expand",
+                                )
+                            },
+                    ) {
+                        Text(
+                            if (expanded) "▲" else "▼",
+                            color = MaterialTheme.colorScheme.onSurface,
+                        )
                     }
                 }
             }
