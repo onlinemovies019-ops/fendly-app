@@ -67,6 +67,7 @@ def test_reconnected_meta_accounts_override_stale_direct_credentials(monkeypatch
         description="Friendly and active.",
         location_city="Pune",
         images=["https://storage.example/pet.jpg"],
+        poster_language="hi",
         auto_post_social=True,
         social_post_image_url="https://storage.example/social-posters/milo.jpg",
     )
@@ -96,7 +97,8 @@ def test_reconnected_meta_accounts_override_stale_direct_credentials(monkeypatch
     assert requests[1][1]["access_token"] == "page-token"
     assert requests[0][1]["url"] == "https://storage.example/social-posters/milo.jpg"
     assert requests[1][1]["image_url"] == "https://storage.example/social-posters/milo.jpg"
-    assert "#AdoptDontShop" in requests[0][1]["caption"]
+    assert "आपका नया प्यारा दोस्त आपसे मिलने को तैयार है" in requests[0][1]["caption"]
+    assert "#गोद_लें" in requests[0][1]["caption"]
     assert requests[2][1]["creation_id"] == "instagram-container"
 
 

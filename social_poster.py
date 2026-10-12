@@ -14,6 +14,7 @@ from PIL import Image, ImageDraw, ImageFont, ImageOps, UnidentifiedImageError
 
 from app_links import fendly_report_url
 from models import FoundItem, LostItem
+from poster_localization import LANGUAGE_CODES, poster_text
 from social_content import sanitize_public_title
 
 POSTER_WIDTH = 1080
@@ -24,6 +25,17 @@ GREEN = (22, 104, 79)
 BACKGROUND = (248, 246, 239)
 MAX_REPORT_PHOTO_BYTES = 10 * 1024 * 1024
 logger = logging.getLogger(__name__)
+FONT_DIRECTORY = Path(__file__).resolve().parent / "app/src/main/assets/fonts"
+LANGUAGE_FONTS = {
+    "hi": "NotoSansDevanagari[wdth,wght].ttf",
+    "mr": "NotoSansDevanagari[wdth,wght].ttf",
+    "gu": "NotoSansGujarati[wdth,wght].ttf",
+    "bn": "NotoSansBengali[wdth,wght].ttf",
+    "ta": "NotoSansTamil[wdth,wght].ttf",
+    "te": "NotoSansTelugu[wdth,wght].ttf",
+    "kn": "NotoSansKannada[wdth,wght].ttf",
+    "ml": "NotoSansMalayalam[wdth,wght].ttf",
+}
 
 ANIMAL_NAMES = (
     "guinea pig", "goldfish", "cockatiel", "lovebird", "parakeet", "hamster",
@@ -38,7 +50,22 @@ ANIMAL_NAMES = (
 )
 
 
-def _font(size: int, bold: bool = False) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
+def _font(
+    size: int,
+    bold: bool = False,
+    language_code: str = "en",
+) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
+    normalized_language = (
+        language_code.strip().lower().split("-", 1)[0]
+        if language_code.strip()
+        else "en"
+    )
+    language_font = FONT_DIRECTORY / LANGUAGE_FONTS.get(normalized_language, "")
+    if normalized_language in LANGUAGE_FONTS and language_font.is_file():
+        font = ImageFont.truetype(str(language_font), size, layout_engine=ImageFont.Layout.RAQM)
+        if bold:
+            font.set_variation_by_name("Bold")
+        return font
     candidates = (
         "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf" if bold
         else "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
@@ -113,19 +140,31 @@ def render_community_poster(
     report_url: str,
     photo: Image.Image | Sequence[Image.Image] | None,
     date: str = "",
+    language_code: str = "en",
 ) -> bytes:
     normalized_type = report_type.strip().casefold()
     is_found = normalized_type == "found"
-    report_label = "FOUND ITEM" if is_found else "LOST ITEM"
+    language = (
+        language_code.strip().lower().split("-", 1)[0]
+        if language_code.strip()
+        else "en"
+    )
+    if language not in LANGUAGE_CODES:
+        language = "en"
+    report_label = poster_text("report_found" if is_found else "report_lost", language)
+    short_label = poster_text("report_found_short" if is_found else "report_lost_short", language)
     accent = (22, 104, 79) if is_found else (174, 59, 54)
     subject = _home_subject(title, category).lower()
-    subject_label = "PERSON" if subject == "person" else "ANIMAL" if subject != "item" else "ITEM"
-    photo_label = f"{'FOUND' if is_found else 'LOST'} {subject_label}"
-    headline = (
-        f"Help reunite this {subject} with its owner"
-        if is_found
-        else f"Help find this {subject}"
+    subject_key = "subject_person" if subject == "person" else "subject_animal" if subject != "item" else "subject_item"
+    subject_label = poster_text(subject_key, language).upper()
+    photo_label = f"{short_label} {subject_label}"
+    headline = poster_text(
+        "report_headline_found" if is_found else "report_headline_lost",
+        language,
+        subject=poster_text(subject_key, language),
     )
+    def font(size: int, bold: bool = False) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
+        return _font(size, bold, language)
     poster = Image.new("RGB", (POSTER_WIDTH, POSTER_HEIGHT), BACKGROUND)
     draw = ImageDraw.Draw(poster)
     draw.rounded_rectangle(
@@ -135,15 +174,15 @@ def render_community_poster(
         width=5,
     )
     draw.rounded_rectangle((52, 48, POSTER_WIDTH - 52, 190), radius=34, fill=accent)
-    draw.text((90, 66), f"FENDLY  ·  {report_label} ALERT", fill="white", font=_font(43, bold=True))
-    draw.text((90, 128), headline, fill="white", font=_font(27, bold=True))
+    draw.text((90, 66), f"FENDLY  ·  {report_label}", fill="white", font=font(43, bold=True))
+    draw.text((90, 128), headline, fill="white", font=font(27, bold=True))
 
     _draw_wrapped(
         draw,
         title.strip() or ("Found item" if is_found else "Lost item"),
         (76, 220),
         POSTER_WIDTH - 152,
-        _font(56, bold=True),
+        font(56, bold=True),
     )
     image_bounds = (130, 330, 950, 1150)
     draw.rounded_rectangle(
@@ -155,7 +194,14 @@ def render_community_poster(
     photos = photos[:3]
     if not photos:
         draw.rounded_rectangle(image_bounds, radius=28, fill=(231, 229, 218))
-        _draw_wrapped(draw, "Photo not available", (290, 552), 500, _font(30, bold=True), 1)
+        _draw_wrapped(
+            draw,
+            poster_text("report_photo_missing", language),
+            (290, 552),
+            500,
+            font(30, bold=True),
+            1,
+        )
     elif len(photos) == 1:
         fitted_photo = _rounded_photo(
             photos[0],
@@ -187,7 +233,7 @@ def render_community_poster(
             tile_bounds = (tile[2] - tile[0], tile[3] - tile[1])
             fitted_photo = _rounded_photo(image, tile_bounds)
             poster.paste(fitted_photo, tile[:2], fitted_photo.getchannel("A"))
-    photo_label_font = _font(21, bold=True)
+    photo_label_font = font(21, bold=True)
     photo_label_width = draw.textbbox((0, 0), photo_label, font=photo_label_font)[2]
     photo_label_bounds = (158, 356, 180 + photo_label_width + 22, 410)
     draw.rounded_rectangle(photo_label_bounds, radius=27, fill=accent)
@@ -199,16 +245,16 @@ def render_community_poster(
     poster.paste(qr, (842, 1168))
     _draw_wrapped(
         draw,
-        f"{report_label.title()} · View details in Fendly",
+        poster_text("report_view_details", language, report=report_label),
         (78, 1182),
         720,
-        _font(32, bold=True),
+        font(32, bold=True),
         1,
     )
-    date_text = date.strip() or "Date not provided"
-    draw.text((78, 1260), date_text, fill=MUTED, font=_font(24))
-    scan_text = "SCAN FOR FENDLY"
-    scan_font = _font(16)
+    date_text = date.strip() or poster_text("report_date_missing", language)
+    draw.text((78, 1260), date_text, fill=MUTED, font=font(24))
+    scan_text = poster_text("scan_fendly", language)
+    scan_font = font(16)
     scan_width = draw.textbbox((0, 0), scan_text, font=scan_font)[2]
     draw.text((917 - scan_width / 2, 1148), scan_text, fill=MUTED, font=scan_font)
     output = io.BytesIO()
@@ -254,6 +300,7 @@ async def render_report_poster(
     report: LostItem | FoundItem,
     report_type: str,
     image_urls: Sequence[str] | None = None,
+    language_code: str | None = None,
 ) -> bytes:
     title = sanitize_public_title(report.title) or "Reported item"
     report_url = fendly_report_url(report.id)
@@ -280,4 +327,5 @@ async def render_report_poster(
         report_url,
         photos,
         report.report_date or "",
+        language_code or report.source_language or "en",
     )

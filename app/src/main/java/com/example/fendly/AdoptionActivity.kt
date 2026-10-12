@@ -156,6 +156,8 @@ private data class AdoptionListing(
     val images: List<String>,
     val imageCount: Int,
     val status: String,
+    val canEdit: Boolean,
+    val canDelete: Boolean,
     val socialStatus: String,
     val socialError: String,
     val socialPosterImage: String,
@@ -201,6 +203,8 @@ private fun adoptionListing(json: JSONObject): AdoptionListing {
         images = images,
         imageCount = images.size,
         status = json.optString("status"),
+        canEdit = json.optBoolean("can_edit", false),
+        canDelete = json.optBoolean("can_delete", false),
         socialStatus = json.optString("social_post_status"),
         socialError = json.optString("social_post_error"),
         socialPosterImage = json.optString("social_post_image_url"),
@@ -806,31 +810,43 @@ private fun AdoptionScreen(onBack: () -> Unit) {
                                         Text(t("adopt_share_poster"), maxLines = 1, softWrap = false)
                                     }
                                 }
-                                TextButton(
-                                    modifier = Modifier.weight(1f),
-                                    onClick = {
-                                        petName = listing.petName
-                                        species = listing.species
-                                        breed = listing.breed
-                                        age = listing.ageMonths.toString()
-                                        gender = listing.gender
-                                        health = listing.healthStatus
-                                        description = listing.description
-                                        city = listing.city
-                                        editingListing = listing
-                                    },
-                                ) {
-                                    Text(t("adopt_edit"), maxLines = 1, softWrap = false)
+                                if (listing.canEdit) {
+                                    TextButton(
+                                        modifier = Modifier.weight(1f),
+                                        onClick = {
+                                            petName = listing.petName
+                                            species = listing.species
+                                            breed = listing.breed
+                                            age = listing.ageMonths.toString()
+                                            gender = listing.gender
+                                            health = listing.healthStatus
+                                            description = listing.description
+                                            city = listing.city
+                                            editingListing = listing
+                                        },
+                                    ) {
+                                        Text(t("adopt_edit"), maxLines = 1, softWrap = false)
+                                    }
                                 }
-                                TextButton(
-                                    modifier = Modifier.weight(1f),
-                                    onClick = { deletingListing = listing },
-                                ) {
+                                if (listing.canDelete) {
+                                    TextButton(
+                                        modifier = Modifier.weight(1f),
+                                        onClick = { deletingListing = listing },
+                                    ) {
+                                        Text(
+                                            t("adopt_delete"),
+                                            color = MaterialTheme.colorScheme.error,
+                                            maxLines = 1,
+                                            softWrap = false,
+                                        )
+                                    }
+                                }
+                                if (!listing.canEdit && !listing.canDelete) {
                                     Text(
-                                        t("adopt_delete"),
-                                        color = MaterialTheme.colorScheme.error,
-                                        maxLines = 1,
-                                        softWrap = false,
+                                        t("adopt_edit_window_expired"),
+                                        modifier = Modifier.weight(1f),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     )
                                 }
                             },
@@ -1124,6 +1140,7 @@ private fun AdoptionScreen(onBack: () -> Unit) {
                                                         description,
                                                         city,
                                                         autoPostSocial,
+                                                        LanguageManager.getSavedLanguage(context),
                                                     )
                                                 }
                                                 val listing = adoptionListing(JSONObject(result))
@@ -1691,6 +1708,7 @@ private fun uploadAdoptionListing(
     description: String,
     city: String,
     autoPost: Boolean,
+    posterLanguage: String,
 ): String {
     val boundary = "FendlyAdoption${System.currentTimeMillis()}"
     val connection = URL("${BuildConfig.API_BASE_URL}/api/adoptions").openConnection() as HttpURLConnection
@@ -1745,6 +1763,7 @@ private fun uploadAdoptionListing(
             field("description", description)
             field("location_city", city)
             field("auto_post_social", autoPost.toString())
+            field("poster_language", posterLanguage)
             output.write("--$boundary--\r\n".toByteArray(StandardCharsets.UTF_8))
         }
         val code = connection.responseCode

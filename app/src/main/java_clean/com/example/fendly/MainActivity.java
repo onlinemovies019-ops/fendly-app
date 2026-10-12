@@ -320,6 +320,8 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
     private String adminReportFilter = "";
     private String adminReportCategory = "items";
     private String myReportsCategory = "items";
+    private String myReportsSearchQuery = "";
+    private boolean myReportsCompletedExpanded;
     private final LinkedHashSet<String> expandedMyReportIds = new LinkedHashSet<>();
     private int unreadUserNotificationCount = 0;
     private TextView userNotificationBadge;
@@ -867,23 +869,23 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
 
     private String translateHowToReportText() {
         String[] texts = {
-                "1. Start a report:\n• On Home, tap LOST/THEFT for something missing or FOUND for something you found.\n• Choose a category, then complete the four steps: category, location/photo, details, and review.\n\n2. Add the details:\n• Enter the city and location, identifying details, and date. Add a photo if available; precise location is optional.\n\n3. Review and submit:\n• Check the summary before submitting. A LOST report may require payment unless you have an active subscription.\n\n4. Follow updates:\n• Open My Reports to view your report and its status.",
-                "1. रिपोर्ट शुरू करें:\n• खोई वस्तु के लिए होम पर LOST/THEFT या मिली वस्तु के लिए FOUND चुनें।\n• श्रेणी चुनकर चार चरण पूरे करें: श्रेणी, स्थान/फ़ोटो, विवरण और समीक्षा।\n\n2. जानकारी भरें:\n• शहर, स्थान, पहचान के विवरण और तारीख दें। फ़ोटो उपलब्ध हो तो जोड़ें; सटीक लोकेशन वैकल्पिक है।\n\n3. समीक्षा करके जमा करें:\n• सारांश जांचें। सक्रिय सदस्यता न होने पर LOST रिपोर्ट के लिए भुगतान करना पड़ सकता है।\n\n4. स्थिति देखें:\n• अपनी रिपोर्ट और अपडेट देखने के लिए My Reports खोलें।",
-                "1. हरवलेल्या वस्तूंची नोंद:\n• होम स्क्रीनवरील हिरव्या LOST बटणावर टॅप करा.\n• वस्तूचे तपशील, वर्ग, वर्णन आणि फोटो प्रविष्ट करा.\n\n2. सापडलेल्या वस्तूंची नोंद:\n• वस्तू सापडल्यावर होम स्क्रीनवरील सोनेरी FOUND बटणावर टॅप करा.\n• सापडलेल्या वस्तूचा तपशील भरा.\n\n3. अहवाल ट्रॅक करा:\n• तुमचे सादर केलेले अहवाल आणि अपडेट्स पाहण्यासाठी कधीही My Reports ला भेट द्या.",
-                "1. ખોવાયેલ વસ્તુઓની જાણ કરો:\n• હોમ સ્ક્રીન પર લીલા LOST બટન પર ટેપ કરો.\n• વસ્તુની વિગતો, શ્રેણી, વર્ણન અને ફોટો દાખલ કરો.\n\n2. મળેલ વસ્તુઓની જાણ કરો:\n• વસ્તુ મળે ત્યારે હોમ સ્ક્રીન પર સોનેરી FOUND બટન પર ટેપ કરો.\n• મળેલ વસ્તુની વિગતો ભરો.\n\n3. તમારા રિપોર્ટ ટ્રેક કરો:\n• તમારા સબમિટ કરેલા રિપોર્ટ અને અપડેટ્સ જોવા માટે ગમે ત્યારે My Reports ની મુલાકાત લો.",
-                "1. হারানো আইটেম রিপোর্ট করা:\n• হোম স্ক্রিনে সবুজ LOST বোতামে ট্যাপ করুন।\n• আইটেমের বিবরণ, বিভাগ, বর্ণনা এবং ছবি লিখুন।\n\n2. পাওয়া আইটেম রিপোর্ট করা:\n• কোনো আইটেম পেলে হোম স্ক্রিনে সোনালী FOUND বোতামে ট্যাপ করুন।\n• পাওয়া আইটেমের বিবরণ পূরণ করুন।\n\n3. আপনার রিপোর্ট ট্র্যাক করা:\n• আপনার জমা দেওয়া রিপোর্ট এবং আপডেট দেখতে যেকোনো সময় My Reports দেখুন।",
-                "1. தொலைந்த பொருட்களை அறிக்கையிடல்:\n• முகப்புத் திரையில் உள்ள பச்சை நிற LOST பொத்தானைத் தட்டவும்.\n• பொருளின் விவரங்கள், வகை, விளக்கம் மற்றும் புகைப்படத்தை உள்ளிடவும்.\n\n2. கிடைத்த பொருட்களை அறிக்கையிடல்:\n• ஒரு பொருள் கிடைக்கும்போது முகப்புத் திரையில் உள்ள தங்க நிற FOUND பொத்தானைத் தட்டவும்.\n• கிடைத்த பொருளின் விவரங்களை நிரப்பவும்.\n\n3. உங்கள் அறிக்கைகளைக் கண்காணித்தல்:\n• சமர்ப்பிக்கப்பட்ட அறிக்கைகள் மற்றும் புதுப்பிப்புகளைப் பார்க்க எப்போதும் My Reports பகுதிக்குச் செல்லவும்.",
-                "1. పోగొట్టుకున్న వస్తువులను రిపోర్ట్ చేయడం:\n• హోమ్ స్క్రీన్‌పై ఉన్న ఆకుపచ్చ LOST బటన్‌ను నొక్కండి.\n• వస్తువు వివరాలు, వర్గం, వివరణ మరియు ఫోటోను నమోదు చేయండి.\n\n2. దొరికిన వస్తువులను రిపోర్ట్ చేయడం:\n• మీకు వస్తువు దొరికినప్పుడు హోమ్ స్క్రీన్‌పై ఉన్న బంగారు FOUND బటన్‌ను నొక్కండి.\n• దొరికిన వస్తువు వివరాలను నింపండి.\n\n3. మీ రిపోర్టులను ట్రాక్ చేయడం:\n• సమర్పించిన రిపోర్టులు మరియు అప్‌డేట్‌లను చూడటానికి ఎప్పుడైనా My Reportsని సందర్శించండి.",
-                "1. ಕಳೆದುಹೋದ ವಸ್ತುಗಳನ್ನು ವರದಿ ಮಾಡುವುದು:\n• ಹೋಮ್ స్క್ರೀನ್‌ನಲ್ಲಿರುವ ಹಸಿರು LOST ಬಟನ್ ಟ್ಯಾಪ್ ಮಾಡಿ.\n• ವಸ್ತುವಿನ ವಿವರಗಳು, ವರ್ಗ, ವಿವರಣೆ ಮತ್ತು ಫೋಟೋ ನಮೂದಿಸಿ.\n\n2. ಸಿಕ್ಕ ವಸ್ತುಗಳನ್ನು ವರದಿ ಮಾಡುವುದು:\n• ವಸ್ತು ಸಿಕ್ಕಾಗ ಹೋಮ್ స్క್ರೀನ್‌ನಲ್ಲಿರುವ ಚಿನ್ನದ ಬಣ್ಣದ FOUND ಬಟನ್ ಟ್ಯಾಪ್ ಮಾಡಿ.\n• ಸಿಕ್ಕ ವಸ್ತುವಿನ ವಿವರಗಳನ್ನು ಭರ್ತಿ ಮಾಡಿ.\n\n3. ನಿಮ್ಮ ವರದಿಗಳನ್ನು ಟ್ರ್ಯಾಕ್ ಮಾಡುವುದು:\n• ಸಲ್ಲಿಸಿದ ವರದಿಗಳು ಮತ್ತು ಅಪ್‌ಡೇಟ್‌ಗಳನ್ನು ವೀಕ್ಷಿಸಲು ಯಾವಾಗ ಬೇಕಾದರೂ My Reports ಗೆ ಭೇಟಿ ನೀಡಿ.",
-                "1. നഷ്ടപ്പെട്ടവ റിപ്പോർട്ട് ചെയ്യൽ:\n• ഹോം സ്‌ക്രീനിലെ പച്ച LOST ബട്ടണിൽ ടാപ്പ് ചെയ്യുക.\n• ഇനത്തിന്റെ വിശദാംശങ്ങൾ, വിഭാഗം, വിവരണം, ഫോട്ടോ എന്നിവ നൽകുക.\n\n2. കണ്ടെത്തിയവ റിപ്പോർട്ട് ചെയ്യൽ:\n• ഒരു ഇനം കണ്ടെത്തുമ്പോൾ ഹോം സ്‌ക്രീനിലെ സുവർണ്ണ FOUND ബട്ടണിൽ ടാപ്പ് ചെയ്യുക.\n• കണ്ടെത്തിയ ഇനത്തിന്റെ വിവരങ്ങൾ നൽകുക.\n\n3. റിപ്പോർട്ടുകൾ ട്രാക്ക് ചെയ്യൽ:\n• സമർപ്പിച്ച റിപ്പോർട്ടുകളും അപ്‌ഡേറ്റുകളും കാണാൻ എപ്പോൾ വേണമെങ്കിലും My Reports സന്ദർശിക്കുക."
+                "1. Choose the right report:\n• On Home, tap LOST/THEFT if an item or person is missing. Tap FOUND if you found an item or person.\n• Choose the closest category and follow each screen in order.\n\n2. Add useful details:\n• Enter the date and city/location. Describe identifying details such as color, size, brand, or clothing.\n• Add up to 3 clear photos if available. Share only information that is safe to include.\n\n3. Review and submit:\n• Check the details, fix mistakes, accept the Community Guidelines, and submit. Follow any payment or subscription instructions shown for a LOST report.\n\n4. Check progress:\n• Open My Reports to find your report and check its status. Search using at least 3 characters. Tap a report for details and use its arrow to show or hide actions.",
+                "1. सही रिपोर्ट चुनें:\n• कोई वस्तु या व्यक्ति खो गया है तो होम पर LOST/THEFT दबाएँ। आपको कोई वस्तु या व्यक्ति मिला है तो FOUND दबाएँ।\n• सही श्रेणी चुनें और हर स्क्रीन पर दिए गए चरण क्रम से पूरे करें।\n\n2. उपयोगी जानकारी दें:\n• तारीख और शहर/स्थान लिखें। रंग, आकार, ब्रांड या कपड़ों जैसी पहचान की बातें बताएँ।\n• उपलब्ध हों तो अधिकतम 3 साफ़ फ़ोटो जोड़ें। केवल वही जानकारी दें जिसे साझा करना सुरक्षित हो।\n\n3. जाँचें और सबमिट करें:\n• जानकारी जाँचें, गलती सुधारें, Community Guidelines स्वीकार करें और सबमिट करें। LOST रिपोर्ट के लिए दिखाई गई भुगतान या सदस्यता की सूचना का पालन करें।\n\n4. प्रगति देखें:\n• रिपोर्ट और स्थिति देखने के लिए My Reports खोलें। खोज में कम से कम 3 अक्षर लिखें। विवरण के लिए रिपोर्ट दबाएँ और विकल्प दिखाने या छिपाने के लिए तीर दबाएँ।",
+                "1. योग्य अहवाल निवडा:\n• एखादी वस्तू किंवा व्यक्ती हरवली असल्यास होमवरील LOST/THEFT दाबा. वस्तू किंवा व्यक्ती सापडली असल्यास FOUND दाबा.\n• योग्य श्रेणी निवडा आणि प्रत्येक स्क्रीनवरील टप्पे क्रमाने पूर्ण करा.\n\n2. उपयोगी तपशील द्या:\n• तारीख आणि शहर/ठिकाण भरा. रंग, आकार, ब्रँड किंवा कपडे यांसारखे ओळख पटवणारे तपशील लिहा.\n• उपलब्ध असल्यास जास्तीत जास्त 3 स्पष्ट फोटो जोडा. सुरक्षितपणे शेअर करता येईल अशीच माहिती द्या.\n\n3. तपासून पाठवा:\n• माहिती तपासा, चुका दुरुस्त करा, Community Guidelines स्वीकारा आणि अहवाल पाठवा. LOST अहवालासाठी दाखवलेल्या पेमेंट किंवा सदस्यत्वाच्या सूचनांचे पालन करा.\n\n4. प्रगती पाहा:\n• अहवाल आणि स्थिती पाहण्यासाठी My Reports उघडा. शोधात किमान 3 अक्षरे टाका. तपशीलांसाठी अहवालावर टॅप करा आणि कृती दाखवण्यासाठी किंवा लपवण्यासाठी बाण वापरा.",
+                "1. યોગ્ય રિપોર્ટ પસંદ કરો:\n• કોઈ વસ્તુ કે વ્યક્તિ ખોવાઈ હોય તો હોમ પર LOST/THEFT દબાવો. તમને કોઈ વસ્તુ કે વ્યક્તિ મળી હોય તો FOUND દબાવો.\n• યોગ્ય શ્રેણી પસંદ કરીને દરેક સ્ક્રીનના પગલાં ક્રમમાં અનુસરો.\n\n2. ઉપયોગી વિગતો આપો:\n• તારીખ અને શહેર/સ્થળ લખો. રંગ, કદ, બ્રાન્ડ અથવા કપડાં જેવી ઓળખની વિગતો આપો.\n• ઉપલબ્ધ હોય તો વધુમાં વધુ 3 સ્પષ્ટ ફોટા ઉમેરો. ફક્ત સુરક્ષિત રીતે શેર કરી શકાય તેવી માહિતી આપો.\n\n3. તપાસો અને મોકલો:\n• વિગતો તપાસો, ભૂલો સુધારો, Community Guidelines સ્વીકારો અને સબમિટ કરો. LOST રિપોર્ટ માટે બતાવેલી ચુકવણી અથવા સબ્સ્ક્રિપ્શન સૂચનાઓ અનુસરો.\n\n4. પ્રગતિ જુઓ:\n• રિપોર્ટ અને સ્થિતિ જોવા My Reports ખોલો. શોધમાં ઓછામાં ઓછા 3 અક્ષરો લખો. વિગતો માટે રિપોર્ટ પર ટેપ કરો અને વિકલ્પો બતાવવા કે છુપાવવા તીર વાપરો.",
+                "১. সঠিক রিপোর্ট বেছে নিন:\n• কোনো জিনিস বা ব্যক্তি হারিয়ে গেলে হোমে LOST/THEFT চাপুন। কোনো জিনিস বা ব্যক্তিকে খুঁজে পেলে FOUND চাপুন।\n• উপযুক্ত বিভাগ বেছে নিয়ে প্রতিটি স্ক্রিনের ধাপ অনুসরণ করুন।\n\n২. দরকারি বিবরণ দিন:\n• তারিখ ও শহর/স্থান লিখুন। রং, আকার, ব্র্যান্ড বা পোশাকের মতো শনাক্ত করার তথ্য দিন।\n• থাকলে সর্বোচ্চ ৩টি পরিষ্কার ছবি যোগ করুন। শুধু নিরাপদে শেয়ার করা যায় এমন তথ্য দিন।\n\n৩. দেখে জমা দিন:\n• তথ্য যাচাই করুন, ভুল ঠিক করুন, Community Guidelines মেনে নিন এবং জমা দিন। LOST রিপোর্টের জন্য দেখানো পেমেন্ট বা সাবস্ক্রিপশনের নির্দেশ অনুসরণ করুন।\n\n৪. অগ্রগতি দেখুন:\n• রিপোর্ট ও অবস্থা দেখতে My Reports খুলুন। সার্চে কমপক্ষে ৩টি অক্ষর লিখুন। বিস্তারিত দেখতে রিপোর্টে ট্যাপ করুন এবং কাজ দেখাতে বা লুকাতে তীরচিহ্ন চাপুন।",
+                "1. சரியான அறிக்கையைத் தேர்ந்தெடுக்கவும்:\n• பொருள் அல்லது நபர் காணாமல் போனால் முகப்பில் LOST/THEFT என்பதைத் தட்டவும். நீங்கள் பொருள் அல்லது நபரைக் கண்டுபிடித்தால் FOUND என்பதைத் தட்டவும்.\n• பொருத்தமான வகையைத் தேர்ந்தெடுத்து ஒவ்வொரு திரையிலும் உள்ள படிகளை வரிசையாகப் பின்பற்றவும்.\n\n2. பயனுள்ள விவரங்களைச் சேர்க்கவும்:\n• தேதி மற்றும் நகரம்/இடத்தை உள்ளிடவும். நிறம், அளவு, பிராண்ட் அல்லது உடை போன்ற அடையாள விவரங்களை எழுதவும்.\n• இருந்தால் அதிகபட்சம் 3 தெளிவான புகைப்படங்களைச் சேர்க்கவும். பாதுகாப்பாகப் பகிரக்கூடிய தகவல்களை மட்டும் அளிக்கவும்.\n\n3. சரிபார்த்து சமர்ப்பிக்கவும்:\n• விவரங்களைச் சரிபார்த்து, பிழைகளைத் திருத்தி, Community Guidelines-ஐ ஏற்று சமர்ப்பிக்கவும். LOST அறிக்கைக்குக் காட்டப்படும் கட்டணம் அல்லது சந்தா வழிமுறைகளைப் பின்பற்றவும்.\n\n4. முன்னேற்றத்தைப் பார்க்கவும்:\n                • அறிக்கையையும் நிலையையும் காண My Reports திறக்கவும். தேடலில் குறைந்தது 3 எழுத்துகளை உள்ளிடவும். விவரங்களுக்கு அறிக்கையைத் தட்டி, செயல்களைக் காட்ட அல்லது மறைக்க அம்பைப் பயன்படுத்தவும்.",
+                "1. సరైన నివేదికను ఎంచుకోండి:\n• వస్తువు లేదా వ్యక్తి కనిపించకపోతే హోమ్‌లో LOST/THEFT నొక్కండి. మీకు వస్తువు లేదా వ్యక్తి కనిపిస్తే FOUND నొక్కండి.\n• సరైన వర్గాన్ని ఎంచుకుని ప్రతి స్క్రీన్‌లోని దశలను వరుసగా అనుసరించండి.\n\n2. ఉపయోగకరమైన వివరాలు ఇవ్వండి:\n• తేదీ, నగరం/ప్రదేశం నమోదు చేయండి. రంగు, పరిమాణం, బ్రాండ్ లేదా దుస్తుల వంటి గుర్తింపు వివరాలు రాయండి.\n• ఉంటే గరిష్ఠంగా 3 స్పష్టమైన ఫోటోలు జోడించండి. సురక్షితంగా పంచుకోగల సమాచారాన్నే ఇవ్వండి.\n\n3. పరిశీలించి సమర్పించండి:\n• వివరాలు పరిశీలించి, తప్పులు సరిచేసి, Community Guidelines అంగీకరించి సమర్పించండి. LOST నివేదికకు చూపించే చెల్లింపు లేదా సభ్యత్వ సూచనలను అనుసరించండి.\n\n4. పురోగతిని చూడండి:\n• నివేదిక, స్థితి కోసం My Reports తెరవండి. సెర్చ్‌లో కనీసం 3 అక్షరాలు నమోదు చేయండి. వివరాల కోసం నివేదికను నొక్కి, చర్యలను చూపడానికి లేదా దాచడానికి బాణాన్ని ఉపయోగించండి.",
+                "1. ಸರಿಯಾದ ವರದಿಯನ್ನು ಆಯ್ಕೆಮಾಡಿ:\n• ವಸ್ತು ಅಥವಾ ವ್ಯಕ್ತಿ ಕಾಣೆಯಾಗಿದ್ದರೆ ಹೋಮ್‌ನಲ್ಲಿ LOST/THEFT ಟ್ಯಾಪ್ ಮಾಡಿ. ನಿಮಗೆ ವಸ್ತು ಅಥವಾ ವ್ಯಕ್ತಿ ಸಿಕ್ಕಿದ್ದರೆ FOUND ಟ್ಯಾಪ್ ಮಾಡಿ.\n• ಸೂಕ್ತ ವರ್ಗವನ್ನು ಆಯ್ಕೆಮಾಡಿ ಮತ್ತು ಪ್ರತಿ ಪರದೆಯ ಹಂತಗಳನ್ನು ಕ್ರಮವಾಗಿ ಅನುಸರಿಸಿ.\n\n2. ಉಪಯುಕ್ತ ವಿವರಗಳನ್ನು ನೀಡಿ:\n• ದಿನಾಂಕ ಮತ್ತು ನಗರ/ಸ್ಥಳ ನಮೂದಿಸಿ. ಬಣ್ಣ, ಗಾತ್ರ, ಬ್ರ್ಯಾಂಡ್ ಅಥವಾ ಉಡುಪಿನಂತಹ ಗುರುತಿನ ವಿವರಗಳನ್ನು ಬರೆಯಿರಿ.\n• ಇದ್ದರೆ ಗರಿಷ್ಠ 3 ಸ್ಪಷ್ಟ ಫೋಟೋಗಳನ್ನು ಸೇರಿಸಿ. ಸುರಕ್ಷಿತವಾಗಿ ಹಂಚಬಹುದಾದ ಮಾಹಿತಿಯನ್ನು ಮಾತ್ರ ನೀಡಿ.\n\n3. ಪರಿಶೀಲಿಸಿ ಸಲ್ಲಿಸಿ:\n• ವಿವರಗಳನ್ನು ಪರಿಶೀಲಿಸಿ, ತಪ್ಪುಗಳನ್ನು ಸರಿಪಡಿಸಿ, Community Guidelines ಒಪ್ಪಿ ಸಲ್ಲಿಸಿ. LOST ವರದಿಗೆ ತೋರಿಸುವ ಪಾವತಿ ಅಥವಾ ಚಂದಾದಾರಿಕೆ ಸೂಚನೆಗಳನ್ನು ಅನುಸರಿಸಿ.\n\n4. ಪ್ರಗತಿ ನೋಡಿ:\n• ವರದಿ ಮತ್ತು ಸ್ಥಿತಿಯನ್ನು ನೋಡಲು My Reports ತೆರೆಯಿರಿ. ಹುಡುಕಾಟದಲ್ಲಿ ಕನಿಷ್ಠ 3 ಅಕ್ಷರಗಳನ್ನು ನಮೂದಿಸಿ. ವಿವರಗಳಿಗೆ ವರದಿಯನ್ನು ಟ್ಯಾಪ್ ಮಾಡಿ ಮತ್ತು ಕ್ರಿಯೆಗಳನ್ನು ತೋರಿಸಲು ಅಥವಾ ಮರೆಮಾಡಲು ಬಾಣ ಬಳಸಿ.",
+                "1. ശരിയായ റിപ്പോർട്ട് തിരഞ്ഞെടുക്കുക:\n• ഒരു വസ്തുവോ വ്യക്തിയോ കാണാതായാൽ ഹോമിൽ LOST/THEFT അമർത്തുക. നിങ്ങൾക്ക് ഒരു വസ്തുവെയോ വ്യക്തിയെയോ കണ്ടെത്തിയാൽ FOUND അമർത്തുക.\n• അനുയോജ്യമായ വിഭാഗം തിരഞ്ഞെടുത്ത് ഓരോ സ്ക്രീനിലെയും ഘട്ടങ്ങൾ ക്രമത്തിൽ പിന്തുടരുക.\n\n2. ഉപകാരപ്രദമായ വിവരങ്ങൾ നൽകുക:\n• തീയതിയും നഗരവും/സ്ഥലവും നൽകുക. നിറം, വലുപ്പം, ബ്രാൻഡ്, വസ്ത്രം തുടങ്ങിയ തിരിച്ചറിയൽ വിവരങ്ങൾ എഴുതുക.\n• ഉണ്ടെങ്കിൽ പരമാവധി 3 വ്യക്തമായ ഫോട്ടോകൾ ചേർക്കുക. സുരക്ഷിതമായി പങ്കിടാവുന്ന വിവരങ്ങൾ മാത്രം നൽകുക.\n\n3. പരിശോധിച്ച് സമർപ്പിക്കുക:\n• വിവരങ്ങൾ പരിശോധിച്ച് തെറ്റുകൾ തിരുത്തി Community Guidelines അംഗീകരിച്ച് സമർപ്പിക്കുക. LOST റിപ്പോർട്ടിനായി കാണിക്കുന്ന പണമടയ്ക്കൽ അല്ലെങ്കിൽ സബ്സ്ക്രിപ്ഷൻ നിർദ്ദേശങ്ങൾ പാലിക്കുക.\n\n4. പുരോഗതി പരിശോധിക്കുക:\n• റിപ്പോർട്ടും നിലയും കാണാൻ My Reports തുറക്കുക. തിരയലിൽ കുറഞ്ഞത് 3 അക്ഷരങ്ങൾ നൽകുക. വിശദാംശങ്ങൾക്ക് റിപ്പോർട്ടിൽ ടാപ്പ് ചെയ്ത് പ്രവർത്തനങ്ങൾ കാണിക്കാനോ മറയ്ക്കാനോ അമ്പ് ഉപയോഗിക്കുക."
         };
         int lang = Math.max(0, Math.min(selectedLanguage, texts.length - 1));
         if (lang == 0) {
-            return "1. On Home, tap LOST/THEFT or FOUND, then choose Item/Valuables, Pet/Animal, or Missing Person.\n\n"
-                    + "2. Enter a title, identifying details, city, and location. Add up to 3 photos using the camera or gallery; "
-                    + "the date and precise GPS location are optional. Accept the Community Guidelines.\n\n"
-                    + "3. Review and submit. A LOST report may require payment unless your subscription is active.\n\n"
-                    + "4. Track your report and its status in My Reports.";
+            return "1. Choose the right report:\n• On Home, tap LOST/THEFT if an item or person is missing. Tap FOUND if you found an item or person.\n• Choose the closest category and follow each screen in order.\n\n"
+                    + "2. Add useful details:\n• Enter the date and city/location. Describe identifying details such as color, size, brand, or clothing.\n"
+                    + "• Add up to 3 clear photos if available. Share only information that is safe to include.\n\n"
+                    + "3. Review and submit:\n• Check the details, fix mistakes, accept the Community Guidelines, and submit. Follow any payment or subscription instructions shown for a LOST report.\n\n"
+                    + "4. Check progress:\n• Open My Reports to find your report and check its status. Search using at least 3 characters. Tap a report for details and use its arrow to show or hide actions.";
         }
 
         String[] lostButtonLabels = {
@@ -922,38 +924,52 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
 
     private String translateMyReportsText() {
         String[] texts = {
-                "1. Create a report:\n• Submit a LOST or FOUND report for your own item or person.\n\n2. Track your reports:\n• My Reports shows only reports you submitted and their status. Admins privately review and match reports; other users cannot browse your reports.\n\n3. Manage your reports:\n• Use Edit once within 5 hours of creating a report.",
-                "1. जमा की गई रिपोर्ट देखें:\n• अपनी सभी सक्रिय खोई और मिली हुई रिपोर्ट एक ही सूची में देखें।\n\n2. स्थिति और AI मिलान ट्रैक करें:\n• रिपोर्ट की स्थिति पर नज़र रखें और किसी भी संभावित AI मिलान की जांच करें।\n\n3. रिपोर्ट संपादित करें:\n• आपकी अपलोड की गई रिपोर्ट निर्माण के 5 घंटे के भीतर केवल एक बार संपादित की जा सकती है; उसके बाद इसे संपादित नहीं किया जा सकता।",
-                "1. सादर केलेले अहवाल पाहा:\n• तुमचे सर्व सक्रिय हरवलेले आणि सापडलेले अहवाल एकाच यादीत पाहा.\n\n2. स्थिती आणि जुळणी ट्रॅक करा:\n• अहवाल स्थितीवर लक्ष ठेवा आणि संभाव्य जुळण्या तपासा.\n\n3. अहवाल संपादित करा:\n• तुमचा अपलोड केलेला अहवाल तयार केल्यापासून ५ तासांच्या आत फक्त एकदाच संपादित केला जाऊ शकतो; त्यानंतर तो संपादित केला जाऊ शकत नाही.",
-                "1. સબમિટ કરેલા રિપોર્ટ જુઓ:\n• તમારા બધા સક્રિય ખોવાયેલ અને મળેલ રિપોર્ટ એક જ યાદીમાં જુઓ.\n\n2. સ્ટેટસ અને AI મેચ ટ્રેક કરો:\n• રિપોર્ટ સ્ટેટસ પર નજર રાખો અને સંભવિત AI મેચ તપાસો.\n\n3. રિપોર્ટ એડિટ કરો:\n• તમારો અપલોડ કરેલો રિપોર્ટ બનાવ્યાના 5 કલાકની અંદર માત્ર એક જ વાર એડિટ કરી શકાય છે; ત્યારબાદ તેને એડિટ કરી શકાશે નહીં.",
-                "1. জমা দেওয়া রিপোর্ট দেখুন:\n• একটি তালিকায় আপনার সমস্ত সক্রিয় হারানো এবং পাওয়া রিপোর্ট দেখুন।\n\n2. স্থিতি এবং AI ম্যাচ ট্র্যাক করুন:\n• রিপোর্টের স্থিতি ট্র্যাক করুন এবং যেকোনো সম্ভাব্য AI ম্যাচ দেখুন।\n\n3. রিপোর্ট সম্পাদনা করুন:\n• আপনার আপলোড করা রিপোর্ট তৈরির ৫ ঘণ্টার মধ্যে শুধুমাত্র একবার সম্পাদনা করা যেতে পারে; তারপরে এটি সম্পাদনা করা যাবে না।",
-                "1. சமர்ப்பிக்கப்பட்ட அறிக்கைகளைப் பார்க்கவும்:\n• உங்கள் செயலில் உள்ள அனைத்து அறிக்கைகளையும் ஒரே பட்டியலில் பார்க்கவும்.\n\n2. நிலை மற்றும் AI பொருத்தங்களைக் கண்காணிக்கவும்:\n• அறிக்கைகளின் நிலையைக் கண்காணித்து சாத்தியமான AI பொருத்தங்களைச் சரிபார்க்கவும்.\n\n3. அறிக்கைகளைத் திருத்துதல்:\n• நீங்கள் பதிவேற்றிய அறிக்கையை உருவாக்கிய 5 மணிநேரத்திற்குள் ஒரு முறை மட்டுமே திருத்த முடியும்; அதற்குப் பிறகு திருத்த முடியாது.",
-                "1. సమర్పించిన రిపోర్టులను చూడండి:\n• మీ క్రియాశీల రిపోర్టులన్నింటినీ ఒకే జాబితాలో చూడండి.\n\n2. స్థితి మరియు AI మ్యాచ్‌లను ట్రాక్ చేయండి:\n• రిపోర్టుల స్థితిని పర్యవేక్షించండి మరియు ఏవైనా AI మ్యాచ్‌లను తనిఖీ చేయండి.\n\n3. రిపోర్టులను సవరించడం:\n• మీరు అప్‌లోడ్ చేసిన రిపోర్ట్‌ను సృష్టించిన 5 గంటలలోపు ఒకసారి మాత్రమే సవరించవచ్చు; ఆ తర్వాత సవరించలేరు.",
-                "1. ಸಲ್ಲಿಸಿದ ವರದಿಗಳನ್ನು ವೀಕ್ಷಿಸಿ:\n• ನಿಮ್ಮ ಎಲ್ಲಾ ಸಕ್ರಿಯ ವರದಿಗಳನ್ನು ಒಂದೇ ಪಟ್ಟಿಯಲ್ಲಿ ಪರಿಶೀಲಿಸಿ.\n\n2. ಸ್ಥಿತಿ ಮತ್ತು AI ಪಂದ್ಯಗಳನ್ನು ಟ್ರ್ಯಾಕ್ ಮಾಡಿ:\n• ವರದಿಗಳ ಸ್ಥಿತಿಯನ್ನು ಮೇಲ್ವಿಚಾರಣೆ ಮಾಡಿ ಮತ್ತು ಸಂಭಾವ್ಯ AI ಪಂದ್ಯಗಳನ್ನು ಪರಿಶೀಲಿಸಿ.\n\n3. ವರದಿಗಳನ್ನು ಸಂಪಾದಿಸುವುದು:\n• ನೀವು ಅಪ್‌ಲೋಡ್ ಮಾಡಿದ ವರದಿಯನ್ನು ರಚಿಸಿದ 5 ಗಂಟೆಗಳ ಒಳಗೆ ಒಮ್ಮೆ ಮಾತ್ರ ಸಂಪಾದಿಸಬಹುದು; ಅದರ ನಂತರ ಅದನ್ನು ಸಂಪಾದಿಸಲು ಸಾಧ್ಯವಿಲ್ಲ.",
-                "1. സമർപ്പിച്ച റിപ്പോർട്ടുകൾ കാണുക:\n• നിങ്ങളുടെ എല്ലാ റിപ്പോർട്ടുകളും ഒറ്റ ലിസ്റ്റിൽ കാണുക.\n\n2. സ്റ്റാറ്റസും AI മാച്ചുകളും ട്രാക്ക് ചെയ്യുക:\n• റിപ്പോർട്ട് സ്റ്റാറ്റസ് നിരീക്ഷിക്കുകയും സാധ്യമായ AI മാച്ചുകൾ പരിശോധിക്കുകയും ചെയ്യുക.\n\n3. റിപ്പോർട്ടുകൾ എഡിറ്റ് ചെയ്യൽ:\n• നിങ്ങൾ അപ്‌ലോഡ് ചെയ്ത റിപ്പോർട്ട് സൃഷ്ടിച്ച് 5 മണിക്കൂറിനുള്ളിൽ ഒരു തവണ മാത്രമേ എഡിറ്റ് ചെയ്യാൻ സാധിക്കൂ; അതിനുശേഷം എഡിറ്റ് ചെയ്യാൻ കഴിയില്ല."
+                "1. Find a report: Type at least 3 characters in Search. Results update as you type. Clear the search to see all reports again.\n\n2. Open and expand: Tap a report card to see its details. Tap the arrow on the card to show or hide its status and actions. Tap the Active or Completed heading to open or close that group.\n\n3. Edit or delete: Open the card and choose Edit or Delete. You can edit a Lost/Found report once, or delete it, within 15 minutes after posting. Read the confirmation before deleting.\n\n4. Mark it reunited: If the item has been returned, use the report action to mark it reunited. Open My Reports later to check for status updates.",
+                "1. रिपोर्ट खोजें: खोज में कम से कम 3 अक्षर लिखें। लिखते ही मिलती-जुलती रिपोर्टें दिखेंगी। सभी रिपोर्टें फिर से देखने के लिए खोज मिटाएँ।\n\n2. खोलें और विस्तार करें: विवरण के लिए रिपोर्ट पर टैप करें। स्थिति और विकल्प दिखाने या छिपाने के लिए कार्ड का तीर दबाएँ। Active या Completed शीर्षक दबाकर उस सूची को खोलें या बंद करें।\n\n3. संपादित करें या हटाएँ: कार्ड खोलकर Edit या Delete चुनें। पोस्ट करने के 15 मिनट के भीतर LOST/FOUND रिपोर्ट एक बार संपादित की जा सकती है या हटाई जा सकती है। हटाने से पहले पुष्टि पढ़ें।\n\n4. वापस मिलने पर दर्ज करें: वस्तु वापस मिल जाए तो रिपोर्ट के विकल्प से उसे reunited चिह्नित करें। स्थिति के नए अपडेट देखने के लिए My Reports फिर खोलें।",
+                "1. अहवाल शोधा: शोधात किमान 3 अक्षरे टाका. टाइप करताच जुळणारे अहवाल दिसतील. सर्व अहवाल पुन्हा पाहण्यासाठी शोध पुसून टाका.\n\n2. उघडा आणि विस्तार करा: तपशीलांसाठी अहवालावर टॅप करा. स्थिती आणि कृती दाखवण्यासाठी किंवा लपवण्यासाठी कार्डवरील बाण वापरा. Active किंवा Completed शीर्षक टॅप करून ती यादी उघडा किंवा बंद करा.\n\n3. संपादन किंवा हटवणे: कार्ड उघडून Edit किंवा Delete निवडा. पोस्ट केल्यानंतर 15 मिनिटांत LOST/FOUND अहवाल एकदाच संपादित किंवा हटवता येतो. हटवण्यापूर्वी पुष्टी वाचा.\n\n4. परत मिळाल्याची नोंद: वस्तू परत मिळाल्यास अहवालातील कृती वापरून reunited म्हणून चिन्हांकित करा. स्थितीतील नवीन अपडेट पाहण्यासाठी My Reports पुन्हा उघडा.",
+                "1. રિપોર્ટ શોધો: શોધમાં ઓછામાં ઓછા 3 અક્ષરો લખો. લખતાં જ મેળ ખાતા રિપોર્ટ દેખાશે. બધા રિપોર્ટ ફરી જોવા માટે શોધ સાફ કરો.\n\n2. ખોલો અને વિસ્તારો: વિગતો માટે રિપોર્ટ પર ટેપ કરો. સ્થિતિ અને વિકલ્પો બતાવવા કે છુપાવવા કાર્ડ પરનું તીર દબાવો. Active અથવા Completed શીર્ષક દબાવી તે જૂથ ખોલો કે બંધ કરો.\n\n3. બદલો અથવા કાઢો: કાર્ડ ખોલીને Edit અથવા Delete પસંદ કરો. પોસ્ટ કર્યા પછી 15 મિનિટમાં LOST/FOUND રિપોર્ટ એક વાર બદલી અથવા કાઢી શકાય છે. કાઢતા પહેલાં પુષ્ટિ વાંચો.\n\n4. પાછું મળ્યાની નોંધ: વસ્તુ પાછી મળી હોય તો રિપોર્ટના વિકલ્પથી reunited તરીકે ચિહ્નિત કરો. સ્થિતિના નવા અપડેટ જોવા My Reports ફરી ખોલો.",
+                "১. রিপোর্ট খুঁজুন: সার্চে কমপক্ষে ৩টি অক্ষর লিখুন। টাইপ করার সঙ্গে সঙ্গে মিল থাকা রিপোর্ট দেখাবে। সব রিপোর্ট দেখতে সার্চ মুছে দিন।\n\n২. খুলুন ও বড় করে দেখুন: বিস্তারিত দেখতে রিপোর্টে ট্যাপ করুন। অবস্থা ও কাজ দেখাতে বা লুকাতে কার্ডের তীরচিহ্ন চাপুন। Active বা Completed শিরোনামে ট্যাপ করে সেই তালিকা খুলুন বা বন্ধ করুন।\n\n৩. সম্পাদনা বা মুছুন: কার্ড খুলে Edit বা Delete বেছে নিন। পোস্ট করার ১৫ মিনিটের মধ্যে LOST/FOUND রিপোর্ট একবার সম্পাদনা বা মুছে ফেলা যাবে। মুছতে যাওয়ার আগে নিশ্চিতকরণটি পড়ুন।\n\n৪. ফিরে পাওয়া নথিভুক্ত করুন: জিনিসটি ফেরত পেলে রিপোর্টের কাজ থেকে reunited হিসেবে চিহ্নিত করুন। অবস্থার নতুন আপডেট দেখতে পরে My Reports খুলুন।",
+                "1. அறிக்கையைத் தேடுங்கள்: தேடலில் குறைந்தது 3 எழுத்துகளை உள்ளிடவும். தட்டச்சு செய்யும்போதே பொருந்தும் அறிக்கைகள் தோன்றும். எல்லா அறிக்கைகளையும் மீண்டும் காண தேடலை அழிக்கவும்.\n\n2. திறந்து விரிவாக்குங்கள்: விவரங்களைக் காண அறிக்கையைத் தட்டவும். நிலை மற்றும் செயல்களைக் காட்ட அல்லது மறைக்க அட்டையிலுள்ள அம்பைத் தட்டவும். Active அல்லது Completed தலைப்பைத் தட்டி அந்தப் பட்டியலைத் திறக்கவும் அல்லது மூடவும்.\n\n3. திருத்தவும் அல்லது நீக்கவும்: அட்டையைத் திறந்து Edit அல்லது Delete என்பதைத் தேர்ந்தெடுக்கவும். பதிவிட்ட 15 நிமிடங்களுக்குள் LOST/FOUND அறிக்கையை ஒருமுறை திருத்தலாம் அல்லது நீக்கலாம். நீக்குவதற்கு முன் உறுதிப்படுத்தலைப் படிக்கவும்.\n\n4. மீண்டும் கிடைத்ததைப் பதிவு செய்யவும்: பொருள் திரும்பக் கிடைத்தால் அறிக்கையின் செயலைப் பயன்படுத்தி reunited எனக் குறிக்கவும். நிலை புதுப்பிப்புகளுக்குப் பின்னர் My Reports-ஐ மீண்டும் பார்க்கவும்.",
+                "1. నివేదికను వెతకండి: సెర్చ్‌లో కనీసం 3 అక్షరాలు నమోదు చేయండి. టైప్ చేస్తుండగానే సరిపోలే నివేదికలు కనిపిస్తాయి. అన్ని నివేదికలను మళ్లీ చూడటానికి సెర్చ్‌ను క్లియర్ చేయండి.\n\n2. తెరిచి విస్తరించండి: వివరాల కోసం నివేదికను నొక్కండి. స్థితి, చర్యలను చూపడానికి లేదా దాచడానికి కార్డ్‌లోని బాణాన్ని నొక్కండి. Active లేదా Completed శీర్షికను నొక్కి జాబితాను తెరవండి లేదా మూసివేయండి.\n\n3. సవరించండి లేదా తొలగించండి: కార్డ్ తెరిచి Edit లేదా Delete ఎంచుకోండి. పోస్ట్ చేసిన 15 నిమిషాల్లో LOST/FOUND నివేదికను ఒకసారి సవరించవచ్చు లేదా తొలగించవచ్చు. తొలగించే ముందు నిర్ధారణను చదవండి.\n\n4. తిరిగి దొరికినట్లు నమోదు చేయండి: వస్తువు తిరిగి దొరికితే నివేదిక చర్యను ఉపయోగించి reunitedగా గుర్తించండి. స్థితి నవీకరణల కోసం తర్వాత My Reports చూడండి.",
+                "1. ವರದಿಯನ್ನು ಹುಡುಕಿ: ಹುಡುಕಾಟದಲ್ಲಿ ಕನಿಷ್ಠ 3 ಅಕ್ಷರಗಳನ್ನು ನಮೂದಿಸಿ. ಟೈಪ್ ಮಾಡುವಾಗಲೇ ಹೊಂದಾಣಿಕೆಯ ವರದಿಗಳು ಕಾಣಿಸುತ್ತವೆ. ಎಲ್ಲಾ ವರದಿಗಳನ್ನು ಮತ್ತೆ ನೋಡಲು ಹುಡುಕಾಟ ತೆರವುಗೊಳಿಸಿ.\n\n2. ತೆರೆಯಿರಿ ಮತ್ತು ವಿಸ್ತರಿಸಿ: ವಿವರಗಳಿಗಾಗಿ ವರದಿಯನ್ನು ಟ್ಯಾಪ್ ಮಾಡಿ. ಸ್ಥಿತಿ ಮತ್ತು ಕ್ರಿಯೆಗಳನ್ನು ತೋರಿಸಲು ಅಥವಾ ಮರೆಮಾಡಲು ಕಾರ್ಡ್‌ನ ಬಾಣವನ್ನು ಟ್ಯಾಪ್ ಮಾಡಿ. Active ಅಥವಾ Completed ಶೀರ್ಷಿಕೆಯನ್ನು ಟ್ಯಾಪ್ ಮಾಡಿ ಪಟ್ಟಿಯನ್ನು ತೆರೆಯಿರಿ ಅಥವಾ ಮುಚ್ಚಿ.\n\n3. ಸಂಪಾದಿಸಿ ಅಥವಾ ಅಳಿಸಿ: ಕಾರ್ಡ್ ತೆರೆಯಿರಿ ಮತ್ತು Edit ಅಥವಾ Delete ಆಯ್ಕೆಮಾಡಿ. ಪೋಸ್ಟ್ ಮಾಡಿದ 15 ನಿಮಿಷಗಳೊಳಗೆ LOST/FOUND ವರದಿಯನ್ನು ಒಮ್ಮೆ ಸಂಪಾದಿಸಬಹುದು ಅಥವಾ ಅಳಿಸಬಹುದು. ಅಳಿಸುವ ಮೊದಲು ದೃಢೀಕರಣವನ್ನು ಓದಿ.\n\n4. ಮರಳಿ ಸಿಕ್ಕಿದ್ದನ್ನು ದಾಖಲಿಸಿ: ವಸ್ತು ಮರಳಿ ಸಿಕ್ಕಿದರೆ ವರದಿಯ ಕ್ರಿಯೆಯನ್ನು ಬಳಸಿ reunited ಎಂದು ಗುರುತಿಸಿ. ಸ್ಥಿತಿ ನವೀಕರಣಗಳಿಗಾಗಿ ನಂತರ My Reports ಪರಿಶೀಲಿಸಿ.",
+                "1. റിപ്പോർട്ട് തിരയുക: തിരയലിൽ കുറഞ്ഞത് 3 അക്ഷരങ്ങൾ നൽകുക. ടൈപ്പ് ചെയ്യുമ്പോൾ തന്നെ പൊരുത്തമുള്ള റിപ്പോർട്ടുകൾ കാണിക്കും. എല്ലാ റിപ്പോർട്ടുകളും വീണ്ടും കാണാൻ തിരയൽ മായ്ക്കുക.\n\n2. തുറന്ന് വികസിപ്പിക്കുക: വിശദാംശങ്ങൾ കാണാൻ റിപ്പോർട്ടിൽ ടാപ്പ് ചെയ്യുക. നിലയും പ്രവർത്തനങ്ങളും കാണിക്കാനോ മറയ്ക്കാനോ കാർഡിലെ അമ്പ് ടാപ്പ് ചെയ്യുക. Active അല്ലെങ്കിൽ Completed തലക്കെട്ടിൽ ടാപ്പ് ചെയ്ത് പട്ടിക തുറക്കുകയോ അടയ്ക്കുകയോ ചെയ്യുക.\n\n3. തിരുത്തുക അല്ലെങ്കിൽ ഇല്ലാതാക്കുക: കാർഡ് തുറന്ന് Edit അല്ലെങ്കിൽ Delete തിരഞ്ഞെടുക്കുക. പോസ്റ്റ് ചെയ്ത് 15 മിനിറ്റിനുള്ളിൽ LOST/FOUND റിപ്പോർട്ട് ഒരിക്കൽ തിരുത്തുകയോ ഇല്ലാതാക്കുകയോ ചെയ്യാം. ഇല്ലാതാക്കുന്നതിന് മുമ്പ് സ്ഥിരീകരണം വായിക്കുക.\n\n4. തിരികെ ലഭിച്ചത് രേഖപ്പെടുത്തുക: വസ്തു തിരികെ ലഭിച്ചാൽ റിപ്പോർട്ടിലെ പ്രവർത്തനം ഉപയോഗിച്ച് reunited എന്ന് അടയാളപ്പെടുത്തുക. നിലയിലെ പുതിയ വിവരങ്ങൾക്കായി പിന്നീട് My Reports പരിശോധിക്കുക."
         };
         int lang = Math.max(0, Math.min(selectedLanguage, texts.length - 1));
-        if (lang == 0) {
-            texts[0] = "1. Open My Reports and use the category tabs to filter your LOST and FOUND reports. "
-                    + "Tap a report card to see its details and status tracker.\n\n"
-                    + "2. Tap Edit to change a report once within 5 hours. A report can be deleted only within "
-                    + "1 hour of posting.\n\n"
-                    + "3. Use Mark as reunited when the item is returned; story sharing is optional. "
-                    + "Lost and Found reports may also offer a community poster or alert card to share.";
-        }
-        String[] completedReportsNotes = {
-                "Completed reports stay collapsed. Tap the section heading to expand or collapse the list.",
-                "पूरी हो चुकी रिपोर्टें बंद रहती हैं। सूची देखने या छिपाने के लिए पूरी रिपोर्टें शीर्षक पर टैप करें।",
-                "पूर्ण झालेले अहवाल बंद राहतात. यादी उघडण्यासाठी किंवा बंद करण्यासाठी पूर्ण झालेले अहवाल या शीर्षकावर टॅप करा.",
-                "પૂર્ણ થયેલા રિપોર્ટ બંધ રહે છે. યાદી ખોલવા અથવા બંધ કરવા પૂર્ણ થયેલા રિપોર્ટના શીર્ષક પર ટેપ કરો.",
-                "সম্পন্ন রিপোর্টগুলো বন্ধ থাকে। তালিকা খুলতে বা বন্ধ করতে সম্পন্ন রিপোর্ট শিরোনামে ট্যাপ করুন।",
-                "நிறைவு செய்யப்பட்ட அறிக்கைகள் சுருக்கப்பட்டிருக்கும். பட்டியலைத் திறக்க அல்லது மூட நிறைவு செய்யப்பட்ட அறிக்கைகள் தலைப்பைத் தட்டவும்.",
-                "పూర్తయిన రిపోర్టులు మూసి ఉంటాయి. జాబితాను తెరవడానికి లేదా మూసివేయడానికి పూర్తయిన రిపోర్టుల శీర్షికను నొక్కండి.",
-                "ಪೂರ್ಣಗೊಂಡ ವರದಿಗಳು ಮುಚ್ಚಿರುತ್ತವೆ. ಪಟ್ಟಿಯನ್ನು ತೆರೆಯಲು ಅಥವಾ ಮುಚ್ಚಲು ಪೂರ್ಣಗೊಂಡ ವರದಿಗಳ ಶೀರ್ಷಿಕೆಯನ್ನು ಟ್ಯಾಪ್ ಮಾಡಿ.",
-                "പൂർത്തിയായ റിപ്പോർട്ടുകൾ അടച്ചിരിക്കും. പട്ടിക തുറക്കാനോ അടയ്ക്കാനോ പൂർത്തിയായ റിപ്പോർട്ടുകൾ എന്ന തലക്കെട്ടിൽ ടാപ്പ് ചെയ്യുക."
+        String[] oldCompletedGroupInstructions = {
+                "Tap the Active or Completed heading to open or close that group.",
+                "Active या Completed शीर्षक दबाकर उस सूची को खोलें या बंद करें।",
+                "Active किंवा Completed शीर्षक टॅप करून ती यादी उघडा किंवा बंद करा.",
+                "Active અથવા Completed શીર્ષક દબાવી તે જૂથ ખોલો કે બંધ કરો.",
+                "Active বা Completed শিরোনামে ট্যাপ করে সেই তালিকা খুলুন বা বন্ধ করুন।",
+                "Active அல்லது Completed தலைப்பைத் தட்டி அந்தப் பட்டியலைத் திறக்கவும் அல்லது மூடவும்.",
+                "Active లేదా Completed శీర్షికను నొక్కి జాబితాను తెరవండి లేదా మూసివేయండి.",
+                "Active ಅಥವಾ Completed ಶೀರ್ಷಿಕೆಯನ್ನು ಟ್ಯಾಪ್ ಮಾಡಿ ಪಟ್ಟಿಯನ್ನು ತೆರೆಯಿರಿ ಅಥವಾ ಮುಚ್ಚಿ.",
+                "Active അല്ലെങ്കിൽ Completed തലക്കെട്ടിൽ ടാപ്പ് ചെയ്ത് പട്ടിക തുറക്കുകയോ അടയ്ക്കുകയോ ചെയ്യുക."
         };
-        return texts[lang].replace("AI ", "").replace("AI", "")
-                + "\n\n" + completedReportsNotes[lang];
+        String[] completedGroupInstructions = {
+                "Completed reports are hidden at first. Tap the Completed reports heading to expand them; tap it again to collapse them.",
+                "पूरी रिपोर्टें पहले छिपी रहती हैं। उन्हें खोलने के लिए Completed reports दबाएँ; बंद करने के लिए फिर दबाएँ।",
+                "पूर्ण झालेले अहवाल सुरुवातीला लपवलेले असतात. ते उघडण्यासाठी Completed reports टॅप करा; बंद करण्यासाठी पुन्हा टॅप करा.",
+                "પૂર્ણ થયેલા રિપોર્ટ શરૂઆતમાં છુપાયેલા હોય છે. તેમને ખોલવા Completed reports પર ટેપ કરો; બંધ કરવા ફરી ટેપ કરો.",
+                "সম্পন্ন রিপোর্ট প্রথমে লুকানো থাকে। খুলতে Completed reports-এ ট্যাপ করুন; বন্ধ করতে আবার ট্যাপ করুন।",
+                "நிறைவு செய்யப்பட்ட அறிக்கைகள் முதலில் மறைக்கப்பட்டிருக்கும். அவற்றை விரிக்க Completed reports-ஐத் தட்டவும்; சுருக்க மீண்டும் தட்டவும்.",
+                "పూర్తయిన నివేదికలు మొదట దాచబడి ఉంటాయి. వాటిని విస్తరించడానికి Completed reports నొక్కండి; కుదించడానికి మళ్లీ నొక్కండి.",
+                "ಪೂರ್ಣಗೊಂಡ ವರದಿಗಳು ಮೊದಲು ಮರೆಮಾಡಿರುತ್ತವೆ. ಅವನ್ನು ವಿಸ್ತರಿಸಲು Completed reports ಟ್ಯಾಪ್ ಮಾಡಿ; ಕುಗ್ಗಿಸಲು ಮತ್ತೆ ಟ್ಯಾಪ್ ಮಾಡಿ.",
+                "പൂർത്തിയായ റിപ്പോർട്ടുകൾ ആദ്യം മറച്ചിരിക്കും. അവ വികസിപ്പിക്കാൻ Completed reports ടാപ്പ് ചെയ്യുക; ചുരുക്കാൻ വീണ്ടും ടാപ്പ് ചെയ്യുക."
+        };
+        String[] lostButtonLabels = {
+                "LOST", "खोया", "हरवले/चोरी", "ખોવાયેલું", "হারানো",
+                "தொலைந்தது", "పోగొట్టుకున్న", "ಕಳೆದುಹೋದ", "നഷ്ടപ്പെട്ട"
+        };
+        String[] foundButtonLabels = {
+                "FOUND", "मिला", "सापडले", "મળેલ", "পাওয়া",
+                "கிடைத்தது", "దొరికిన", "ಸಿಕ್ಕಿದ", "കണ്ടെത്തിയത്"
+        };
+        return texts[lang]
+                .replace(oldCompletedGroupInstructions[lang], completedGroupInstructions[lang])
+                .replace("LOST", lostButtonLabels[lang])
+                .replace("FOUND", foundButtonLabels[lang])
+                .replace("Completed reports", localizeReportsText("Completed reports"));
     }
 
     @Override
@@ -6873,11 +6889,34 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         LinearLayout.LayoutParams userReportsLabelParams = new LinearLayout.LayoutParams(-1, -2);
         userReportsLabelParams.setMargins(0, dp(16), 0, dp(8));
         activeContent.addView(userReportsLabel, userReportsLabelParams);
+        EditText reportSearchInput = new EditText(this);
+        reportSearchInput.setSingleLine(true);
+        reportSearchInput.setTextSize(14);
+        reportSearchInput.setTextColor(primaryTextColor());
+        reportSearchInput.setHintTextColor(secondaryTextColor());
+        reportSearchInput.setHint(localizeReportsText("Search your reports"));
+        reportSearchInput.setPadding(dp(14), 0, dp(14), 0);
+        reportSearchInput.setBackground(roundWithStroke(surfaceColor(), 14, borderColor()));
+        reportSearchInput.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);
+        LinearLayout.LayoutParams reportSearchParams = new LinearLayout.LayoutParams(-1, dp(48));
+        reportSearchParams.setMargins(0, 0, 0, dp(8));
+        activeContent.addView(reportSearchInput, reportSearchParams);
+        TextView reportSearchHint = text(
+                localizeReportsText("Enter at least 3 characters to search."),
+                12,
+                secondaryTextColor(),
+                Typeface.NORMAL
+        );
+        reportSearchHint.setVisibility(View.GONE);
+        activeContent.addView(reportSearchHint, new LinearLayout.LayoutParams(-1, -2));
         LinearLayout activeUserReports = new LinearLayout(this);
         activeUserReports.setOrientation(LinearLayout.VERTICAL);
         activeContent.addView(activeUserReports, new LinearLayout.LayoutParams(-1, -2));
         LinearLayout completedUserReports = new LinearLayout(this);
         completedUserReports.setOrientation(LinearLayout.VERTICAL);
+        Map<View, String> reportSearchIndex = new LinkedHashMap<>();
+        LinkedHashSet<View> completedSearchCards = new LinkedHashSet<>();
+        TextView[] completedToggleRef = {null};
 
         Map<String, JSONObject> reportMap = new LinkedHashMap<>();
         try {
@@ -6918,11 +6957,8 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                 String displayType = "FOUND".equalsIgnoreCase(type) ? translate("FOUND") : "LOST".equalsIgnoreCase(type) ? translate("LOST") : translate("Item");
                 String reportId = report.optString("id", report.optString("_id", ""));
                 String reportImageUrl = report.optString("image_url", null);
-                long createdAtMs = parseReportCreatedAtMillis(report);
-                long ageMs = System.currentTimeMillis() - createdAtMs;
-                boolean isWithin5Hours = createdAtMs > 0 && ageMs >= 0 && ageMs <= 5 * 3600 * 1000L;
                 boolean isCompleted = resolveReportWorkflowStage(report) == 4;
-                boolean canEdit = !isCompleted && report.optInt("edit_count", 0) == 0 && isWithin5Hours;
+                boolean canEdit = !isCompleted && report.optBoolean("can_edit", false);
                 LinearLayout reportCard = reportRow(title, displayType + "  ·  " + detail, () -> {
                     editingReportId = reportId;
                     editingReportType = type;
@@ -6965,8 +7001,24 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                 reportCardContainer.setOrientation(LinearLayout.VERTICAL);
                 reportCardContainer.setPadding(dp(8), dp(6), dp(8), dp(10));
                 reportCardContainer.setBackground(roundWithStroke(surfaceColor(), 18, borderColor()));
+                String searchableText = String.join(
+                        " ",
+                        type,
+                        title,
+                        report.optString("title_en", ""),
+                        report.optString("description", ""),
+                        report.optString("description_en", ""),
+                        report.optString("category", ""),
+                        report.optString("report_location", ""),
+                        report.optString("report_date", "")
+                ).toLowerCase(Locale.ROOT);
+                reportSearchIndex.put(reportCardContainer, searchableText);
+                if (isCompleted) completedSearchCards.add(reportCardContainer);
+                View.OnClickListener openReportDetails =
+                        view -> showReportDetailsDialog(report, false, true);
                 reportCard.setBackgroundColor(Color.TRANSPARENT);
-                reportCard.setOnClickListener(view -> showReportDetailsDialog(report, false, true));
+                reportCard.setOnClickListener(openReportDetails);
+                reportCardContainer.setOnClickListener(openReportDetails);
                 LinearLayout reportHeader = new LinearLayout(this);
                 reportHeader.setOrientation(LinearLayout.HORIZONTAL);
                 reportHeader.setGravity(Gravity.CENTER_VERTICAL);
@@ -6989,7 +7041,10 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                         expandedMyReportIds.contains(reportId) ? View.VISIBLE : View.GONE
                 );
                 reportCardContainer.addView(expandedReportContent, new LinearLayout.LayoutParams(-1, -2));
-                expandedReportContent.addView(createReportStatusTracker(report));
+                View reportStatusTracker = createReportStatusTracker(report);
+                reportStatusTracker.setOnClickListener(openReportDetails);
+                expandedReportContent.setOnClickListener(openReportDetails);
+                expandedReportContent.addView(reportStatusTracker);
                 expandToggle.setOnClickListener(view -> {
                     boolean expand = expandedReportContent.getVisibility() != View.VISIBLE;
                     if (expand) {
@@ -7074,6 +7129,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                             localizeReportsText("Completed reports") + " (" + localizeDigits(String.valueOf(completedCount)) + ")  ▼",
                             false
                     );
+                    completedToggleRef[0] = completedToggle;
                     completedToggle.setGravity(Gravity.START | Gravity.CENTER_VERTICAL);
                     completedToggle.setPadding(dp(14), 0, dp(14), 0);
                     LinearLayout.LayoutParams toggleParams = new LinearLayout.LayoutParams(-1, dp(48));
@@ -7083,6 +7139,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                     completedUserReports.setVisibility(View.GONE);
                     completedToggle.setOnClickListener(view -> {
                         boolean expand = completedUserReports.getVisibility() != View.VISIBLE;
+                        myReportsCompletedExpanded = expand;
                         completedUserReports.setVisibility(expand ? View.VISIBLE : View.GONE);
                         completedToggle.setText(String.format(
                                 Locale.ROOT,
@@ -7094,6 +7151,54 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                     });
                 }
             }
+            TextView noSearchResults = text(
+                    localizeReportsText("No reports match your search."),
+                    14,
+                    secondaryTextColor(),
+                    Typeface.NORMAL
+            );
+            noSearchResults.setVisibility(View.GONE);
+            activeContent.addView(noSearchResults, new LinearLayout.LayoutParams(-1, -2));
+            reportSearchInput.setText(myReportsSearchQuery);
+            reportSearchInput.setSelection(reportSearchInput.length());
+            reportSearchInput.addTextChangedListener(new TextWatcher() {
+                @Override
+                public void beforeTextChanged(CharSequence text, int start, int count, int after) {}
+
+                @Override
+                public void onTextChanged(CharSequence text, int start, int before, int count) {
+                    myReportsSearchQuery = text.toString();
+                    String query = myReportsSearchQuery.trim();
+                    boolean searchReady = query.codePointCount(0, query.length()) >= 3;
+                    reportSearchHint.setVisibility(
+                            query.isEmpty() || searchReady ? View.GONE : View.VISIBLE
+                    );
+                    filterMyReportCards(
+                            reportSearchIndex,
+                            completedSearchCards,
+                            completedUserReports,
+                            completedToggleRef[0],
+                            noSearchResults,
+                            query
+                    );
+                }
+
+                @Override
+                public void afterTextChanged(android.text.Editable text) {}
+            });
+            String initialQuery = myReportsSearchQuery.trim();
+            boolean initialSearchReady = initialQuery.codePointCount(0, initialQuery.length()) >= 3;
+            reportSearchHint.setVisibility(
+                    initialQuery.isEmpty() || initialSearchReady ? View.GONE : View.VISIBLE
+            );
+            filterMyReportCards(
+                    reportSearchIndex,
+                    completedSearchCards,
+                    completedUserReports,
+                    completedToggleRef[0],
+                    noSearchResults,
+                    initialQuery
+            );
         } catch (Exception error) {
             addField(activeContent, text(localizeReportsText("No reports yet."), 16, secondaryTextColor(), Typeface.NORMAL));
         }
@@ -7101,6 +7206,39 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         TextView home = actionButton(translate("Back home"), false);
         home.setOnClickListener(view -> showHome());
         addField(root, home);
+    }
+
+    private void filterMyReportCards(
+            Map<View, String> reportSearchIndex,
+            LinkedHashSet<View> completedSearchCards,
+            LinearLayout completedReports,
+            TextView completedToggle,
+            TextView noResults,
+            String query
+    ) {
+        boolean shouldFilter = query.codePointCount(0, query.length()) >= 3;
+        String normalizedQuery = query.toLowerCase(Locale.ROOT);
+        int matchedCount = 0;
+        int matchedCompletedCount = 0;
+        for (Map.Entry<View, String> entry : reportSearchIndex.entrySet()) {
+            boolean matches = !shouldFilter || entry.getValue().contains(normalizedQuery);
+            entry.getKey().setVisibility(matches ? View.VISIBLE : View.GONE);
+            if (!matches) continue;
+            matchedCount++;
+            if (completedSearchCards.contains(entry.getKey())) {
+                matchedCompletedCount++;
+            }
+        }
+        noResults.setVisibility(
+                shouldFilter && matchedCount == 0 ? View.VISIBLE : View.GONE
+        );
+        if (completedToggle != null) {
+            boolean hasCompletedMatches = matchedCompletedCount > 0;
+            completedToggle.setVisibility(hasCompletedMatches ? View.VISIBLE : View.GONE);
+            completedReports.setVisibility(
+                    hasCompletedMatches && myReportsCompletedExpanded ? View.VISIBLE : View.GONE
+            );
+        }
     }
 
     private void showReunionConsentDialog(
@@ -11953,7 +12091,8 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             throws Exception {
         String normalizedType = "FOUND".equalsIgnoreCase(reportType) ? "found" : "lost";
         String endpoint = API_BASE + "/api/items/" + normalizedType + "/"
-                + Uri.encode(reportId) + "/community-poster";
+                + Uri.encode(reportId) + "/community-poster?language="
+                + Uri.encode(getTtsLocaleForSelectedLanguage().getLanguage());
         HttpURLConnection connection = null;
         try {
             connection = (HttpURLConnection) new URL(endpoint).openConnection();
@@ -13877,7 +14016,14 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
 
         TextView body = text(guideText, 13, secondaryTextColor(), Typeface.NORMAL);
         body.setPadding(0, 0, 0, dp(20));
-        form.addView(body, new LinearLayout.LayoutParams(-1, -2));
+        ScrollView guideScroll = new ScrollView(this);
+        guideScroll.setVerticalScrollBarEnabled(true);
+        guideScroll.addView(body, new ScrollView.LayoutParams(-1, -2));
+        int guideHeight = Math.max(
+                dp(160),
+                Math.min(dp(420), getResources().getDisplayMetrics().heightPixels - dp(220))
+        );
+        form.addView(guideScroll, new LinearLayout.LayoutParams(-1, guideHeight));
 
         LinearLayout actionsRow = new LinearLayout(this);
         actionsRow.setOrientation(LinearLayout.HORIZONTAL);
@@ -13897,7 +14043,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         voiceButton.setColorFilter(primaryTextColor());
         voiceButton.setBackground(roundWithStroke(surfaceColor(), 10, fieldBorderColor()));
         voiceButton.setPadding(dp(10), dp(10), dp(10), dp(10));
-        voiceButton.setContentDescription("Listen to guide");
+        voiceButton.setContentDescription(translate("Listen to guide"));
         voiceButton.setOnClickListener(v -> speakOrStop(titleStr + ". " + guideText, voiceButton));
         LinearLayout.LayoutParams voiceParams = new LinearLayout.LayoutParams(dp(44), dp(44));
         voiceParams.setMargins(dp(8), 0, 0, 0);
@@ -14134,7 +14280,14 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
 
         TextView body = text(guideText, 13, secondaryTextColor(), Typeface.NORMAL);
         body.setPadding(0, 0, 0, dp(20));
-        form.addView(body, new LinearLayout.LayoutParams(-1, -2));
+        ScrollView guideScroll = new ScrollView(this);
+        guideScroll.setVerticalScrollBarEnabled(true);
+        guideScroll.addView(body, new ScrollView.LayoutParams(-1, -2));
+        int guideHeight = Math.max(
+                dp(160),
+                Math.min(dp(420), getResources().getDisplayMetrics().heightPixels - dp(220))
+        );
+        form.addView(guideScroll, new LinearLayout.LayoutParams(-1, guideHeight));
 
         LinearLayout actionsRow = new LinearLayout(this);
         actionsRow.setOrientation(LinearLayout.HORIZONTAL);
@@ -14154,7 +14307,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         voiceButton.setColorFilter(primaryTextColor());
         voiceButton.setBackground(roundWithStroke(surfaceColor(), 10, fieldBorderColor()));
         voiceButton.setPadding(dp(10), dp(10), dp(10), dp(10));
-        voiceButton.setContentDescription("Listen to guide");
+        voiceButton.setContentDescription(translate("Listen to guide"));
         voiceButton.setOnClickListener(v -> speakOrStop(titleStr + ". " + guideText, voiceButton));
         LinearLayout.LayoutParams voiceParams = new LinearLayout.LayoutParams(dp(44), dp(44));
         voiceParams.setMargins(dp(8), 0, 0, 0);
@@ -15137,6 +15290,9 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
     private String localizeReportsText(String value) {
         if (value == null) return null;
         String[][] entries = {
+                {"Search your reports", "अपने रिपोर्ट खोजें", "तुमचे अहवाल शोधा", "તમારા અહેવાલો શોધો", "আপনার রিপোর্ট খুঁজুন", "உங்கள் அறிக்கைகளைத் தேடுங்கள்", "మీ నివేదికలను వెతకండి", "ನಿಮ್ಮ ವರದಿಗಳನ್ನು ಹುಡುಕಿ", "നിങ്ങളുടെ റിപ്പോർട്ടുകൾ തിരയുക"},
+                {"Enter at least 3 characters to search.", "खोजने के लिए कम से कम 3 अक्षर लिखें।", "शोधण्यासाठी किमान 3 अक्षरे टाका.", "શોધવા માટે ઓછામાં ઓછા 3 અક્ષરો લખો.", "খুঁজতে কমপক্ষে ৩টি অক্ষর লিখুন।", "தேட குறைந்தது 3 எழுத்துகளை உள்ளிடவும்.", "వెతకడానికి కనీసం 3 అక్షరాలు నమోదు చేయండి.", "ಹುಡುಕಲು ಕನಿಷ್ಠ 3 ಅಕ್ಷರಗಳನ್ನು ನಮೂದಿಸಿ.", "തിരയാൻ കുറഞ്ഞത് 3 അക്ഷരങ്ങൾ നൽകുക."},
+                {"No reports match your search.", "आपकी खोज से कोई रिपोर्ट मेल नहीं खाती।", "तुमच्या शोधाशी कोणताही अहवाल जुळत नाही.", "તમારી શોધ સાથે કોઈ અહેવાલ મેળ ખાતો નથી.", "আপনার অনুসন্ধানের সঙ্গে কোনো রিপোর্ট মেলেনি।", "உங்கள் தேடலுக்கு எந்த அறிக்கையும் பொருந்தவில்லை.", "మీ వెతుకులాటకు నివేదికలు సరిపోలలేదు.", "ನಿಮ್ಮ ಹುಡುಕಾಟಕ್ಕೆ ಯಾವುದೇ ವರದಿಗಳು ಹೊಂದಿಕೆಯಾಗಿಲ್ಲ.", "നിങ്ങളുടെ തിരച്ചിലുമായി റിപ്പോർട്ടുകളൊന്നും പൊരുത്തപ്പെടുന്നില്ല."},
                 {"Loading reports...", "रिपोर्ट लोड हो रही हैं...", "अहवाल लोड होत आहेत...", "રિપોર્ટ લોડ થઈ રહ્યા છે...", "রিপোর্ট লোড হচ্ছে...", "அறிக்கைகள் ஏற்றப்படுகின்றன...", "రిపోర్టులు లోడ్ అవుతున్నాయి...", "ವರದಿಗಳನ್ನು ಲೋಡ್ ಮಾಡಲಾಗುತ್ತಿದೆ...", "റിപ്പോർട്ടുകൾ ലോഡ് ചെയ്യുന്നു..."},
                 {"Expand", "विस्तार करें", "विस्तृत करा", "વિસ્તૃત કરો", "বিস্তারিত দেখুন", "விரிவாக்கு", "విస్తరించండి", "ವಿಸ್ತರಿಸಿ", "വികസിപ്പിക്കുക"},
                 {"Collapse", "समेटें", "लपवा", "સંકોચો", "সংক্ষিপ্ত করুন", "சுருக்கு", "కుదించండి", "ಕುಗ್ಗಿಸಿ", "ചുരുക്കുക"},

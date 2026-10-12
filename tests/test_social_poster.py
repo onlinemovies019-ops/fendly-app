@@ -57,8 +57,49 @@ def test_community_poster_photo_tag_matches_report_subject(
         photo=Image.new("RGB", (80, 80), color=(120, 145, 160)),
     )
 
-    assert "FENDLY  ·  LOST ITEM ALERT" in drawn_text
+    assert "FENDLY  ·  LOST ALERT" in drawn_text
     assert photo_label in drawn_text
+
+
+@pytest.mark.parametrize(
+    "language_code",
+    ["en", "hi", "mr", "gu", "bn", "ta", "te", "kn", "ml"],
+)
+def test_report_poster_supports_every_app_language(language_code):
+    content = render_community_poster(
+        title="Milo",
+        report_type="FOUND",
+        category="Pets",
+        report_url="https://fendly.app/item/example",
+        photo=None,
+        language_code=language_code,
+    )
+
+    with Image.open(BytesIO(content)) as poster:
+        assert poster.size == (POSTER_WIDTH, POSTER_HEIGHT)
+
+
+@pytest.mark.parametrize(
+    "language_code",
+    ["en", "hi", "mr", "gu", "bn", "ta", "te", "kn", "ml"],
+)
+def test_adoption_poster_supports_every_app_language(language_code):
+    photo = BytesIO()
+    Image.new("RGB", (100, 100), color=(150, 120, 95)).save(photo, format="JPEG")
+    content = render_adoption_poster(
+        photo.getvalue(),
+        pet_name="Milo",
+        species="dog",
+        breed="Indie",
+        age_months=18,
+        location_city="Pune",
+        health_status="Vaccinated",
+        download_url="https://fendly.app",
+        language_code=language_code,
+    )
+
+    with Image.open(BytesIO(content)) as poster:
+        assert poster.size == (1080, 1350)
 
 
 @pytest.mark.parametrize(

@@ -163,6 +163,7 @@ class AdoptionListing(Base):
     description: Mapped[str] = mapped_column(Text)
     location_city: Mapped[str] = mapped_column(String(120))
     images: Mapped[list[str]] = mapped_column(JSON, default=list)
+    poster_language: Mapped[str] = mapped_column(String(16), default="en", server_default="en")
     status: Mapped[str] = mapped_column(String(16), default="available")
     auto_post_social: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     social_post_status: Mapped[str | None] = mapped_column(String(16))

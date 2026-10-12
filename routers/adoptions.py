@@ -2,6 +2,7 @@ import io
 import logging
 import os
 import re
+from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Response, UploadFile, status
@@ -25,6 +26,7 @@ from models import (
 )
 from moderation import moderate_content
 from notifications import send_user_notification_push
+from poster_localization import LANGUAGE_CODES
 
 
 router = APIRouter(prefix="/api/adoptions", tags=["adoptions"])
@@ -37,6 +39,16 @@ MIME_FORMATS = {
     "image/webp": ("WEBP", "webp"),
 }
 PHONE_PATTERN = re.compile(r"^\+?[0-9][0-9 ()-]{6,30}$")
+
+
+def _within_lister_edit_window(created_at: datetime | None) -> bool:
+    if created_at is None:
+        return False
+    created_at_utc = (
+        created_at if created_at.tzinfo else created_at.replace(tzinfo=timezone.utc)
+    )
+    now = datetime.now(timezone.utc)
+    return created_at_utc <= now and now - created_at_utc <= timedelta(minutes=15)
 
 
 class AdoptionListingUpdate(BaseModel):
@@ -92,8 +104,12 @@ def _serialize_listing(
         "created_at": listing.created_at.isoformat() if listing.created_at else None,
     }
     if include_owner_fields:
+        within_edit_window = _within_lister_edit_window(listing.created_at)
         result.update(
             {
+                "can_edit": within_edit_window,
+                "can_delete": within_edit_window,
+                "poster_language": listing.poster_language or "en",
                 "auto_post_social": listing.auto_post_social,
                 "social_post_status": listing.social_post_status,
                 "social_post_error": listing.social_post_error,
@@ -186,6 +202,7 @@ def list_my_adoptions(
     uid: str = Depends(get_current_user),
 ) -> list[dict[str, object]]:
     response.headers["Cache-Control"] = "private, no-store"
+    response.headers["Cache-Control"] = "private, no-store"
     listings = session.scalars(
         select(AdoptionListing)
         .where(AdoptionListing.lister_user_id == uid)
@@ -252,6 +269,11 @@ async def update_adoption(
         raise HTTPException(404, "Adoption listing not found")
     if listing.lister_user_id != uid:
         raise HTTPException(403, "Only the lister can edit this adoption listing")
+    if not _within_lister_edit_window(listing.created_at):
+        raise HTTPException(
+            403,
+            "Adoption listings can only be edited within 15 minutes of posting.",
+        )
 
     pet_name = payload.pet_name.strip()
     species = payload.species.strip().lower()
@@ -289,6 +311,11 @@ def delete_adoption(
         raise HTTPException(404, "Adoption listing not found")
     if listing.lister_user_id != uid:
         raise HTTPException(403, "Only the lister can delete this adoption listing")
+    if not _within_lister_edit_window(listing.created_at):
+        raise HTTPException(
+            403,
+            "Adoption listings can only be deleted within 15 minutes of posting.",
+        )
 
     image_urls = list(listing.images or [])
     if listing.social_post_image_url:
@@ -326,10 +353,14 @@ async def create_adoption(
     description: str = Form(..., min_length=1, max_length=5000),
     location_city: str = Form(..., min_length=1, max_length=120),
     auto_post_social: bool = Form(default=False),
+    poster_language: str = Form(default="en", max_length=16),
     images: list[UploadFile] = File(...),
     session: Session = Depends(get_db),
     uid: str = Depends(get_current_user),
 ) -> dict[str, object]:
+    normalized_poster_language = poster_language.strip().lower().split("-", 1)[0]
+    if normalized_poster_language not in LANGUAGE_CODES:
+        raise HTTPException(422, "Unsupported poster language")
     if not images or len(images) > MAX_IMAGES:
         raise HTTPException(422, f"Provide between 1 and {MAX_IMAGES} pet photos")
 
@@ -387,6 +418,7 @@ async def create_adoption(
                     "APP_DOWNLOAD_URL",
                     "https://play.google.com/store/apps/details?id=com.example.fendly",
                 ).strip(),
+                language_code=normalized_poster_language,
             )
             social_post_image_url = await store_adoption_image(
                 poster_data,
@@ -409,6 +441,7 @@ async def create_adoption(
         description=description.strip(),
         location_city=location_city.strip(),
         images=image_urls,
+        poster_language=normalized_poster_language,
         status="available",
         auto_post_social=auto_post_social,
         social_post_status="pending" if auto_post_social else None,

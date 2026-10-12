@@ -1,5 +1,5 @@
 import asyncio
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from fastapi import HTTPException
@@ -69,8 +69,8 @@ def test_owned_report_community_poster_uses_the_shared_poster_renderer(
 
     generated = []
 
-    async def render_poster(report, report_type, image_urls=None):
-        generated.append((report.id, report_type, image_urls))
+    async def render_poster(report, report_type, image_urls=None, language_code=None):
+        generated.append((report.id, report_type, image_urls, language_code))
         return b"canonical-poster"
 
     monkeypatch.setattr("social_poster.render_report_poster", render_poster)
@@ -97,13 +97,18 @@ def test_owned_report_community_poster_uses_the_shared_poster_renderer(
             )
             session.commit()
 
-        response = client.get("/api/items/lost/poster-report/community-poster")
+        response = client.get("/api/items/lost/poster-report/community-poster?language=hi")
         assert response.status_code == 200
         assert response.content == b"canonical-poster"
         assert response.headers["content-type"] == "image/jpeg"
         assert response.headers["cache-control"] == "no-store"
         assert generated == [
-            ("poster-report", "lost", ["signed:photo-1", "signed:photo-2", "signed:photo-3"])
+            (
+                "poster-report",
+                "lost",
+                ["signed:photo-1", "signed:photo-2", "signed:photo-3"],
+                "hi",
+            )
         ]
     finally:
         main.app.dependency_overrides.pop(items_module.get_current_user, None)
@@ -157,6 +162,7 @@ def test_admin_removal_deletes_report_and_linked_app_records(reports_client, mon
                     description="Fake",
                     lat=0,
                     lng=0,
+                    created_at=datetime.now(timezone.utc) - timedelta(hours=1),
                 ),
                 FoundItem(
                     id="other-report",
@@ -233,8 +239,25 @@ def test_admin_report_deletion_does_not_call_social_apis(reports_client, monkeyp
         main.app.dependency_overrides.pop(admin_module.get_current_user, None)
 
 
-def test_owner_report_deletion_does_not_call_social_apis(reports_client):
+def test_owner_report_edit_and_deletion_are_available_within_15_minutes(
+    reports_client,
+    monkeypatch,
+):
     client, session_factory = reports_client
+
+    async def allow_content(*_args, **_kwargs):
+        return None
+
+    async def translate_fields(title, description, report_location, **_kwargs):
+        return {
+            "title": title,
+            "description": description,
+            "report_location": report_location,
+            "category": "other",
+        }
+
+    monkeypatch.setattr(items_module, "moderate_content", allow_content)
+    monkeypatch.setattr(items_module, "translate_report_fields", translate_fields)
     main.app.dependency_overrides[items_module.get_current_user] = lambda: "report-owner"
     try:
         with Session(session_factory.kw["bind"]) as session:
@@ -251,13 +274,69 @@ def test_owner_report_deletion_does_not_call_social_apis(reports_client):
 
         listed_reports = client.get("/api/items/mine")
         assert listed_reports.status_code == 200
+        assert listed_reports.json()[0]["can_edit"] is True
         assert listed_reports.json()[0]["can_delete"] is True
+
+        edited = client.put(
+            "/api/items/lost/owner-report",
+            json={
+                "title": "Updated cat",
+                "description": "Updated details",
+                "community_guidelines_accepted": True,
+            },
+        )
+        assert edited.status_code == 200, edited.text
+
+        listed_after_edit = client.get("/api/items/mine")
+        assert listed_after_edit.json()[0]["can_edit"] is False
+        assert listed_after_edit.json()[0]["can_delete"] is True
 
         response = client.delete("/api/items/lost/owner-report")
 
         assert response.status_code == 204
         with Session(session_factory.kw["bind"]) as session:
             assert session.get(LostItem, "owner-report") is None
+    finally:
+        main.app.dependency_overrides.pop(items_module.get_current_user, None)
+
+
+def test_owner_cannot_edit_or_delete_report_after_15_minutes(reports_client):
+    client, session_factory = reports_client
+    main.app.dependency_overrides[items_module.get_current_user] = lambda: "report-owner"
+    try:
+        with Session(session_factory.kw["bind"]) as session:
+            session.add(
+                LostItem(
+                    id="expired-owner-report",
+                    created_by="report-owner",
+                    title="Lost cat",
+                    description="Details",
+                    lat=0,
+                    lng=0,
+                    created_at=datetime.now(timezone.utc) - timedelta(minutes=16),
+                )
+            )
+            session.commit()
+
+        listed = client.get("/api/items/mine")
+        assert listed.status_code == 200
+        assert listed.json()[0]["can_edit"] is False
+        assert listed.json()[0]["can_delete"] is False
+
+        edited = client.put(
+            "/api/items/lost/expired-owner-report",
+            json={
+                "title": "Updated cat",
+                "description": "Updated details",
+                "community_guidelines_accepted": True,
+            },
+        )
+        deleted = client.delete("/api/items/lost/expired-owner-report")
+
+        assert edited.status_code == 403
+        assert deleted.status_code == 403
+        with Session(session_factory.kw["bind"]) as session:
+            assert session.get(LostItem, "expired-owner-report") is not None
     finally:
         main.app.dependency_overrides.pop(items_module.get_current_user, None)
 

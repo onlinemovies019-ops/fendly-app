@@ -11,6 +11,7 @@ from cryptography.fernet import Fernet, InvalidToken
 import httpx
 
 from models import AdoptionListing, SocialAccount
+from poster_localization import LANGUAGE_CODES, poster_text
 
 
 logger = logging.getLogger(__name__)
@@ -333,25 +334,53 @@ def publish_adoption_listing(
 
     image_url = listing.social_post_image_url or listing.images[0]
     years, remaining_months = divmod(listing.age_months, 12)
+    language = (listing.poster_language or "en").strip().lower().split("-", 1)[0]
+    if language not in LANGUAGE_CODES:
+        language = "en"
     age_label = (
-        f"{years} yr {remaining_months} mo"
+        poster_text(
+            "age_join",
+            language,
+            years=str(years),
+            months=str(remaining_months),
+        )
         if years and remaining_months
-        else f"{years} {'year' if years == 1 else 'years'}"
+        else poster_text(
+            "age_year" if years == 1 else "age_years",
+            language,
+            count=str(years),
+        )
         if years
-        else f"{remaining_months} {'month' if remaining_months == 1 else 'months'}"
+        else poster_text(
+            "age_month" if remaining_months == 1 else "age_months",
+            language,
+            count=str(remaining_months),
+        )
     )
     breed = f" · {listing.breed.strip()}" if listing.breed and listing.breed.strip() else ""
     description = " ".join(listing.description.split())
     if len(description) > 800:
         description = description[:797].rsplit(" ", 1)[0] + "..."
-    caption = (
-        f"🐾 A new best friend is waiting to meet you! 🐾\n\n"
-        f"Meet {listing.pet_name} — our lovely {listing.species.title()}{breed}.\n"
-        f"🎂 {age_label}  ·  📍 {listing.location_city}\n\n"
-        f"{description}\n\n"
-        f"Give {listing.pet_name} a loving home. Learn more and apply in Fendly:\n"
-        f"{download_url}\n\n"
-        f"#AdoptDontShop #PetAdoption #AdoptWithFendly"
+    caption = "\n\n".join(
+        (
+            poster_text("caption_hook", language),
+            poster_text(
+                "caption_meet",
+                language,
+                name=listing.pet_name,
+                species=listing.species.title(),
+                breed=breed,
+            ),
+            poster_text(
+                "caption_age_location",
+                language,
+                age=age_label,
+                city=listing.location_city,
+            ),
+            description,
+            f"{poster_text('caption_cta', language, name=listing.pet_name)}\n{download_url}",
+            poster_text("caption_hashtags", language),
+        )
     )
     if len(caption) > 2000:
         caption = caption[:1997].rstrip() + "..."

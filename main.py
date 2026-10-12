@@ -195,6 +195,13 @@ async def lifespan(_: FastAPI):
                 "social_post_image_url",
                 "varchar(1000)",
             )
+            add_column_if_missing(
+                "adoption_listings",
+                "poster_language",
+                "varchar(16)",
+                not_null=True,
+                default="'en'",
+            )
 
             # --- ITEM EMBEDDINGS & REPORT COLUMNS ---
             add_column_if_missing("lost_items", "image_embedding", "vector(512)")

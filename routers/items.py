@@ -590,6 +590,7 @@ async def create_item_compat(
 async def get_community_poster(
     item_type: str,
     item_id: str,
+    language: str | None = None,
     session: Session | None = Depends(get_db),
     uid: str = Depends(get_current_user),
 ) -> Response:
@@ -624,6 +625,7 @@ async def get_community_poster(
         report,
         item_type.strip().casefold(),
         image_urls=poster_image_urls,
+        language_code=language or report.source_language,
     )
     return Response(
         content=poster,
@@ -712,6 +714,10 @@ async def list_my_items(
             "image_urls": refreshed_report_image_urls,
             "edit_count": item.edit_count,
             "created_at": item.created_at,
+            "can_edit": (
+                item.edit_count < 1
+                and _within_user_report_deletion_window(item.created_at)
+            ),
             "can_delete": _within_user_report_deletion_window(item.created_at),
             "status": item.status,
             "allow_success_story_sharing": item.allow_success_story_sharing,
@@ -772,7 +778,7 @@ def _within_user_report_deletion_window(created_at: datetime | None) -> bool:
         created_at if created_at.tzinfo else created_at.replace(tzinfo=timezone.utc)
     )
     now = datetime.now(timezone.utc)
-    return created_at_utc <= now and now - created_at_utc <= timedelta(hours=1)
+    return created_at_utc <= now and now - created_at_utc <= timedelta(minutes=15)
 
 
 @router.put("/items/{item_type}/{item_id}", response_model=ItemResponse)
@@ -801,11 +807,11 @@ async def update_item(
         record.allow_success_story_sharing = False
     if record.edit_count >= 1:
         raise HTTPException(409, "This report can only be edited once")
-    if record.created_at:
-        now = datetime.now(timezone.utc)
-        created_at = record.created_at if record.created_at.tzinfo else record.created_at.replace(tzinfo=timezone.utc)
-        if (now - created_at) > timedelta(hours=5):
-            raise HTTPException(409, "Reports can only be edited within 5 hours of creation")
+    if not _within_user_report_deletion_window(record.created_at):
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            "Reports can only be edited within 15 minutes of posting.",
+        )
     report_image_urls = (
         payload.image_urls
         if payload.image_urls is not None
@@ -886,7 +892,7 @@ def delete_item(
     if not _within_user_report_deletion_window(report.created_at):
         raise HTTPException(
             status.HTTP_403_FORBIDDEN,
-            "Reports can only be deleted within one hour of posting.",
+            "Reports can only be deleted within 15 minutes of posting.",
         )
 
     try:

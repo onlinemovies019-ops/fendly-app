@@ -1,4 +1,5 @@
 import io
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from fastapi.testclient import TestClient
@@ -68,6 +69,7 @@ def _create_listing(
     *,
     auto_post_social: str = "false",
     image_count: int = 1,
+    poster_language: str = "en",
 ):
     response = client.post(
         "/api/adoptions",
@@ -81,6 +83,7 @@ def _create_listing(
             "description": "Friendly and active.",
             "location_city": "Pune",
             "auto_post_social": auto_post_social,
+            "poster_language": poster_language,
         },
         files=[
             ("images", (f"milo-{index}.jpg", io.BytesIO(b"valid image"), "image/jpeg"))
@@ -94,16 +97,24 @@ def test_adoption_social_poster_receives_every_uploaded_photo(adoption_client, m
     client, _, _ = adoption_client
     captured = {}
 
-    def capture_poster(photos, **_kwargs):
+    def capture_poster(photos, **kwargs):
         captured["photos"] = photos
+        captured.update(kwargs)
         return b"framed adoption collage"
 
     monkeypatch.setattr(adoptions_module, "render_adoption_poster", capture_poster)
 
-    response = _create_listing(client, auto_post_social="true", image_count=3)
+    response = _create_listing(
+        client,
+        auto_post_social="true",
+        image_count=3,
+        poster_language="hi",
+    )
 
     assert response.status_code == 201, response.text
     assert captured["photos"] == [b"valid image", b"valid image", b"valid image"]
+    assert captured["language_code"] == "hi"
+    assert response.json()["poster_language"] == "hi"
 
 
 def test_adoption_listing_rejects_more_than_three_photos(adoption_client):
@@ -122,6 +133,8 @@ def test_lister_can_edit_and_delete_listing_but_other_users_cannot(adoption_clie
     created = _create_listing(client)
     assert created.status_code == 201, created.text
     listing_id = created.json()["id"]
+    assert created.json()["can_edit"] is True
+    assert created.json()["can_delete"] is True
     update = {
         "pet_name": "Milo Updated",
         "species": "dog",
@@ -182,6 +195,40 @@ def test_lister_can_edit_and_delete_listing_but_other_users_cannot(adoption_clie
         ) is None
 
 
+def test_lister_cannot_edit_or_delete_listing_after_15_minutes(adoption_client):
+    client, session_factory, _ = adoption_client
+    created = _create_listing(client)
+    assert created.status_code == 201, created.text
+    listing_id = created.json()["id"]
+    with Session(session_factory.kw["bind"]) as session:
+        listing = session.get(AdoptionListing, listing_id)
+        listing.created_at = datetime.now(timezone.utc) - timedelta(minutes=16)
+        session.commit()
+
+    mine = client.get("/api/adoptions/mine")
+    assert mine.status_code == 200, mine.text
+    assert mine.json()[0]["can_edit"] is False
+    assert mine.json()[0]["can_delete"] is False
+
+    update = {
+        "pet_name": "Milo Updated",
+        "species": "dog",
+        "breed": "Indie",
+        "age_months": 20,
+        "gender": "male",
+        "health_status": "Vaccinated",
+        "description": "Friendly and active.",
+        "location_city": "Pune",
+    }
+    edited = client.put(f"/api/adoptions/{listing_id}", json=update)
+    deleted = client.delete(f"/api/adoptions/{listing_id}")
+
+    assert edited.status_code == 403
+    assert deleted.status_code == 403
+    with Session(session_factory.kw["bind"]) as session:
+        assert session.get(AdoptionListing, listing_id) is not None
+
+
 def test_admin_can_list_and_delete_adoption_with_meta_posts(
     adoption_client,
     monkeypatch,
@@ -198,6 +245,7 @@ def test_admin_can_list_and_delete_adoption_with_meta_posts(
         listing = session.get(AdoptionListing, listing_id)
         listing.facebook_post_id = "facebook-post-id"
         listing.instagram_post_id = "instagram-post-id"
+        listing.created_at = datetime.now(timezone.utc) - timedelta(days=1)
         session.add(
             AdoptionApplication(
                 id="admin-delete-application",
