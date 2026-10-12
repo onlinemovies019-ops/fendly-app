@@ -1083,6 +1083,16 @@ private fun AdoptionScreen(onBack: () -> Unit) {
                                     city.isBlank() || photos.isEmpty()
                                 ) {
                                     message = t("adopt_required_fields")
+                                } else if (
+                                    ageValue !in 0..600 ||
+                                    petName.trim().length > 120 ||
+                                    species.trim().length > 60 ||
+                                    breed.trim().length > 120 ||
+                                    health.trim().length > 500 ||
+                                    description.trim().length > 5000 ||
+                                    city.trim().length > 120
+                                ) {
+                                    message = t("adopt_invalid_fields")
                                 } else {
                                     withToken { token ->
                                         busy = true
@@ -1115,7 +1125,10 @@ private fun AdoptionScreen(onBack: () -> Unit) {
                                                 loadMine()
                                                 refreshFeed()
                                             } catch (error: Exception) {
-                                                message = t("adopt_submit_failed")
+                                                message = listOf(
+                                                    t("adopt_submit_failed"),
+                                                    error.message?.takeIf(String::isNotBlank),
+                                                ).filterNotNull().joinToString(" ")
                                             } finally {
                                                 busy = false
                                             }
@@ -1124,6 +1137,13 @@ private fun AdoptionScreen(onBack: () -> Unit) {
                                 }
                             },
                         )
+                        if (message.isNotBlank()) {
+                            Text(
+                                message,
+                                color = MaterialTheme.colorScheme.error,
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                        }
                     }
                 }
                 if (showPhotoSource) {
@@ -1538,6 +1558,30 @@ private object AdoptionImageCache {
     }
 }
 
+private fun adoptionErrorDetail(response: String): String {
+    val detail = runCatching { JSONObject(response).opt("detail") }.getOrNull()
+    return when (detail) {
+        is String -> detail
+        is JSONArray -> (0 until detail.length()).mapNotNull { index ->
+            val issue = detail.optJSONObject(index) ?: return@mapNotNull null
+            val location = issue.optJSONArray("loc")
+            val field = location?.let { parts ->
+                (0 until parts.length())
+                    .map(parts::optString)
+                    .filterNot { it == "body" }
+                    .joinToString(".")
+            }.orEmpty()
+            val reason = issue.optString("msg")
+            when {
+                field.isNotBlank() && reason.isNotBlank() -> "$field: $reason"
+                reason.isNotBlank() -> reason
+                else -> null
+            }
+        }.joinToString("; ")
+        else -> ""
+    }
+}
+
 @Composable
 private fun ApplicationReviewCard(
     application: AdoptionApplicationView,
@@ -1636,7 +1680,7 @@ private fun uploadAdoptionListing(
         val response = (if (code in 200..299) connection.inputStream else connection.errorStream)
             ?.bufferedReader()?.use { it.readText() }.orEmpty()
         if (code !in 200..299) {
-            val detail = runCatching { JSONObject(response).optString("detail") }.getOrDefault("")
+            val detail = adoptionErrorDetail(response)
             error(detail.ifBlank { "Request failed (HTTP $code)" })
         }
         return response
