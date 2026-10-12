@@ -49,6 +49,7 @@ import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
@@ -1465,7 +1466,10 @@ private fun ListingCard(
 private fun AdoptionImageCarousel(images: List<String>, contentDescription: String) {
     var imageIndex by remember(images) { mutableStateOf(0) }
     Box {
-        AdoptionImage(images[imageIndex], contentDescription)
+        val imageUrl = images[imageIndex]
+        key(imageUrl) {
+            AdoptionImage(imageUrl, contentDescription)
+        }
         if (images.size > 1) {
             TextButton(
                 modifier = Modifier
@@ -1559,7 +1563,11 @@ private fun AdoptionImage(url: String, contentDescription: String) {
         if (value == null) {
             val loadedBitmap = withContext(Dispatchers.IO) {
                 runCatching {
-                    URL(url).openStream().use { BitmapFactory.decodeStream(it) }
+                    val connection = URL(url).openConnection()
+                    connection.useCaches = false
+                    connection.connectTimeout = 15000
+                    connection.readTimeout = 30000
+                    connection.getInputStream().use(BitmapFactory::decodeStream)
                 }.getOrNull()?.also { AdoptionImageCache.put(url, it) }
             }
             if (loadedBitmap == null) {
