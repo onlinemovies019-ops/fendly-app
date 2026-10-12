@@ -30,7 +30,8 @@ Required environment variables:
 - `OPENAI_API_KEY`: Required in production for fail-closed moderation of report
   text and report images before storage. Moderation uses
   `OPENAI_MODERATION_MODEL` (default `omni-moderation-latest`) for text; image
-  moderation always uses the multimodal `omni-moderation-latest` model.
+  moderation always uses the multimodal `omni-moderation-latest` model, with
+  one image per provider request.
   `OPENAI_MODERATION_URL` defaults to OpenAI's moderation endpoint. If the key
   is missing or the provider is unavailable, submissions are rejected with a
   temporary-service error; there is no keyword-only fallback.

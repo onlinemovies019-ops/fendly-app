@@ -4499,42 +4499,44 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
     }
 
     private void addWizardPhotoPreview(LinearLayout root) {
-        Bitmap cameraPhoto = null;
-        Uri selectedPhoto = null;
-        String existingPhoto = "";
+        LinearLayout previews = new LinearLayout(this);
+        previews.setGravity(Gravity.CENTER);
         for (int index = 0; index < reportImages.length; index++) {
-            if (reportCameraImages[index] != null) {
-                cameraPhoto = reportCameraImages[index];
-                break;
+            Bitmap cameraPhoto = reportCameraImages[index];
+            Uri selectedPhoto = reportImages[index];
+            String existingPhoto = editingReportImageUrls[index] == null
+                    ? ""
+                    : editingReportImageUrls[index].trim();
+            if (cameraPhoto == null && selectedPhoto == null && existingPhoto.isEmpty()) continue;
+
+            ImageView preview = new ImageView(this);
+            preview.setScaleType(ImageView.ScaleType.CENTER_CROP);
+            preview.setBackground(roundWithStroke(surfaceColor(), 14, borderColor()));
+            if (cameraPhoto != null) {
+                preview.setImageBitmap(cameraPhoto);
+            } else if (selectedPhoto != null) {
+                Glide.with(this).load(selectedPhoto).centerCrop().into(preview);
+            } else {
+                Glide.with(this).load(existingPhoto).centerCrop().into(preview);
             }
-            if (reportImages[index] != null) {
-                selectedPhoto = reportImages[index];
-                break;
-            }
-            if (editingReportImageUrls[index] != null
-                    && !editingReportImageUrls[index].trim().isEmpty()) {
-                existingPhoto = editingReportImageUrls[index].trim();
-                break;
-            }
+            LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(dp(96), dp(96));
+            if (previews.getChildCount() > 0) params.setMargins(dp(8), 0, 0, 0);
+            previews.addView(preview, params);
         }
-        if (existingPhoto.isEmpty() && editingReportImageUrl != null) {
-            existingPhoto = editingReportImageUrl.trim();
+
+        if (previews.getChildCount() == 0 && editingReportImageUrl != null
+                && !editingReportImageUrl.trim().isEmpty()) {
+            ImageView preview = new ImageView(this);
+            preview.setScaleType(ImageView.ScaleType.CENTER_CROP);
+            preview.setBackground(roundWithStroke(surfaceColor(), 14, borderColor()));
+            Glide.with(this).load(editingReportImageUrl.trim()).centerCrop().into(preview);
+            previews.addView(preview, new LinearLayout.LayoutParams(dp(96), dp(96)));
         }
-        if (cameraPhoto == null && selectedPhoto == null && existingPhoto.isEmpty()) return;
-        ImageView preview = new ImageView(this);
-        preview.setScaleType(ImageView.ScaleType.CENTER_CROP);
-        preview.setBackground(roundWithStroke(surfaceColor(), 14, borderColor()));
-        if (cameraPhoto != null) {
-            preview.setImageBitmap(cameraPhoto);
-        } else if (selectedPhoto != null) {
-            Glide.with(this).load(selectedPhoto).centerCrop().into(preview);
-        } else {
-            Glide.with(this).load(existingPhoto).centerCrop().into(preview);
-        }
-        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(dp(132), dp(132));
-        params.gravity = Gravity.CENTER_HORIZONTAL;
+
+        if (previews.getChildCount() == 0) return;
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(-1, dp(96));
         params.setMargins(0, dp(5), 0, dp(8));
-        root.addView(preview, params);
+        root.addView(previews, params);
     }
 
     private String reportDetailsForSubmission(String details, String identifier) {

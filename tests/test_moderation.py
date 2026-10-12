@@ -26,13 +26,54 @@ async def test_moderation_checks_text_and_every_image(monkeypatch):
     result = await moderation.moderate_content(
         "Lost wallet",
         "Blue wallet near the station",
-        image_urls=["https://images.example/one.jpg", "https://images.example/two.jpg"],
+        image_urls=[
+            "https://images.example/one.jpg",
+            "https://images.example/two.jpg",
+            "https://images.example/three.jpg",
+        ],
     )
 
     assert result is None
-    payload = requests[0].read().decode()
-    assert '"Lost wallet\\nBlue wallet near the station"' in payload
-    assert payload.count('"type":"image_url"') == 2
+    assert len(requests) == 3
+    for request in requests:
+        payload = request.read().decode()
+        assert '"Lost wallet\\nBlue wallet near the station"' in payload
+        assert payload.count('"type":"image_url"') == 1
+
+
+@pytest.mark.asyncio
+async def test_any_flagged_image_rejects_report(monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    requests = []
+
+    def respond(request):
+        requests.append(request)
+        flagged = b"two.jpg" in request.read()
+        return httpx.Response(200, json={"results": [{"flagged": flagged}]})
+
+    original_client = httpx.AsyncClient
+    monkeypatch.setattr(
+        moderation.httpx,
+        "AsyncClient",
+        lambda *, timeout: original_client(
+            transport=httpx.MockTransport(respond),
+            timeout=timeout,
+        ),
+    )
+
+    result = await moderation.moderate_content(
+        "Lost wallet",
+        "Blue wallet",
+        image_urls=[
+            "https://images.example/one.jpg",
+            "https://images.example/two.jpg",
+            "https://images.example/three.jpg",
+        ],
+    )
+
+    assert result == "Content did not pass safety moderation"
+    assert len(requests) == 3
+    assert all(request.read().count(b'"type":"image_url"') == 1 for request in requests)
 
 
 @pytest.mark.asyncio

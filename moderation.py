@@ -63,10 +63,8 @@ async def moderate_content(
             "Content safety checks are temporarily unavailable",
         )
 
-    inputs: list[dict[str, object]] = []
     text = f"{title}\n{description}".strip()
-    if text:
-        inputs.append({"type": "text", "text": text})
+    text_input = {"type": "text", "text": text} if text else None
     remote_image_urls: list[str] = []
     private_image_data: list[tuple[bytes, str]] = []
     try:
@@ -82,40 +80,54 @@ async def moderate_content(
             status.HTTP_503_SERVICE_UNAVAILABLE,
             "Content safety checks are temporarily unavailable; please try again",
         ) from exc
-    inputs.extend(_moderation_image_input(image_url=url) for url in remote_image_urls)
-    inputs.extend(
-        _moderation_image_input(image_data=data, image_content_type=content_type)
-        for data, content_type in private_image_data
-    )
+    image_inputs = [
+        *(_moderation_image_input(image_url=url) for url in remote_image_urls),
+        *(
+            _moderation_image_input(image_data=data, image_content_type=content_type)
+            for data, content_type in private_image_data
+        ),
+    ]
     if image_data is not None:
-        inputs.append(_moderation_image_input(
+        image_inputs.append(_moderation_image_input(
             image_data=image_data,
             image_content_type=image_content_type,
         ))
-    if not inputs:
+    if not image_inputs and text_input is None:
         raise ValueError("Moderation requires text or at least one image")
 
     endpoint = os.getenv("OPENAI_MODERATION_URL", "https://api.openai.com/v1/moderations")
-    has_images = bool(image_urls) or image_data is not None
+    has_images = bool(image_inputs)
     model = (
         "omni-moderation-latest"
         if has_images
         else os.getenv("OPENAI_MODERATION_MODEL", "omni-moderation-latest")
     )
+    input_batches: list[list[dict[str, object]]] = []
+    if image_inputs:
+        for image_input in image_inputs:
+            batch = [text_input] if text_input is not None else []
+            batch.append(image_input)
+            input_batches.append(batch)
+    elif text_input is not None:
+        input_batches.append([text_input])
     try:
+        all_results: list[dict[str, object]] = []
         async with httpx.AsyncClient(timeout=15) as client:
-            response = await client.post(
-                endpoint,
-                json={"model": model, "input": inputs},
-                headers={"Authorization": f"Bearer {api_key}"},
-            )
-        response.raise_for_status()
-        results = response.json().get("results")
-        if not isinstance(results, list) or not results or any(
-            not isinstance(result, dict) or not isinstance(result.get("flagged"), bool)
-            for result in results
-        ):
-            raise ValueError("Moderation provider returned an invalid response")
+            for input_batch in input_batches:
+                response = await client.post(
+                    endpoint,
+                    json={"model": model, "input": input_batch},
+                    headers={"Authorization": f"Bearer {api_key}"},
+                )
+                response.raise_for_status()
+                batch_results = response.json().get("results")
+                if not isinstance(batch_results, list) or not batch_results or any(
+                    not isinstance(result, dict) or not isinstance(result.get("flagged"), bool)
+                    for result in batch_results
+                ):
+                    raise ValueError("Moderation provider returned an invalid response")
+                all_results.extend(batch_results)
+        results = all_results
     except httpx.HTTPStatusError as exc:
         error_code, error_message = _moderation_error_details(exc.response)
         logger.error(
