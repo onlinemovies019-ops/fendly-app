@@ -11678,16 +11678,31 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
 
     private List<String> reportImageUrls(JSONObject report) {
         List<String> imageUrls = new ArrayList<>();
+        LinkedHashSet<String> imageIdentities = new LinkedHashSet<>();
         JSONArray images = report.optJSONArray("image_urls");
         if (images != null) {
             for (int index = 0; index < images.length(); index++) {
                 String imageUrl = images.optString(index, "").trim();
-                if (!imageUrl.isEmpty() && !imageUrls.contains(imageUrl)) imageUrls.add(imageUrl);
+                if (!imageUrl.isEmpty() && imageIdentities.add(reportImageIdentity(imageUrl))) {
+                    imageUrls.add(imageUrl);
+                }
             }
         }
         String primaryImageUrl = report.optString("image_url", report.optString("imageUrl", "")).trim();
-        if (!primaryImageUrl.isEmpty() && !imageUrls.contains(primaryImageUrl)) imageUrls.add(0, primaryImageUrl);
+        if (!primaryImageUrl.isEmpty()
+                && imageIdentities.add(reportImageIdentity(primaryImageUrl))) {
+            imageUrls.add(0, primaryImageUrl);
+        }
         return imageUrls;
+    }
+
+    private String reportImageIdentity(String imageUrl) {
+        Uri parsed = Uri.parse(imageUrl);
+        String path = parsed.getPath();
+        if (path != null && path.startsWith("/storage/v1/object/sign/")) {
+            return parsed.getAuthority() + path;
+        }
+        return imageUrl;
     }
 
     private void addTranslatedReportDetail(LinearLayout parent, String label, String value, String source, boolean adminView) {
