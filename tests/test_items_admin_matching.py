@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, Mock, patch
 import pytest
 from fastapi import HTTPException
 from sqlalchemy import create_engine, inspect, text
-from sqlalchemy.dialects import sqlite
+from sqlalchemy.dialects import postgresql, sqlite
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -18,6 +18,64 @@ from routers import items as items_module
 from routers.items import match_items
 from schemas import ItemCreate, ItemUpdate, MatchRequest
 from translation import translate_report_fields, translate_report_fields_batch
+
+
+def test_admin_report_summary_counts_reports_without_loading_report_rows():
+    session = Mock(spec=Session)
+    session.scalar.side_effect = [17, 23]
+
+    summary = admin_module.get_admin_item_summary(session=session, _="admin-1")
+
+    assert summary == {"lost": 17, "found": 23}
+    assert session.scalar.call_count == 2
+    for call in session.scalar.call_args_list:
+        sql = str(call.args[0].compile(dialect=postgresql.dialect()))
+        assert "count(" in sql.lower()
+        assert "!~*" in sql
+
+
+@pytest.mark.asyncio
+async def test_admin_report_browse_returns_a_limited_page_without_translation(monkeypatch):
+    report = LostItem(
+        id="lost-page-1",
+        created_by="user-1",
+        title="हरवलेली पिशवी",
+        description="बस स्थानकाजवळ",
+        category="bag",
+        lat=12.0,
+        lng=77.0,
+    )
+    session = Mock(spec=Session)
+    session.scalars.return_value.all.return_value = [report]
+    translation = AsyncMock()
+    monkeypatch.setattr(admin_module, "translate_report_fields_batch", translation)
+    monkeypatch.setattr(
+        admin_module,
+        "_report_image_fields_batch",
+        lambda items: {
+            (item.__tablename__, item.id): {"image_url": None, "image_urls": []}
+            for item in items
+        },
+    )
+
+    page = await admin_module.browse_admin_items(
+        "lost",
+        30,
+        30,
+        session=session,
+        _="admin-1",
+    )
+
+    assert page["offset"] == 30
+    assert page["limit"] == 30
+    assert page["has_more"] is False
+    assert page["items"][0]["title"] == "हरवलेली पिशवी"
+    assert page["items"][0]["description"] == "बस स्थानकाजवळ"
+    sql = str(session.scalars.call_args.args[0].compile(dialect=postgresql.dialect()))
+    assert "LIMIT" in sql
+    assert "OFFSET" in sql
+    assert "!~*" in sql
+    translation.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -260,8 +318,7 @@ async def test_report_creation_keeps_original_and_stores_english_fields(monkeypa
     async def no_embedding(text):
         return [0.0] * 1536
 
-    async def no_image_embedding(image_url):
-        return None
+    no_image_embedding = AsyncMock(return_value=None)
 
     async def translated_fields(title, description, report_location, category="other", source_language=None):
         assert source_language == "mr"
@@ -304,6 +361,7 @@ async def test_report_creation_keeps_original_and_stores_english_fields(monkeypa
         "storage://report-images/2.jpg",
         "storage://report-images/3.jpg",
     ]
+    no_image_embedding.assert_not_awaited()
     session.add.assert_called_once_with(record)
 
 
@@ -368,6 +426,11 @@ async def test_admin_item_list_returns_english_and_lazily_translates_legacy_repo
         SimpleNamespace(all=lambda: [legacy_report]),
         SimpleNamespace(all=lambda: []),
     ]
+    signed_url_batches = []
+
+    def sign_image_urls(urls):
+        signed_url_batches.append(urls)
+        return list(urls)
 
     async def translated_batch(reports):
         return {
@@ -381,6 +444,7 @@ async def test_admin_item_list_returns_english_and_lazily_translates_legacy_repo
         }
 
     monkeypatch.setattr(admin_module, "translate_report_fields_batch", translated_batch)
+    monkeypatch.setattr(admin_module, "refresh_private_image_urls", sign_image_urls)
     results = await admin_module.list_all_items(session=session, _="admin-1")
 
     assert results[0]["title"] == "Blue bag"
@@ -388,6 +452,11 @@ async def test_admin_item_list_returns_english_and_lazily_translates_legacy_repo
     assert results[0]["category"] == "Bag"
     assert results[0]["translation_available"] is True
     assert results[0]["image_urls"] == ["https://cdn.example/one.jpg", "https://cdn.example/two.jpg"]
+    assert signed_url_batches == [[
+        "https://cdn.example/one.jpg",
+        "https://cdn.example/one.jpg",
+        "https://cdn.example/two.jpg",
+    ]]
     assert legacy_report.title == "निळी पिशवी"
     session.commit.assert_called_once()
 
@@ -1036,3 +1105,203 @@ async def test_startup_adds_translation_columns_without_device_identifiers(monke
         assert "imei" not in columns
         assert {"title_en", "description_en", "report_location_en", "category_en", "source_language"} <= columns
     engine.dispose()
+
+
+def _make_visual_search_session(query_report, candidates=None):
+    session = Mock(spec=Session)
+    session.scalar.return_value = query_report
+    session.scalars.return_value.all.return_value = candidates or []
+    return session
+
+
+def _visual_candidate(report_id, score, **overrides):
+    vector = [score, (1 - score * score) ** 0.5] + [0.0] * 510
+    values = {
+        "id": report_id,
+        "title": f"Report {report_id}",
+        "category": "Accessories",
+        "report_date": "2026-01-15",
+        "image_url": f"storage://report-images/{report_id}.jpg",
+        "image_urls": None,
+        "image_embedding": vector,
+        "image_embedding_model": "ViT-B-32:openai:v1",
+        "hidden_from_public": False,
+        "status": "FOUND",
+        "description": "private report description",
+        "report_location": "private exact location",
+        "created_by": "another-user",
+        "lat": 12.345,
+        "lng": 67.89,
+    }
+    values.update(overrides)
+    return SimpleNamespace(**values)
+
+
+@pytest.mark.asyncio
+async def test_visual_search_hides_non_owner_and_inactive_own_reports(monkeypatch):
+    monkeypatch.setattr(items_module, "image_embeddings_enabled", lambda: True)
+    for query_report in (
+        None,
+        SimpleNamespace(
+            created_by="another-user",
+            image_url="storage://report-images/private.jpg",
+            image_urls=None,
+            image_embedding=[1.0] + [0.0] * 511,
+            image_embedding_model="ViT-B-32:openai:v1",
+            hidden_from_public=False,
+            status="LOST",
+        ),
+        SimpleNamespace(
+            created_by="report-owner",
+            image_url="storage://report-images/closed.jpg",
+            image_urls=None,
+            image_embedding=[1.0] + [0.0] * 511,
+            hidden_from_public=False,
+            status="RECOVERED",
+        ),
+        SimpleNamespace(
+            created_by="report-owner",
+            image_url="storage://report-images/hidden.jpg",
+            image_urls=None,
+            image_embedding=[1.0] + [0.0] * 511,
+            hidden_from_public=True,
+            status="LOST",
+        ),
+    ):
+        session = _make_visual_search_session(query_report)
+        with pytest.raises(HTTPException) as error:
+            await items_module.search_visual_matches(
+                "lost", "report-1", session=session, uid="report-owner"
+            )
+        assert error.value.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_visual_search_rejects_reports_without_photos(monkeypatch):
+    report = SimpleNamespace(
+        created_by="report-owner",
+        image_url=None,
+        image_urls=None,
+        image_embedding=None,
+        hidden_from_public=False,
+        status="LOST",
+    )
+    with pytest.raises(HTTPException) as error:
+        await items_module.search_visual_matches(
+            "lost",
+            "report-1",
+            session=_make_visual_search_session(report),
+            uid="report-owner",
+        )
+    assert error.value.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_visual_search_requires_embedding_service(monkeypatch):
+    report = SimpleNamespace(
+        created_by="report-owner",
+        image_url="storage://report-images/query.jpg",
+        image_urls=None,
+        image_embedding=None,
+        hidden_from_public=False,
+        status="LOST",
+    )
+    monkeypatch.setattr(items_module, "image_embeddings_enabled", lambda: False)
+    with pytest.raises(HTTPException) as error:
+        await items_module.search_visual_matches(
+            "lost",
+            "report-1",
+            session=_make_visual_search_session(report),
+            uid="report-owner",
+        )
+    assert error.value.status_code == 503
+
+
+@pytest.mark.asyncio
+async def test_visual_search_threshold_order_limit_and_private_response(monkeypatch):
+    query_vector = [1.0] + [0.0] * 511
+    report = SimpleNamespace(
+        created_by="report-owner",
+        image_url=None,
+        image_urls=["storage://report-images/query.jpg"],
+        image_embedding=query_vector,
+        image_embedding_model="ViT-B-32:openai:v1",
+        hidden_from_public=False,
+        status="LOST",
+    )
+    candidates = [
+        *(_visual_candidate(f"eligible-{index}", score) for index, score in enumerate(
+            [0.71, 0.72, 0.73, 0.74, 0.75, 0.76, 0.77, 0.78, 0.79, 0.80, 0.81, 0.82]
+        )),
+        _visual_candidate("below-threshold", 0.69),
+        _visual_candidate("not-indexed", 0.0, image_embedding=None),
+        _visual_candidate("hidden", 0.99, hidden_from_public=True),
+        _visual_candidate("inactive", 0.99, status="RECOVERED"),
+        _visual_candidate("no-photo", 0.99, image_url=None),
+    ]
+    monkeypatch.setattr(items_module, "image_embeddings_enabled", lambda: True)
+    monkeypatch.setattr(
+        items_module,
+        "refresh_private_image_urls",
+        lambda urls: [f"https://signed.example/{index}" for index, _ in enumerate(urls)],
+    )
+
+    response = await items_module.search_visual_matches(
+        "lost",
+        "report-1",
+        session=_make_visual_search_session(report, candidates),
+        uid="report-owner",
+    )
+    validated = items_module.VisualSearchResponse.model_validate(response).model_dump()
+
+    assert len(validated["matches"]) == 10
+    assert validated["matches"][0]["score"] == pytest.approx(0.82)
+    assert validated["matches"][-1]["score"] == pytest.approx(0.73)
+    assert validated["searched_reports"] == 13
+    assert validated["unindexed_reports"] == 1
+    preview = validated["matches"][0]["item"]
+    assert preview["report_type"] == "FOUND"
+    assert set(preview) == {"title", "category", "report_date", "image_url", "report_type"}
+
+
+@pytest.mark.asyncio
+async def test_visual_search_reindexes_stale_vectors_for_my_reports(monkeypatch):
+    model_id = "MobileCLIP-S1:test:v1"
+    vector = [1.0] + [0.0] * 511
+    query_report = SimpleNamespace(
+        created_by="report-owner",
+        image_url="storage://report-images/query.jpg",
+        image_urls=None,
+        image_embedding=vector,
+        image_embedding_model=model_id,
+        hidden_from_public=False,
+        status="LOST",
+    )
+    candidate = _visual_candidate(
+        "stale-candidate",
+        0.0,
+        image_embedding=None,
+        image_embedding_model=None,
+    )
+    monkeypatch.setattr(items_module, "image_embeddings_enabled", lambda: True)
+    monkeypatch.setattr(items_module, "image_embedding_model_id", lambda: model_id)
+    monkeypatch.setattr(items_module, "refresh_private_image_urls", lambda urls: ["https://signed.example/photo"])
+
+    async def create_embedding(_):
+        return vector
+
+    monkeypatch.setattr(items_module, "create_image_embedding", create_embedding)
+    session = _make_visual_search_session(query_report, [candidate])
+
+    response = await items_module.search_visual_matches(
+        "lost",
+        "report-1",
+        session=session,
+        uid="report-owner",
+    )
+
+    assert candidate.image_embedding == vector
+    assert candidate.image_embedding_model == model_id
+    assert response["searched_reports"] == 1
+    assert response["unindexed_reports"] == 0
+    assert len(response["matches"]) == 1

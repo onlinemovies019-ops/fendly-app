@@ -2,10 +2,16 @@
 
 const {logger} = require("firebase-functions");
 const {onDocumentCreated} = require("firebase-functions/v2/firestore");
+const {onRequest} = require("firebase-functions/v2/https");
 const {defineSecret} = require("firebase-functions/params");
 const admin = require("firebase-admin");
+const crypto = require("crypto");
 const {createClient} = require("@supabase/supabase-js");
-const {addItemWithImage, findMatchingItems} = require("./imageMatching");
+const {
+  addItemWithImage,
+  findMatchingItems,
+  generateImageEmbedding,
+} = require("./imageMatching");
 
 admin.initializeApp();
 
@@ -14,6 +20,7 @@ const SUPABASE_SERVICE_ROLE_KEY = defineSecret("SUPABASE_SERVICE_ROLE_KEY");
 const BREVO_API_KEY = defineSecret("BREVO_API_KEY");
 const ADMIN_EMAIL = defineSecret("ADMIN_EMAIL");
 const SENDER_EMAIL = defineSecret("SENDER_EMAIL");
+const IMAGE_MATCHING_API_KEY = defineSecret("IMAGE_MATCHING_API_KEY");
 const MATCH_SECRETS = [
   SUPABASE_URL,
   SUPABASE_SERVICE_ROLE_KEY,
@@ -22,6 +29,47 @@ const MATCH_SECRETS = [
   SENDER_EMAIL,
 ];
 const MATCH_THRESHOLD = 0.70;
+
+exports.generateReportImageEmbedding = onRequest({
+  secrets: [IMAGE_MATCHING_API_KEY, SUPABASE_URL],
+  region: "us-central1",
+  memory: "2GiB",
+  timeoutSeconds: 300,
+  maxInstances: 2,
+  concurrency: 1,
+}, async (request, response) => {
+  response.set("Cache-Control", "no-store");
+  if (request.method !== "POST") {
+    response.set("Allow", "POST").status(405).json({error: "Method not allowed"});
+    return;
+  }
+
+  const configuredKey = IMAGE_MATCHING_API_KEY.value();
+  const suppliedKey = request.get("x-fendly-image-matching-key") || "";
+  const configuredBytes = Buffer.from(configuredKey);
+  const suppliedBytes = Buffer.from(suppliedKey);
+  if (!configuredKey || configuredBytes.length !== suppliedBytes.length ||
+      !crypto.timingSafeEqual(configuredBytes, suppliedBytes)) {
+    response.status(401).json({error: "Unauthorized"});
+    return;
+  }
+
+  const imageUrl = request.body && request.body.imageUrl;
+  if (typeof imageUrl !== "string" || imageUrl.length > 2048) {
+    response.status(400).json({error: "A valid image URL is required"});
+    return;
+  }
+
+  try {
+    const embedding = await generateImageEmbedding(imageUrl);
+    response.status(200).json({embedding});
+  } catch (error) {
+    logger.error("Could not generate report image embedding", {
+      error: error instanceof Error ? error.message : "Unknown image embedding error",
+    });
+    response.status(422).json({error: "Could not analyze this report photo"});
+  }
+});
 
 async function handleReportCreated(event, reportType) {
   const report = event.data && event.data.data();

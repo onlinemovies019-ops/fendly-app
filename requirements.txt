@@ -14,5 +14,7 @@ razorpay>=1.6.0
 supabase
 resend
 pgvector
+numpy>=1.26,<3
+onnxruntime==1.23.2
 email-validator
 qrcode[pil]==8.2

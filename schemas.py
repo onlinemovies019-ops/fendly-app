@@ -69,12 +69,28 @@ class MatchPreview(BaseModel):
     category: str
     report_date: str | None = None
     image_url: str | None = None
+    report_type: str | None = None
 
 
 class MatchResponse(BaseModel):
     item: ItemResponse | MatchPreview | None = None
     score: float = Field(ge=0, le=1)
     matchType: str | None = None
+
+
+class VisualSearchResponse(BaseModel):
+    matches: list[MatchResponse]
+    searched_reports: int = Field(ge=0)
+    unindexed_reports: int = Field(ge=0)
+
+
+class VisualSearchUploadMatch(BaseModel):
+    report_id: str
+    similarity: float = Field(ge=0, le=1)
+
+
+class VisualSearchUploadResponse(BaseModel):
+    matches: list[VisualSearchUploadMatch]
 
 
 class FcmTokenRequest(BaseModel):

@@ -253,6 +253,7 @@ class LostItem(Base):
     social_poster_url: Mapped[str | None] = mapped_column(String(1000))
     edit_count: Mapped[int] = mapped_column(default=0)
     image_embedding: Mapped[list[float] | None] = mapped_column(Vector(512))
+    image_embedding_model: Mapped[str | None] = mapped_column(String(64))
     embedding: Mapped[list[float] | None] = mapped_column(Vector(1536))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
@@ -287,6 +288,7 @@ class FoundItem(Base):
     social_poster_url: Mapped[str | None] = mapped_column(String(1000))
     edit_count: Mapped[int] = mapped_column(default=0)
     image_embedding: Mapped[list[float] | None] = mapped_column(Vector(512))
+    image_embedding_model: Mapped[str | None] = mapped_column(String(64))
     embedding: Mapped[list[float] | None] = mapped_column(Vector(1536))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 

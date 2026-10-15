@@ -16,13 +16,22 @@ from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Re
 from firebase_admin import firestore
 from pydantic import BaseModel, Field, model_validator
 from PIL import Image, UnidentifiedImageError
-from sqlalchemy import delete, or_, select
+from sqlalchemy import delete, func, or_, select
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from ai_matching import create_embedding, item_text
 from auth import get_current_user
 from database import SessionLocal, get_db
-from image_matching import cosine_similarity, create_image_embedding
+from image_matching import (
+    MAX_IMAGE_PIXELS,
+    cosine_similarity,
+    create_image_embedding,
+    create_image_embedding_from_bytes,
+    image_embeddings_enabled,
+    image_embedding_model_id,
+    local_image_embeddings_enabled,
+)
 from moderation import moderate_content
 from models import AdminMatchAlert, FoundItem, LostItem
 from notifications import persist_admin_match_alert, send_admin_match_email
@@ -41,6 +50,8 @@ from schemas import (
     MatchRequest,
     MatchResponse,
     ReportResolutionUpdate,
+    VisualSearchResponse,
+    VisualSearchUploadResponse,
 )
 
 from translation import translate_report_fields
@@ -337,7 +348,6 @@ async def _save_item(
         image_urls=report_image_urls,
     ))
     emb_task = asyncio.create_task(create_embedding(item_text(payload.title, payload.description, category)))
-    img_task = asyncio.create_task(create_image_embedding(payload.image_url))
     translation_task = asyncio.create_task(translate_report_fields(
         payload.title,
         payload.description,
@@ -346,8 +356,8 @@ async def _save_item(
         source_language=payload.source_language,
     ))
 
-    rejection_reason, embedding, image_embedding, translated_fields = await asyncio.gather(
-        mod_task, emb_task, img_task, translation_task
+    rejection_reason, embedding, translated_fields = await asyncio.gather(
+        mod_task, emb_task, translation_task
     )
 
     if rejection_reason:
@@ -380,7 +390,7 @@ async def _save_item(
         report_location_en=translated_fields["report_location"] if translated_fields else None,
         category_en=translated_fields["category"] if translated_fields else None,
     )
-    record = model(**item_values, created_by=uid, embedding=embedding, image_embedding=image_embedding)
+    record = model(**item_values, created_by=uid, embedding=embedding)
 
     session.add(record)
     session.flush()
@@ -396,11 +406,18 @@ async def _process_created_report(record: LostItem | FoundItem, session: Session
         record_embedding = record.embedding or await create_embedding(
             item_text(record.title, record.description, record.category)
         )
-        record_image_embedding = record.image_embedding or await create_image_embedding(record.image_url)
+        current_model_id = image_embedding_model_id()
+        record_image_embedding = record.image_embedding
+        if (
+            record_image_embedding is None
+            or record.image_embedding_model != current_model_id
+        ):
+            record_image_embedding = await create_image_embedding(record.image_url)
         if record.embedding is None:
             record.embedding = record_embedding
-        if record.image_embedding is None:
+        if record_image_embedding is not None:
             record.image_embedding = record_image_embedding
+            record.image_embedding_model = current_model_id
 
         candidates = session.scalars(select(opposite_model)).all()
         ranked: list[tuple[float, LostItem | FoundItem]] = []
@@ -408,11 +425,16 @@ async def _process_created_report(record: LostItem | FoundItem, session: Session
             candidate_embedding = candidate.embedding or await create_embedding(
                 item_text(candidate.title, candidate.description, candidate.category)
             )
-            candidate_image_embedding = candidate.image_embedding or await create_image_embedding(candidate.image_url)
+            candidate_image_embedding = candidate.image_embedding
+            if candidate_image_embedding is None:
+                candidate_image_embedding = await create_image_embedding(candidate.image_url)
+            elif getattr(candidate, "image_embedding_model", None) != current_model_id:
+                candidate_image_embedding = None
             if candidate.embedding is None:
                 candidate.embedding = candidate_embedding
-            if candidate.image_embedding is None:
+            if candidate_image_embedding is not None:
                 candidate.image_embedding = candidate_image_embedding
+                candidate.image_embedding_model = current_model_id
 
             record_words = set(WORD_PATTERN.findall(f"{record.title} {record.description}".lower()))
             candidate_words = set(WORD_PATTERN.findall(f"{candidate.title} {candidate.description}".lower()))
@@ -729,6 +751,297 @@ async def list_my_items(
         }
         results.append(result)
     return results
+
+
+@router.post(
+    "/items/{item_type}/{item_id}/visual-matches",
+    response_model=VisualSearchResponse,
+)
+async def search_visual_matches(
+    item_type: str,
+    item_id: str,
+    session: Session | None = Depends(get_db),
+    uid: str = Depends(get_current_user),
+) -> dict[str, object]:
+    session = _require_db_session(session)
+    normalized_type = item_type.strip().lower()
+    if normalized_type not in {"lost", "found"}:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Report type must be lost or found")
+
+    query_model = LostItem if normalized_type == "lost" else FoundItem
+    candidate_model = FoundItem if normalized_type == "lost" else LostItem
+    query_status = "LOST" if normalized_type == "lost" else "FOUND"
+    candidate_status = "FOUND" if normalized_type == "lost" else "LOST"
+    query_report = session.scalar(
+        select(query_model).where(
+            query_model.id == item_id,
+            query_model.created_by == uid,
+        )
+    )
+    if (
+        query_report is None
+        or query_report.created_by != uid
+        or query_report.hidden_from_public
+        or query_report.status.upper() != query_status
+    ):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Report not found")
+    query_image_url = query_report.image_url or next(
+        (url for url in (query_report.image_urls or []) if url),
+        None,
+    )
+    if not query_image_url:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            "Add a photo to this report before searching for visual matches",
+        )
+    if not image_embeddings_enabled():
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "Visual search is temporarily unavailable",
+        )
+
+    current_model_id = image_embedding_model_id()
+    query_embedding = query_report.image_embedding
+    if (
+        query_embedding is None
+        or getattr(query_report, "image_embedding_model", None) != current_model_id
+    ):
+        query_embedding = await create_image_embedding(query_image_url)
+        if query_embedding is None:
+            raise HTTPException(
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                "This photo could not be analyzed for visual search",
+            )
+        query_report.image_embedding = query_embedding
+        query_report.image_embedding_model = current_model_id
+        session.commit()
+
+    candidates = session.scalars(
+        select(candidate_model).where(
+            or_(
+                candidate_model.image_url.is_not(None),
+                candidate_model.image_urls.is_not(None),
+            ),
+            candidate_model.hidden_from_public.is_(False),
+            func.upper(candidate_model.status) == candidate_status,
+        )
+        .order_by(candidate_model.created_at.asc(), candidate_model.id.asc())
+    ).all()
+    candidates = [
+        candidate for candidate in candidates
+        if (
+            candidate.image_url
+            or next((url for url in (candidate.image_urls or []) if url), None)
+        )
+        and not candidate.hidden_from_public
+        and (candidate.status or "").upper() == candidate_status
+    ]
+    needs_indexing = [
+        candidate for candidate in candidates
+        if (
+            candidate.image_embedding is None
+            or getattr(candidate, "image_embedding_model", None) != current_model_id
+        )
+    ]
+    for candidate in needs_indexing[:5]:
+        candidate_image_url = candidate.image_url or next(
+            (url for url in (candidate.image_urls or []) if url),
+            None,
+        )
+        candidate_embedding = await create_image_embedding(candidate_image_url)
+        if candidate_embedding is not None:
+            candidate.image_embedding = candidate_embedding
+            candidate.image_embedding_model = current_model_id
+    if needs_indexing:
+        session.commit()
+    indexed_candidates = [
+        candidate for candidate in candidates
+        if (
+            candidate.image_embedding is not None
+            and getattr(candidate, "image_embedding_model", None) == current_model_id
+        )
+    ]
+    matches = []
+    for candidate in indexed_candidates:
+        score = cosine_similarity(query_embedding, candidate.image_embedding)
+        if score is None or score < 0.70:
+            continue
+        matches.append((score, candidate))
+    matches.sort(key=lambda result: result[0], reverse=True)
+    top_matches = matches[:10]
+    candidate_image_urls = [
+        candidate.image_url
+        or next(url for url in (candidate.image_urls or []) if url)
+        for _, candidate in top_matches
+    ]
+    signed_image_urls = refresh_private_image_urls(
+        candidate_image_urls
+    )
+    results = [
+        {
+            "item": {
+                "title": candidate.title,
+                "category": candidate.category,
+                "report_date": candidate.report_date,
+                "image_url": signed_image_url,
+                "report_type": (
+                    "FOUND" if normalized_type == "lost" else "LOST"
+                ),
+            },
+            "score": max(0.0, min(1.0, float(score))),
+            "matchType": "IMAGE",
+        }
+        for (score, candidate), signed_image_url in zip(top_matches, signed_image_urls)
+    ]
+    return {
+        "matches": results,
+        "searched_reports": len(indexed_candidates),
+        "unindexed_reports": len(candidates) - len(indexed_candidates),
+    }
+
+
+@router.post(
+    "/items/{item_type}/visual-search",
+    response_model=VisualSearchUploadResponse,
+)
+async def visual_search_uploaded_image(
+    item_type: str,
+    image: UploadFile = File(...),
+    session: Session | None = Depends(get_db),
+    uid: str = Depends(get_current_user),
+) -> dict[str, list[dict[str, str | float]]]:
+    session = _require_db_session(session)
+    normalized_type = item_type.strip().lower()
+    if normalized_type not in {"lost", "found"}:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "Report type must be lost or found",
+        )
+    if not local_image_embeddings_enabled():
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "Local visual search is not enabled on this server",
+        )
+    if image.content_type not in ALLOWED_IMAGE_TYPES:
+        raise HTTPException(
+            status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+            "Only JPEG, PNG, and WebP images are supported",
+        )
+
+    image_data = await image.read(MAX_IMAGE_BYTES + 1)
+    if len(image_data) > MAX_IMAGE_BYTES:
+        raise HTTPException(
+            status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            "Image exceeds the 10 MB limit",
+        )
+    try:
+        with Image.open(io.BytesIO(image_data)) as checked_image:
+            if checked_image.width * checked_image.height > MAX_IMAGE_PIXELS:
+                raise HTTPException(
+                    status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                    "Image dimensions exceed the visual search limit",
+                )
+            checked_image.verify()
+            image_format = checked_image.format
+    except (UnidentifiedImageError, OSError, Image.DecompressionBombError) as exc:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "Uploaded file is not a valid supported image",
+        ) from exc
+
+    if image_format not in {"JPEG", "PNG", "WEBP"}:
+        raise HTTPException(
+            status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+            "Only JPEG, PNG, and WebP images are supported",
+        )
+
+    try:
+        query_embedding = await asyncio.to_thread(
+            create_image_embedding_from_bytes,
+            image_data,
+        )
+    except RuntimeError as exc:
+        logger.exception("Local CLIP visual search could not create an embedding")
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "Local visual search is unavailable because the image model could not run",
+        ) from exc
+
+    current_model_id = image_embedding_model_id()
+    candidate_model = FoundItem if normalized_type == "lost" else LostItem
+    candidate_status = "FOUND" if normalized_type == "lost" else "LOST"
+    candidate_reports = session.scalars(
+        select(candidate_model).where(
+            or_(
+                candidate_model.image_url.is_not(None),
+                candidate_model.image_urls.is_not(None),
+            ),
+            candidate_model.hidden_from_public.is_(False),
+            func.upper(candidate_model.status) == candidate_status,
+        )
+        .order_by(candidate_model.created_at.asc(), candidate_model.id.asc())
+    ).all()
+    stale_candidates = [
+        candidate
+        for candidate in candidate_reports
+        if candidate.image_embedding is None
+        or getattr(candidate, "image_embedding_model", None) != current_model_id
+    ]
+    for candidate in stale_candidates[:5]:
+        candidate_image_url = candidate.image_url or next(
+            (url for url in (candidate.image_urls or []) if url),
+            None,
+        )
+        candidate_embedding = await create_image_embedding(candidate_image_url)
+        if candidate_embedding is not None:
+            candidate.image_embedding = candidate_embedding
+            candidate.image_embedding_model = current_model_id
+    if stale_candidates:
+        session.commit()
+
+    cosine_distance = candidate_model.image_embedding.cosine_distance(
+        query_embedding
+    ).label("cosine_distance")
+    query = (
+        select(candidate_model.id, cosine_distance)
+        .where(
+            candidate_model.image_embedding.is_not(None),
+            candidate_model.image_embedding_model == current_model_id,
+            or_(
+                candidate_model.image_url.is_not(None),
+                candidate_model.image_urls.is_not(None),
+            ),
+            candidate_model.hidden_from_public.is_(False),
+            func.upper(candidate_model.status) == candidate_status,
+            cosine_distance <= 0.30,
+        )
+        .order_by(cosine_distance)
+        .limit(10)
+    )
+    try:
+        rows = session.execute(query).all()
+    except SQLAlchemyError as exc:
+        logger.exception("Supabase visual-similarity query failed")
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "Visual search could not query report photos",
+        ) from exc
+
+    matches = []
+    for report_id, distance in rows:
+        try:
+            numeric_distance = float(distance)
+        except (TypeError, ValueError):
+            logger.warning("Skipping report with an invalid visual similarity distance")
+            continue
+        if not math.isfinite(numeric_distance):
+            logger.warning("Skipping report with a non-finite visual similarity distance")
+            continue
+        matches.append({
+            "report_id": str(report_id),
+            "similarity": max(0.0, min(1.0, 1.0 - numeric_distance)),
+        })
+    return {"matches": matches}
 
 
 @router.patch("/items/{item_type}/{item_id}/resolution")

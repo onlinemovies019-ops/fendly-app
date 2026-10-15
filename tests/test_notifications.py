@@ -343,7 +343,7 @@ def test_report_owner_can_delete_report_and_related_records(notification_session
     assert notification_session.get(SocialPublication, "publication-1") is None
 
 
-def test_report_owner_cannot_delete_report_after_one_hour(notification_session):
+def test_report_owner_cannot_delete_report_after_15_minutes(notification_session):
     old_report = FoundItem(
         id="old-report",
         created_by="user-1",
@@ -362,7 +362,7 @@ def test_report_owner_cannot_delete_report_after_one_hour(notification_session):
         )
 
     assert error.value.status_code == 403
-    assert "within one hour" in error.value.detail
+    assert "within 15 minutes" in error.value.detail
     assert notification_session.get(FoundItem, "old-report") is not None
 
 

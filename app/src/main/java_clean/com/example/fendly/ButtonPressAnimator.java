@@ -13,25 +13,42 @@ final class ButtonPressAnimator {
     static void attach(View view) {
         view.setOnTouchListener((target, event) -> {
             if (!target.isEnabled()) return false;
-            if (event.getActionMasked() == MotionEvent.ACTION_DOWN) {
-                target.animate().cancel();
-                target.animate()
-                        .scaleX(0.96f)
-                        .scaleY(0.96f)
-                        .setDuration(PRESS_DURATION_MS)
-                        .setInterpolator(new DecelerateInterpolator())
-                        .start();
-            } else if (event.getActionMasked() == MotionEvent.ACTION_UP
-                    || event.getActionMasked() == MotionEvent.ACTION_CANCEL) {
-                target.animate().cancel();
-                target.animate()
-                        .scaleX(1f)
-                        .scaleY(1f)
-                        .setDuration(RELEASE_DURATION_MS)
-                        .setInterpolator(new DecelerateInterpolator())
-                        .start();
+            switch (event.getActionMasked()) {
+                case MotionEvent.ACTION_DOWN:
+                    target.setPressed(true);
+                    animate(target, 0.98f, PRESS_DURATION_MS);
+                    return true;
+                case MotionEvent.ACTION_MOVE:
+                    boolean inside = event.getX() >= 0
+                            && event.getX() < target.getWidth()
+                            && event.getY() >= 0
+                            && event.getY() < target.getHeight();
+                    target.setPressed(inside);
+                    return true;
+                case MotionEvent.ACTION_UP:
+                    boolean performClick = target.isPressed();
+                    target.setPressed(false);
+                    animate(target, 1f, RELEASE_DURATION_MS);
+                    if (performClick) target.performClick();
+                    return true;
+                case MotionEvent.ACTION_CANCEL:
+                    target.setPressed(false);
+                    animate(target, 1f, RELEASE_DURATION_MS);
+                    return true;
+                default:
+                    return true;
             }
-            return false;
         });
+    }
+
+    private static void animate(View view, float scale, long durationMs) {
+        if (!FendlyMotion.animationsEnabled()) return;
+        view.animate().cancel();
+        view.animate()
+                .scaleX(scale)
+                .scaleY(scale)
+                .setDuration(durationMs)
+                .setInterpolator(new DecelerateInterpolator())
+                .start();
     }
 }

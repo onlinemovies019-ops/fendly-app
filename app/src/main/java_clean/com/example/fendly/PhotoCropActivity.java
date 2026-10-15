@@ -277,6 +277,8 @@ public final class PhotoCropActivity extends Activity {
         private final Paint handlePaint = new Paint(Paint.ANTI_ALIAS_FLAG);
         private final RectF imageBounds = new RectF();
         private final RectF cropBounds = new RectF();
+        private final Path outsidePath = new Path();
+        private final Path selectedPath = new Path();
         private float lastX;
         private float lastY;
         private int gesture = MOVE;
@@ -315,12 +317,12 @@ public final class PhotoCropActivity extends Activity {
             }
             canvas.drawBitmap(bitmap, null, imageBounds, imagePaint);
 
-            Path outside = new Path();
-            outside.addRect(imageBounds, Path.Direction.CW);
-            Path selected = new Path();
-            selected.addRect(cropBounds, Path.Direction.CW);
-            outside.op(selected, Path.Op.DIFFERENCE);
-            canvas.drawPath(outside, shadePaint);
+            outsidePath.reset();
+            outsidePath.addRect(imageBounds, Path.Direction.CW);
+            selectedPath.reset();
+            selectedPath.addRect(cropBounds, Path.Direction.CW);
+            outsidePath.op(selectedPath, Path.Op.DIFFERENCE);
+            canvas.drawPath(outsidePath, shadePaint);
             canvas.drawRect(cropBounds, borderPaint);
             float handleRadius = dp(7);
             canvas.drawCircle(cropBounds.left, cropBounds.top, handleRadius, handlePaint);

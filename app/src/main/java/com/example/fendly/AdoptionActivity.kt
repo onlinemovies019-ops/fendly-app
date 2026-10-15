@@ -53,7 +53,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
@@ -1547,8 +1546,9 @@ private fun AdoptionPhotoSlot(
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
-    val bitmap by produceState<Bitmap?>(initialValue = photo?.bitmap, photo) {
-        value = photo?.bitmap ?: photo?.uri?.let { uri ->
+    var bitmap by remember(photo) { mutableStateOf(photo?.bitmap) }
+    LaunchedEffect(photo) {
+        bitmap = photo?.bitmap ?: photo?.uri?.let { uri ->
             withContext(Dispatchers.IO) {
                 context.contentResolver.openInputStream(uri)?.use(BitmapFactory::decodeStream)
             }
@@ -1593,8 +1593,9 @@ private fun AdoptionPhotoSlot(
 @Composable
 private fun AdoptionImage(url: String, contentDescription: String) {
     var loadFailed by remember(url) { mutableStateOf(false) }
-    val bitmap by produceState<Bitmap?>(initialValue = AdoptionImageCache.get(url), url) {
-        if (value == null) {
+    var bitmap by remember(url) { mutableStateOf(AdoptionImageCache.get(url)) }
+    LaunchedEffect(url) {
+        if (bitmap == null) {
             val loadedBitmap = withContext(Dispatchers.IO) {
                 runCatching {
                     val connection = URL(url).openConnection()
@@ -1604,11 +1605,8 @@ private fun AdoptionImage(url: String, contentDescription: String) {
                     connection.getInputStream().use(BitmapFactory::decodeStream)
                 }.getOrNull()?.also { AdoptionImageCache.put(url, it) }
             }
-            if (loadedBitmap == null) {
-                loadFailed = true
-            } else {
-                value = loadedBitmap
-            }
+            bitmap = loadedBitmap
+            loadFailed = loadedBitmap == null
         }
     }
 

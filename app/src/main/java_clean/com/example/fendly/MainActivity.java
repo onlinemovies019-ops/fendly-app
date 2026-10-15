@@ -64,7 +64,6 @@ import android.widget.RadioButton;
 import android.widget.CheckBox;
 import android.widget.Space;
 import android.widget.EditText;
-import android.widget.ProgressBar;
 import android.widget.ScrollView;
 import android.widget.Spinner;
 import android.widget.AutoCompleteTextView;
@@ -1492,6 +1491,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         standaloneFParams.gravity = Gravity.CENTER_HORIZONTAL;
         standaloneFParams.setMargins(0, 0, 0, dp(8));
         centerArea.addView(standaloneF, standaloneFParams);
+        animateFendlyLogo(standaloneF);
 
         LinearLayout authCard = new LinearLayout(this);
         authCard.setOrientation(LinearLayout.VERTICAL);
@@ -8891,8 +8891,18 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         FrameLayout loading = new FrameLayout(this);
         loading.setBackgroundColor(backgroundColor());
         WindowInsetsHelper.applySafeArea(loading);
-        ProgressBar progress = new ProgressBar(this);
-        FrameLayout.LayoutParams progressParams = new FrameLayout.LayoutParams(dp(40), dp(40), Gravity.CENTER);
+        FendlyLoadingView progress = new FendlyLoadingView(
+                this,
+                translate("Loading your profile..."),
+                secondaryTextColor(),
+                accentColor(),
+                false
+        );
+        FrameLayout.LayoutParams progressParams = new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                Gravity.CENTER
+        );
         loading.addView(progress, progressParams);
         setContentView(loading);
     }
@@ -9645,6 +9655,14 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         return true;
     }
 
+    private void animateFendlyLogo(ImageView logo) {
+        FendlyMotion.animateLogo(logo, dp(4));
+    }
+
+    private void animateScreenContent(ViewGroup container) {
+        FendlyMotion.animateScreenContent(container, dp(10));
+    }
+
     private LinearLayout screenBase(String title) {
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
@@ -9675,6 +9693,10 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         scroll.addView(activeContent, new ScrollView.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         root.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1));
         setContentView(root);
+        LinearLayout contentToAnimate = activeContent;
+        contentToAnimate.post(() -> {
+            if (contentToAnimate.isAttachedToWindow()) animateScreenContent(contentToAnimate);
+        });
         return activeContent;
     }
 
@@ -11027,8 +11049,15 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         LinearLayout reports = new LinearLayout(this);
         reports.setOrientation(LinearLayout.VERTICAL);
         root.addView(reports, contentParams(-1, -2, 0));
-        String[] liveReportsResponse = {null};
-        boolean[] liveReportsLoaded = {false};
+        reports.addView(text("Select LOST or FOUND to load reports.", 13, secondaryTextColor(), Typeface.NORMAL));
+        JSONArray[] lostReports = {new JSONArray()};
+        JSONArray[] foundReports = {new JSONArray()};
+        boolean[] lostReportsLoaded = {false};
+        boolean[] foundReportsLoaded = {false};
+        boolean[] reportPageLoading = {false, false};
+        boolean[] reportHasMore = {false, false};
+        int[] reportOffsets = {0, 0};
+        Runnable[] loadNextReportPage = {null};
 
         TextView matchesHeading = text("Match review", 15, primaryTextColor(), Typeface.NORMAL);
         matchesHeading.setVisibility(View.GONE);
@@ -11038,12 +11067,125 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         root.addView(matches, contentParams(-1, -2, 0));
 
         Runnable restoreLiveReports = () -> {
-            if (liveReportsLoaded[0]) {
-                renderAdminReports(liveReportsResponse[0], reports, matchesHeading, matches, lostCount, foundCount);
+            String selectedType = adminReportFilter;
+            if (selectedType.isEmpty()) {
+                reports.removeAllViews();
+                reports.addView(text("Select LOST or FOUND to load reports.", 13, secondaryTextColor(), Typeface.NORMAL));
+                return;
             }
+            boolean isLost = "LOST".equals(selectedType);
+            int reportIndex = isLost ? 0 : 1;
+            JSONArray cachedReports = isLost ? lostReports[0] : foundReports[0];
+            boolean cached = isLost ? lostReportsLoaded[0] : foundReportsLoaded[0];
+            if (cached) {
+                renderAdminReports(cachedReports.toString(), reports, matchesHeading, matches);
+                if (reportHasMore[reportIndex]) addAdminLoadMoreButton(reports, loadNextReportPage[0]);
+                return;
+            }
+            if (reportPageLoading[reportIndex]) return;
+
+            FirebaseUser adminUser = FirebaseAuth.getInstance().getCurrentUser();
+            if (adminUser == null) {
+                reports.removeAllViews();
+                reports.addView(text("Sign in as an administrator to load reports.", 13, secondaryTextColor(), Typeface.NORMAL));
+                return;
+            }
+
+            reportPageLoading[reportIndex] = true;
+            reportOffsets[reportIndex] = 0;
+            reportHasMore[reportIndex] = false;
+            reports.removeAllViews();
+            reports.addView(text("Loading reports…", 13, secondaryTextColor(), Typeface.NORMAL));
+            adminUser.getIdToken(false).addOnSuccessListener(token -> adminPanelNetwork.execute(() -> {
+                String response = fetchAdminReportPage(selectedType, 0, token.getToken());
+                runOnUiThread(() -> {
+                    reportPageLoading[reportIndex] = false;
+                    if (!selectedType.equals(adminReportFilter)
+                            || !search.getText().toString().trim().isEmpty()) return;
+                    if (response == null) {
+                        reports.removeAllViews();
+                        reports.addView(text("Reports unavailable. Tap LOST or FOUND to retry.", 13, secondaryTextColor(), Typeface.NORMAL));
+                        return;
+                    }
+                    try {
+                        JSONObject page = new JSONObject(response);
+                        JSONArray pageItems = page.optJSONArray("items");
+                        JSONArray target = pageItems == null ? new JSONArray() : pageItems;
+                        if (isLost) {
+                            lostReports[0] = target;
+                            lostReportsLoaded[0] = true;
+                        } else {
+                            foundReports[0] = target;
+                            foundReportsLoaded[0] = true;
+                        }
+                        reportOffsets[reportIndex] = target.length();
+                        reportHasMore[reportIndex] = page.optBoolean("has_more", false);
+                        renderAdminReports(target.toString(), reports, matchesHeading, matches);
+                        if (reportHasMore[reportIndex]) {
+                            addAdminLoadMoreButton(reports, loadNextReportPage[0]);
+                        }
+                    } catch (Exception parseError) {
+                        Log.e("ADMIN", "Could not parse an admin report page", parseError);
+                        reports.removeAllViews();
+                        reports.addView(text("Reports could not be read. Tap LOST or FOUND to retry.", 13, secondaryTextColor(), Typeface.NORMAL));
+                    }
+                });
+            })).addOnFailureListener(error -> {
+                Log.e("ADMIN", "Could not get an admin token to load reports", error);
+                reportPageLoading[reportIndex] = false;
+                reports.removeAllViews();
+                reports.addView(text("Reports unavailable. Tap LOST or FOUND to retry.", 13, secondaryTextColor(), Typeface.NORMAL));
+            });
+        };
+        loadNextReportPage[0] = () -> {
+            if (adminReportFilter.isEmpty()) return;
+            String selectedType = adminReportFilter;
+            boolean isLost = "LOST".equals(selectedType);
+            int reportIndex = isLost ? 0 : 1;
+            if (reportPageLoading[reportIndex] || !reportHasMore[reportIndex]) return;
+            FirebaseUser adminUser = FirebaseAuth.getInstance().getCurrentUser();
+            if (adminUser == null) return;
+            reportPageLoading[reportIndex] = true;
+            adminUser.getIdToken(false).addOnSuccessListener(token -> adminPanelNetwork.execute(() -> {
+                String response = fetchAdminReportPage(
+                        selectedType,
+                        reportOffsets[reportIndex],
+                        token.getToken()
+                );
+                runOnUiThread(() -> {
+                    reportPageLoading[reportIndex] = false;
+                    if (response == null || !selectedType.equals(adminReportFilter)) return;
+                    try {
+                        JSONObject page = new JSONObject(response);
+                        JSONArray pageItems = page.optJSONArray("items");
+                        JSONArray target = isLost ? lostReports[0] : foundReports[0];
+                        if (pageItems != null) {
+                            for (int index = 0; index < pageItems.length(); index++) {
+                                target.put(pageItems.getJSONObject(index));
+                            }
+                        }
+                        if (isLost) lostReports[0] = target;
+                        else foundReports[0] = target;
+                        reportOffsets[reportIndex] = target.length();
+                        reportHasMore[reportIndex] = page.optBoolean("has_more", false);
+                        renderAdminReports(target.toString(), reports, matchesHeading, matches);
+                        if (reportHasMore[reportIndex]) {
+                            addAdminLoadMoreButton(reports, loadNextReportPage[0]);
+                        }
+                    } catch (Exception parseError) {
+                        Log.e("ADMIN", "Could not append an admin report page", parseError);
+                        Toast.makeText(MainActivity.this, "Could not load more reports.", Toast.LENGTH_SHORT).show();
+                    }
+                });
+            })).addOnFailureListener(error -> {
+                reportPageLoading[reportIndex] = false;
+                Log.e("ADMIN", "Could not get an admin token to load more reports", error);
+                runOnUiThread(() -> Toast.makeText(MainActivity.this, "Could not load more reports.", Toast.LENGTH_SHORT).show());
+            });
         };
         populateAdminReportCategoryTabs(reportCategoryTabs, search, restoreLiveReports);
         updateAdminReportFilterStyles(lostCount, foundCount);
+        loadAdminItemSummary(lostCount, foundCount);
         lostCount.setOnClickListener(view -> selectAdminReportFilter(
             "LOST", lostCount, foundCount, search, reportsHeading, restoreLiveReports));
         foundCount.setOnClickListener(view -> selectAdminReportFilter(
@@ -11071,21 +11213,10 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             reportsHeading.setText(translate("Search results"));
             searchAdminUsers(query, reports, searchButton, search, matchesHeading, matches);
         });
-        FirebaseUser adminUser = FirebaseAuth.getInstance().getCurrentUser();
-        if (adminUser != null) {
-            adminUser.getIdToken(false).addOnSuccessListener(token -> network.execute(() -> {
-                String response = fetchAdminItems(token.getToken());
-                runOnUiThread(() -> {
-                    liveReportsResponse[0] = response;
-                    liveReportsLoaded[0] = true;
-                    if (search.getText().toString().trim().isEmpty()) {
-                        renderAdminReports(response, reports, matchesHeading, matches, lostCount, foundCount);
-                    }
-                });
-            }));
-        }
         root.post(() -> {
-            if (currentPage == PAGE_ADMIN) fetchPendingNotificationCount();
+            if (currentPage == PAGE_ADMIN) {
+                fetchPendingNotificationCount();
+            }
         });
     }
 
@@ -11131,17 +11262,19 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
     private void loadMetaConnectionStatus(TextView status) {
         FirebaseUser adminUser = FirebaseAuth.getInstance().getCurrentUser();
         if (adminUser == null) {
-            status.setText("Sign in with an administrator account to manage Meta.");
+            status.setText(getString(R.string.admin_meta_sign_in_manage));
             return;
         }
-        status.setText("Checking saved Meta connection…");
+        status.setText(getString(R.string.admin_meta_checking));
         adminUser.getIdToken(false).addOnSuccessListener(token -> network.execute(() -> {
             AuthorizedResponse response = authorizedRequest(
                     "GET", "/api/social/status", token.getToken());
             runOnUiThread(() -> {
                 if (response.statusCode < 200 || response.statusCode >= 300) {
-                    status.setText("Could not check Meta connection. "
-                            + authorizedRequestError(response));
+                    status.setText(getString(
+                            R.string.admin_meta_check_failed,
+                            authorizedRequestError(response)
+                    ));
                     return;
                 }
                 try {
@@ -11149,38 +11282,51 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                     JSONObject facebook = result.optJSONObject("facebook");
                     JSONObject instagram = result.optJSONObject("instagram");
                     String facebookStatus = facebook != null && facebook.optBoolean("connected")
-                            ? "Connected: " + facebook.optString("account_name", "Facebook Page")
-                            : "Not connected";
+                            ? getString(
+                                    R.string.admin_meta_connected,
+                                    facebook.optString("account_name", "Facebook Page")
+                            )
+                            : getString(R.string.admin_meta_not_connected);
                     String instagramStatus = instagram != null && instagram.optBoolean("connected")
-                            ? "Connected: " + instagram.optString("account_name", "Instagram")
-                            : "Not connected";
-                    status.setText("Facebook Page: " + facebookStatus
-                            + "\nInstagram: " + instagramStatus);
+                            ? getString(
+                                    R.string.admin_meta_connected,
+                                    instagram.optString("account_name", "Instagram")
+                            )
+                            : getString(R.string.admin_meta_not_connected);
+                    status.setText(getString(
+                            R.string.admin_meta_status,
+                            getString(R.string.admin_meta_facebook_page),
+                            facebookStatus,
+                            getString(R.string.admin_meta_instagram),
+                            instagramStatus
+                    ));
                 } catch (Exception error) {
                     Log.e("META_CONNECTION", "Could not read Meta account status", error);
-                    status.setText("Meta connection status could not be read.");
+                    status.setText(getString(R.string.admin_meta_status_unreadable));
                 }
             });
         })).addOnFailureListener(error -> runOnUiThread(() ->
-                status.setText("Could not verify your Fendly sign-in.")));
+                status.setText(getString(R.string.admin_sign_in_verify_failed))));
     }
 
     private void startMetaConnection(TextView status, TextView connectButton) {
         FirebaseUser adminUser = FirebaseAuth.getInstance().getCurrentUser();
         if (adminUser == null) {
-            status.setText("Sign in with an administrator account to reconnect Meta.");
+            status.setText(getString(R.string.admin_meta_sign_in_reconnect));
             return;
         }
         connectButton.setEnabled(false);
-        status.setText("Preparing secure Meta authorization…");
+        status.setText(getString(R.string.admin_meta_preparing));
         adminUser.getIdToken(false).addOnSuccessListener(token -> network.execute(() -> {
             AuthorizedResponse response = authorizedRequest(
                     "POST", "/api/social/connect/meta", token.getToken());
             runOnUiThread(() -> {
                 connectButton.setEnabled(true);
                 if (response.statusCode < 200 || response.statusCode >= 300) {
-                    status.setText("Could not start Meta reconnect. "
-                            + authorizedRequestError(response));
+                    status.setText(getString(
+                            R.string.admin_meta_reconnect_failed,
+                            authorizedRequestError(response)
+                    ));
                     return;
                 }
                 try {
@@ -11194,17 +11340,16 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                     if (!"https".equalsIgnoreCase(uri.getScheme()) || !allowedHost) {
                         throw new IllegalArgumentException("Unexpected Meta authorization URL");
                     }
-                    status.setText(
-                            "Complete authorization in Meta, return to Fendly, then refresh status.");
+                    status.setText(getString(R.string.admin_meta_complete_auth));
                     startActivity(new Intent(Intent.ACTION_VIEW, uri));
                 } catch (Exception error) {
                     Log.e("META_CONNECTION", "Could not open Meta authorization", error);
-                    status.setText("The server returned an invalid Meta authorization link.");
+                    status.setText(getString(R.string.admin_meta_invalid_link));
                 }
             });
         })).addOnFailureListener(error -> runOnUiThread(() -> {
             connectButton.setEnabled(true);
-            status.setText("Could not verify your Fendly sign-in.");
+            status.setText(getString(R.string.admin_sign_in_verify_failed));
         }));
     }
 
@@ -11213,12 +11358,10 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         LinearLayout loadingRow = new LinearLayout(this);
         loadingRow.setGravity(Gravity.CENTER_VERTICAL);
         loadingRow.setOrientation(LinearLayout.HORIZONTAL);
-        ProgressBar progress = new ProgressBar(this);
-        loadingRow.addView(progress, new LinearLayout.LayoutParams(dp(26), dp(26)));
-        TextView label = text(message, 13, secondaryTextColor(), Typeface.NORMAL);
-        LinearLayout.LayoutParams labelParams = new LinearLayout.LayoutParams(-2, -2);
-        labelParams.setMargins(dp(10), 0, 0, 0);
-        loadingRow.addView(label, labelParams);
+        FendlyLoadingView progress = new FendlyLoadingView(
+                this, message, secondaryTextColor(), accentColor(), true
+        );
+        loadingRow.addView(progress, new LinearLayout.LayoutParams(-1, dp(44)));
         panel.addView(loadingRow, contentParams(-1, dp(44), dp(6)));
     }
 
@@ -11241,7 +11384,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             return;
         }
         loading[0] = true;
-        trigger.setText("Loading...");
+        trigger.setText(getString(R.string.admin_loading));
         showAdminPanelLoading(stories, "Loading opted-in reunion stories...");
         adminUser.getIdToken(false).addOnSuccessListener(token -> adminPanelNetwork.execute(() -> {
             AuthorizedResponse response = authorizedRequest(
@@ -11252,7 +11395,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             runOnUiThread(() -> {
                 if (response.statusCode < 200 || response.statusCode >= 300) {
                     loading[0] = false;
-                    trigger.setText("Opt-in reunion stories");
+                    trigger.setText(getString(R.string.admin_opt_in_reunion_stories));
                     showAdminPanelMessage(
                             stories,
                             "Could not load opted-in reunion stories. "
@@ -11313,17 +11456,17 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                     }
                     loaded[0] = true;
                     loading[0] = false;
-                    trigger.setText("Opt-in reunion stories");
+                    trigger.setText(getString(R.string.admin_opt_in_reunion_stories));
                 } catch (Exception error) {
                     Log.e("ADMIN_SUCCESS_STORIES", "Could not read success stories", error);
                     loading[0] = false;
-                    trigger.setText("Opt-in reunion stories");
+                    trigger.setText(getString(R.string.admin_opt_in_reunion_stories));
                     showAdminPanelMessage(stories, "Reunion stories could not be read.");
                 }
             });
         })).addOnFailureListener(error -> runOnUiThread(() -> {
             loading[0] = false;
-            trigger.setText("Opt-in reunion stories");
+            trigger.setText(getString(R.string.admin_opt_in_reunion_stories));
             showAdminPanelMessage(stories, "Could not verify your Fendly sign-in.");
         }));
     }
@@ -11341,7 +11484,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             return;
         }
         loading[0] = true;
-        trigger.setText("Loading...");
+        trigger.setText(getString(R.string.admin_loading));
         showAdminPanelLoading(listings, "Loading adoption listings...");
         adminUser.getIdToken(false).addOnSuccessListener(token -> adminPanelNetwork.execute(() -> {
             AuthorizedResponse response = authorizedRequest(
@@ -11352,7 +11495,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             runOnUiThread(() -> {
                 if (response.statusCode < 200 || response.statusCode >= 300) {
                     loading[0] = false;
-                    trigger.setText("Adoption listings");
+                    trigger.setText(getString(R.string.admin_adoption_listings));
                     showAdminPanelMessage(
                             listings,
                             "Could not load adoption listings. " + authorizedRequestError(response));
@@ -11408,17 +11551,17 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                     }
                     loaded[0] = true;
                     loading[0] = false;
-                    trigger.setText("Adoption listings");
+                    trigger.setText(getString(R.string.admin_adoption_listings));
                 } catch (Exception error) {
                     Log.e("ADMIN_ADOPTIONS", "Could not read adoption listings", error);
                     loading[0] = false;
-                    trigger.setText("Adoption listings");
+                    trigger.setText(getString(R.string.admin_adoption_listings));
                     showAdminPanelMessage(listings, "Adoption listings could not be read.");
                 }
             });
         })).addOnFailureListener(error -> runOnUiThread(() -> {
             loading[0] = false;
-            trigger.setText("Adoption listings");
+            trigger.setText(getString(R.string.admin_adoption_listings));
             showAdminPanelMessage(listings, "Could not verify your Fendly sign-in.");
         }));
     }
@@ -11621,7 +11764,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
     }
 
     private void renderAdminReports(String response, LinearLayout reports, TextView matchesHeading,
-                                    LinearLayout matches, TextView lostCount, TextView foundCount) {
+                                    LinearLayout matches) {
         reports.removeAllViews();
         if (response == null) {
             reports.addView(text("Reports unavailable.", 13, secondaryTextColor(), Typeface.NORMAL));
@@ -11629,8 +11772,6 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         }
         try {
             JSONArray items = new JSONArray(response);
-            int lost = 0;
-            int found = 0;
             int filteredLost = 0;
             int filteredFound = 0;
             LinearLayout lostSection = adminReportSection("LOST REPORTS", LOST_GREEN);
@@ -11638,32 +11779,17 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             for (int index = 0; index < items.length(); index++) {
                 JSONObject item = items.getJSONObject(index);
                 if ("FOUND".equalsIgnoreCase(item.optString("type"))) {
-                    found++;
                     if (discoveryReportMatchesCategory(item, adminReportCategory)) {
                         filteredFound++;
                         foundSection.addView(adminReportCard(item, true, matchesHeading, matches));
                     }
                 } else {
-                    lost++;
                     if (discoveryReportMatchesCategory(item, adminReportCategory)) {
                         filteredLost++;
                         lostSection.addView(adminReportCard(item, false, matchesHeading, matches));
                     }
                 }
             }
-            lostCount.setText(String.format(
-                    Locale.ROOT,
-                    "%1$s  %2$s",
-                    translate("LOST"),
-                    localizeDigits(String.valueOf(lost))
-            ));
-            foundCount.setText(String.format(
-                    Locale.ROOT,
-                    "%1$s  %2$s",
-                    translate("FOUND"),
-                    localizeDigits(String.valueOf(found))
-            ));
-            updateAdminReportFilterStyles(lostCount, foundCount);
             if ("LOST".equals(adminReportFilter)) {
                 if (filteredLost > 0) {
                     reports.addView(lostSection, contentParams(-1, -2, 0));
@@ -11676,7 +11802,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                 } else {
                     reports.addView(text("No FOUND reports in this category currently available.", 13, secondaryTextColor(), Typeface.NORMAL));
                 }
-            } else if (lost == 0 && found == 0) {
+            } else if (items.length() == 0) {
                 reports.addView(text("No live reports currently available.", 13, secondaryTextColor(), Typeface.NORMAL));
             } else {
                 reports.addView(text("Select LOST or FOUND to view reports.", 13, secondaryTextColor(), Typeface.NORMAL));
@@ -11860,6 +11986,30 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             addCommunityPosterAction(content, report, 0, dp(8));
         }
 
+        if (!adminView
+                && allowDelete
+                && isActiveCommunityReport(report)
+                && ("LOST".equalsIgnoreCase(type) || "FOUND".equalsIgnoreCase(type))
+                && !imageUrls.isEmpty()) {
+            TextView visualSearch = actionButton(
+                    LanguageManager.profileText(this, "visual_search_button"),
+                    false
+            );
+            addFieldToDialog(content, visualSearch);
+            visualSearch.setOnClickListener(view -> {
+                dialog.dismiss();
+                new AlertDialog.Builder(this)
+                        .setTitle(LanguageManager.profileText(this, "visual_search_title"))
+                        .setMessage(LanguageManager.profileText(this, "visual_search_consent"))
+                        .setNegativeButton(LanguageManager.profileText(this, "cancel"), null)
+                        .setPositiveButton(
+                                LanguageManager.profileText(this, "visual_search_button"),
+                                (confirmation, which) -> searchVisualMatches(report)
+                        )
+                        .show();
+            });
+        }
+
         if (adminView) {
             TextView removeFakeReport = actionButton("Delete report", false);
             removeFakeReport.setTextColor(Color.rgb(190, 45, 55));
@@ -11884,6 +12034,202 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         dialog.setCanceledOnTouchOutside(true);
         dialog.show();
         sizeThemedDialog(dialog);
+    }
+
+    private void searchVisualMatches(JSONObject report) {
+        FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
+        if (user == null) {
+            showVisualSearchUnavailable();
+            return;
+        }
+
+        AlertDialog progressDialog = new AlertDialog.Builder(this)
+                .setTitle(LanguageManager.profileText(this, "visual_search_title"))
+                .setMessage(LanguageManager.profileText(this, "visual_search_loading"))
+                .setCancelable(false)
+                .create();
+        progressDialog.show();
+        user.getIdToken(false).addOnSuccessListener(token -> network.execute(() -> {
+            try {
+                AiMatchService.ApiResponse response = AiMatchService.findVisualMatches(
+                        report.optString("id", ""),
+                        report.optString("type", ""),
+                        token.getToken()
+                );
+                runOnUiThread(() -> {
+                    if (progressDialog.isShowing()) progressDialog.dismiss();
+                    if (!response.isSuccessful()) {
+                        Log.w(
+                                "VISUAL_SEARCH",
+                                "Visual search request failed with HTTP " + response.getStatusCode()
+                        );
+                        showVisualSearchUnavailable();
+                        return;
+                    }
+                    try {
+                        showVisualSearchResults(new JSONObject(response.getBody()), report);
+                    } catch (Exception error) {
+                        Log.e("VISUAL_SEARCH", "Visual search returned an invalid response", error);
+                        showVisualSearchUnavailable();
+                    }
+                });
+            } catch (Exception error) {
+                Log.e("VISUAL_SEARCH", "Could not search report photos", error);
+                runOnUiThread(() -> {
+                    if (progressDialog.isShowing()) progressDialog.dismiss();
+                    showVisualSearchUnavailable();
+                });
+            }
+        })).addOnFailureListener(error -> {
+            Log.e("VISUAL_SEARCH", "Could not verify the signed-in account", error);
+            if (progressDialog.isShowing()) progressDialog.dismiss();
+            showVisualSearchUnavailable();
+        });
+    }
+
+    private void showVisualSearchUnavailable() {
+        new AlertDialog.Builder(this)
+                .setTitle(LanguageManager.profileText(this, "visual_search_title"))
+                .setMessage(LanguageManager.profileText(this, "visual_search_unavailable"))
+                .setPositiveButton(LanguageManager.profileText(this, "cancel"), null)
+                .show();
+    }
+
+    private void showVisualSearchResults(JSONObject response, JSONObject report) {
+        JSONArray matches = response.optJSONArray("matches");
+        int unindexedReports = response.optInt("unindexed_reports", 0);
+        LinearLayout results = new LinearLayout(this);
+        results.setOrientation(LinearLayout.VERTICAL);
+        results.setPadding(dp(18), dp(8), dp(18), dp(12));
+
+        TextView disclaimer = text(
+                LanguageManager.profileText(this, "visual_search_disclaimer"),
+                12,
+                secondaryTextColor(),
+                Typeface.NORMAL
+        );
+        disclaimer.setPadding(0, 0, 0, dp(12));
+        results.addView(disclaimer, new LinearLayout.LayoutParams(-1, -2));
+
+        int resultCount = matches == null ? 0 : Math.min(matches.length(), 10);
+        if (resultCount == 0) {
+            TextView empty = text(
+                    LanguageManager.profileText(this, "visual_search_no_matches"),
+                    14,
+                    primaryTextColor(),
+                    Typeface.NORMAL
+            );
+            empty.setPadding(0, dp(8), 0, dp(8));
+            results.addView(empty, new LinearLayout.LayoutParams(-1, -2));
+        } else {
+            for (int index = 0; index < resultCount; index++) {
+                JSONObject match = matches.optJSONObject(index);
+                JSONObject item = match == null ? null : match.optJSONObject("item");
+                if (item == null) continue;
+
+                LinearLayout card = new LinearLayout(this);
+                card.setOrientation(LinearLayout.VERTICAL);
+                card.setPadding(dp(12), dp(10), dp(12), dp(10));
+                card.setBackground(roundWithStroke(surfaceColor(), 14, borderColor()));
+                LinearLayout.LayoutParams cardParams =
+                        new LinearLayout.LayoutParams(-1, -2);
+                cardParams.setMargins(0, 0, 0, dp(10));
+                results.addView(card, cardParams);
+
+                TextView score = text(
+                        String.format(
+                                Locale.ROOT,
+                                "%1$s%% %2$s",
+                                localizeDigits(String.valueOf(
+                                        Math.round(match.optDouble("score", 0.0) * 100)
+                                )),
+                                LanguageManager.profileText(this, "visual_similarity")
+                        ),
+                        12,
+                        GOLD_ON,
+                        Typeface.BOLD
+                );
+                score.setGravity(Gravity.CENTER);
+                score.setBackground(round(GOLD, 10));
+                score.setPadding(dp(8), dp(6), dp(8), dp(6));
+                card.addView(score, new LinearLayout.LayoutParams(-1, -2));
+
+                LinearLayout row = new LinearLayout(this);
+                row.setOrientation(LinearLayout.HORIZONTAL);
+                row.setGravity(Gravity.CENTER_VERTICAL);
+                row.setPadding(0, dp(10), 0, 0);
+                card.addView(row, new LinearLayout.LayoutParams(-1, -2));
+
+                ImageView photo = new ImageView(this);
+                photo.setScaleType(ImageView.ScaleType.CENTER_CROP);
+                photo.setBackground(roundWithStroke(backgroundColor(), 10, borderColor()));
+                photo.setContentDescription(item.optString("title", "Report"));
+                String photoUrl = item.optString("image_url", "").trim();
+                if (!photoUrl.isEmpty()) {
+                    Glide.with(this)
+                            .load(photoUrl)
+                            .placeholder(new ColorDrawable(Color.argb(100, 190, 190, 190)))
+                            .error(new ColorDrawable(Color.argb(100, 190, 190, 190)))
+                            .into(photo);
+                }
+                LinearLayout.LayoutParams photoParams =
+                        new LinearLayout.LayoutParams(dp(76), dp(76));
+                photoParams.setMargins(0, 0, dp(10), 0);
+                row.addView(photo, photoParams);
+
+                LinearLayout details = new LinearLayout(this);
+                details.setOrientation(LinearLayout.VERTICAL);
+                row.addView(details, new LinearLayout.LayoutParams(0, -2, 1f));
+                details.addView(text(
+                        item.optString("title", "Report"),
+                        14,
+                        primaryTextColor(),
+                        Typeface.NORMAL
+                ));
+                String reportType = item.optString("report_type", "");
+                if (!reportType.isEmpty()) {
+                    details.addView(text(
+                            "FOUND".equalsIgnoreCase(reportType) ? translate("FOUND") : translate("LOST"),
+                            11,
+                            secondaryTextColor(),
+                            Typeface.NORMAL
+                    ));
+                }
+                String category = item.optString("category", "").trim();
+                if (!category.isEmpty()) {
+                    details.addView(text(category, 11, secondaryTextColor(), Typeface.NORMAL));
+                }
+                String reportDate = item.optString("report_date", "").trim();
+                if (!reportDate.isEmpty()) {
+                    details.addView(text(reportDate, 11, secondaryTextColor(), Typeface.NORMAL));
+                }
+            }
+        }
+
+        if (unindexedReports > 0) {
+            TextView incomplete = text(
+                    LanguageManager.profileText(this, "visual_search_incomplete"),
+                    12,
+                    secondaryTextColor(),
+                    Typeface.NORMAL
+            );
+            incomplete.setPadding(0, dp(4), 0, 0);
+            results.addView(incomplete, new LinearLayout.LayoutParams(-1, -2));
+        }
+
+        ScrollView scroll = new ScrollView(this);
+        scroll.addView(results, new ScrollView.LayoutParams(-1, -2));
+        AlertDialog.Builder resultsDialog = new AlertDialog.Builder(this)
+                .setTitle(LanguageManager.profileText(this, "visual_search_title"))
+                .setView(scroll)
+                .setPositiveButton(LanguageManager.profileText(this, "cancel"), null);
+        if (unindexedReports > 0) {
+            resultsDialog.setNeutralButton(
+                    LanguageManager.profileText(this, "visual_search_button"),
+                    (dialog, which) -> searchVisualMatches(report)
+            );
+        }
+        resultsDialog.show();
     }
 
     private void confirmAdminReportRemoval(JSONObject report, Dialog detailsDialog) {
@@ -12502,7 +12848,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         }
         button.setText(translate("Searching..."));
         button.setEnabled(false);
-        FirebaseAuth.getInstance().getCurrentUser().getIdToken(false).addOnSuccessListener(token -> network.execute(() -> {
+        FirebaseAuth.getInstance().getCurrentUser().getIdToken(false).addOnSuccessListener(token -> adminPanelNetwork.execute(() -> {
             String userResponse = fetchAdminSearch(query, token.getToken());
             String reportResponse = fetchAdminReportSearch(query, token.getToken());
             runOnUiThread(() -> {
@@ -12765,8 +13111,66 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         prompt.authenticate(promptInfo);
     }
 
-    private String fetchAdminItems(String idToken) {
-        return getAuthorized("/api/admin/items", idToken);
+    private String fetchAdminItemSummary(String idToken) {
+        return getAuthorized("/api/admin/items/summary", idToken);
+    }
+
+    private String fetchAdminReportPage(String reportType, int offset, String idToken) {
+        return getAuthorized(
+                "/api/admin/items/browse?type=" + Uri.encode(reportType)
+                        + "&offset=" + offset + "&limit=30",
+                idToken
+        );
+    }
+
+    private void loadAdminItemSummary(TextView lostCount, TextView foundCount) {
+        FirebaseUser adminUser = FirebaseAuth.getInstance().getCurrentUser();
+        if (adminUser == null) {
+            lostCount.setText("LOST  —");
+            foundCount.setText("FOUND  —");
+            return;
+        }
+        adminUser.getIdToken(false).addOnSuccessListener(token -> adminPanelNetwork.execute(() -> {
+            String response = fetchAdminItemSummary(token.getToken());
+            runOnUiThread(() -> {
+                if (response == null) {
+                    lostCount.setText("LOST  —");
+                    foundCount.setText("FOUND  —");
+                    return;
+                }
+                try {
+                    JSONObject summary = new JSONObject(response);
+                    lostCount.setText(String.format(
+                            Locale.ROOT,
+                            "%1$s  %2$s",
+                            translate("LOST"),
+                            localizeDigits(String.valueOf(summary.optInt("lost", 0)))
+                    ));
+                    foundCount.setText(String.format(
+                            Locale.ROOT,
+                            "%1$s  %2$s",
+                            translate("FOUND"),
+                            localizeDigits(String.valueOf(summary.optInt("found", 0)))
+                    ));
+                } catch (Exception parseError) {
+                    Log.e("ADMIN", "Could not parse admin report counts", parseError);
+                    lostCount.setText("LOST  —");
+                    foundCount.setText("FOUND  —");
+                }
+            });
+        })).addOnFailureListener(error -> {
+            Log.e("ADMIN", "Could not get an admin token to load report counts", error);
+            runOnUiThread(() -> {
+                lostCount.setText("LOST  —");
+                foundCount.setText("FOUND  —");
+            });
+        });
+    }
+
+    private void addAdminLoadMoreButton(LinearLayout reports, Runnable loadMore) {
+        TextView button = actionButton("Load more reports", false);
+        button.setOnClickListener(view -> loadMore.run());
+        reports.addView(button, contentParams(-1, dp(44), dp(8)));
     }
 
     private boolean isPendingAlert(JSONObject alert) {
@@ -13391,10 +13795,27 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
 
     private final class ReportsLoadingView extends View {
         private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final RectF cardBounds = new RectF();
+        private final RectF imageBounds = new RectF();
+        private final RectF placeholderBounds = new RectF();
+        private final Path clipPath = new Path();
+        private final LinearGradient shimmer;
+        private final Matrix shimmerMatrix = new Matrix();
         private boolean attached;
 
         ReportsLoadingView(Context context) {
             super(context);
+            int clear = Color.TRANSPARENT;
+            int highlight = Color.argb(darkMode ? 34 : 115, 255, 255, 255);
+            shimmer = new LinearGradient(
+                    0,
+                    0,
+                    dp(110),
+                    0,
+                    new int[]{clear, highlight, clear},
+                    new float[]{0f, 0.5f, 1f},
+                    Shader.TileMode.CLAMP
+            );
             setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
         }
 
@@ -13431,34 +13852,30 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             float bandWidth = dp(110);
             float progress = (SystemClock.uptimeMillis() % 1800L) / 1800f;
             float bandLeft = -bandWidth + progress * (getWidth() + bandWidth);
-            int clear = Color.TRANSPARENT;
-            int highlight = Color.argb(darkMode ? 34 : 115, 255, 255, 255);
-            Shader shimmer = new LinearGradient(
-                    bandLeft,
-                    0,
-                    bandLeft + bandWidth,
-                    0,
-                    new int[]{clear, highlight, clear},
-                    new float[]{0f, 0.5f, 1f},
-                    Shader.TileMode.CLAMP
-            );
+            shimmerMatrix.setTranslate(bandLeft, 0);
+            shimmer.setLocalMatrix(shimmerMatrix);
 
             for (int index = 0; index < 3; index++) {
                 float top = startY + index * (cardHeight + gap);
-                RectF card = new RectF(left, top, right, top + cardHeight);
+                cardBounds.set(left, top, right, top + cardHeight);
                 paint.setShader(null);
                 paint.setStyle(Paint.Style.FILL);
                 paint.setColor(cardColor);
-                canvas.drawRoundRect(card, cardRadius, cardRadius, paint);
+                canvas.drawRoundRect(cardBounds, cardRadius, cardRadius, paint);
                 paint.setStyle(Paint.Style.STROKE);
                 paint.setStrokeWidth(dp(1));
                 paint.setColor(borderColor());
-                canvas.drawRoundRect(card, cardRadius, cardRadius, paint);
+                canvas.drawRoundRect(cardBounds, cardRadius, cardRadius, paint);
                 paint.setStyle(Paint.Style.FILL);
                 paint.setColor(placeholderColor);
+                imageBounds.set(
+                        left + imageInset,
+                        top + imageInset,
+                        left + imageInset + imageSize,
+                        top + imageInset + imageSize
+                );
                 canvas.drawRoundRect(
-                        new RectF(left + imageInset, top + imageInset,
-                                left + imageInset + imageSize, top + imageInset + imageSize),
+                        imageBounds,
                         dp(12), dp(12), paint
                 );
                 float textLeft = left + imageInset + imageSize + dp(14);
@@ -13467,9 +13884,9 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                 drawPlaceholder(canvas, textLeft, top + dp(67), Math.min(dp(120), right - textLeft - dp(14)), dp(9), placeholderColor);
 
                 canvas.save();
-                Path clip = new Path();
-                clip.addRoundRect(card, cardRadius, cardRadius, Path.Direction.CW);
-                canvas.clipPath(clip);
+                clipPath.reset();
+                clipPath.addRoundRect(cardBounds, cardRadius, cardRadius, Path.Direction.CW);
+                canvas.clipPath(clipPath);
                 paint.setShader(shimmer);
                 canvas.drawRect(left, top, right, top + cardHeight, paint);
                 paint.setShader(null);
@@ -13483,8 +13900,9 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             paint.setShader(null);
             paint.setStyle(Paint.Style.FILL);
             paint.setColor(color);
+            placeholderBounds.set(left, top, left + width, top + height);
             canvas.drawRoundRect(
-                    new RectF(left, top, left + width, top + height),
+                    placeholderBounds,
                     height / 2f,
                     height / 2f,
                     paint
@@ -13897,6 +14315,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         LinearLayout.LayoutParams logoParams = new LinearLayout.LayoutParams(dp(40), dp(40));
         logoParams.gravity = Gravity.CENTER_VERTICAL;
         controls.addView(logo, logoParams);
+        animateFendlyLogo(logo);
 
         Space rightSpacer = new Space(this);
         controls.addView(rightSpacer, new LinearLayout.LayoutParams(0, 1, 1));

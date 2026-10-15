@@ -21,7 +21,7 @@ from sqlalchemy.orm import Session
 from auth import router as auth_router, get_current_user
 from database import engine, get_db
 from models import Base, EmailOTPChallenge, SmsOTPChallenge, SmsOTPRateLimit, User
-from routers.items import create_item_compat, match_items, router as items_router
+from routers.items import router as items_router
 from routers.notifications import inbox_router as inbox_notifications_router
 from routers.notifications import router as notifications_router
 from routers.users import router as users_router
@@ -32,7 +32,6 @@ from routers.imei import router as imei_router
 from routers.vault import router as vault_router
 from routers.assistant import router as assistant_router
 from routers.social_accounts import router as social_accounts_router
-from schemas import ItemResponse, MatchResponse
 
 logger = logging.getLogger(__name__)
 
@@ -71,6 +70,13 @@ def _validate_production_config() -> None:
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
+    print("=== REGISTERED ROUTES ===")
+    for route in app.routes:
+        methods = getattr(route, "methods", None)
+        method_str = f"[{','.join(methods)}]" if methods else ""
+        print(f"ROUTE -> {route.path} {method_str}")
+    print("=========================")
+
     environment = os.getenv("ENVIRONMENT", "development").lower()
     if environment == "production":
         _validate_production_config()
@@ -206,6 +212,8 @@ async def lifespan(_: FastAPI):
             # --- ITEM EMBEDDINGS & REPORT COLUMNS ---
             add_column_if_missing("lost_items", "image_embedding", "vector(512)")
             add_column_if_missing("found_items", "image_embedding", "vector(512)")
+            add_column_if_missing("lost_items", "image_embedding_model", "varchar(64)")
+            add_column_if_missing("found_items", "image_embedding_model", "varchar(64)")
             add_column_if_missing("lost_items", "embedding", "vector(1536)")
             add_column_if_missing("found_items", "embedding", "vector(1536)")
             add_column_if_missing("lost_items", "report_date", "varchar(32)")
@@ -338,19 +346,6 @@ app.mount("/static", PublicStaticFiles(directory="static"), name="static")
 # --- ROUTER INCLUSIONS ---
 app.include_router(auth_router)
 app.include_router(items_router)
-app.add_api_route(
-    "/api/items",
-    create_item_compat,
-    methods=["POST"],
-    response_model=ItemResponse,
-    status_code=status.HTTP_201_CREATED,
-)
-app.add_api_route(
-    "/api/items/match",
-    match_items,
-    methods=["POST"],
-    response_model=list[MatchResponse],
-)
 app.include_router(notifications_router)
 app.include_router(inbox_notifications_router)
 app.include_router(users_router)
@@ -366,17 +361,6 @@ app.include_router(social_accounts_router)
 @app.get("/health")
 def health_check():
     return {"status": "ok"}
-
-# Print all registered routes when Uvicorn starts
-@app.on_event("startup")
-async def show_routes():
-    print("=== REGISTERED ROUTES ===")
-    for route in app.routes:
-        methods = getattr(route, "methods", None)
-        method_str = f"[{','.join(methods)}]" if methods else ""
-        print(f"ROUTE -> {route.path} {method_str}")
-    print("=========================")
-
 
 @app.get("/user/me")
 def get_user_me_root(

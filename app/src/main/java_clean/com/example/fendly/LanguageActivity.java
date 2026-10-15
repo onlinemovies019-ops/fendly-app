@@ -98,6 +98,7 @@ public final class LanguageActivity extends AppCompatActivity {
         logoParams.gravity = Gravity.CENTER_HORIZONTAL;
         logoParams.setMargins(0, 0, 0, dp(compactHeight ? 4 : 12));
         root.addView(logo, logoParams);
+        FendlyMotion.animateLogo(logo, dp(4));
 
         TextView title = text("Choose your language", 23, primaryTextColor(), Typeface.NORMAL);
         title.setGravity(Gravity.CENTER);
@@ -171,6 +172,7 @@ public final class LanguageActivity extends AppCompatActivity {
         root.addView(continueButton, buttonParams);
 
         setContentView(root);
+        FendlyMotion.animateEntrance(root, 0L, dp(8));
     }
 
     @Override

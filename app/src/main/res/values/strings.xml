@@ -1,6 +1,24 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">Fendly</string>
+    <string name="admin_meta_sign_in_manage">Sign in with an administrator account to manage Meta.</string>
+    <string name="admin_meta_checking">Checking saved Meta connection…</string>
+    <string name="admin_meta_check_failed">Could not check Meta connection. %1$s</string>
+    <string name="admin_meta_connected">Connected: %1$s</string>
+    <string name="admin_meta_not_connected">Not connected</string>
+    <string name="admin_meta_status">%1$s: %2$s\n%3$s: %4$s</string>
+    <string name="admin_meta_facebook_page">Facebook Page</string>
+    <string name="admin_meta_instagram">Instagram</string>
+    <string name="admin_meta_status_unreadable">Meta connection status could not be read.</string>
+    <string name="admin_sign_in_verify_failed">Could not verify your Fendly sign-in.</string>
+    <string name="admin_meta_sign_in_reconnect">Sign in with an administrator account to reconnect Meta.</string>
+    <string name="admin_meta_preparing">Preparing secure Meta authorization…</string>
+    <string name="admin_meta_reconnect_failed">Could not start Meta reconnect. %1$s</string>
+    <string name="admin_meta_complete_auth">Complete authorization in Meta, return to Fendly, then refresh status.</string>
+    <string name="admin_meta_invalid_link">The server returned an invalid Meta authorization link.</string>
+    <string name="admin_loading">Loading…</string>
+    <string name="admin_opt_in_reunion_stories">Opt-in reunion stories</string>
+    <string name="admin_adoption_listings">Adoption listings</string>
     <string name="widget_description">Your Lost and Found report counts and unread Fendly notifications</string>
     <string name="widget_lost_initial">L</string>
     <string name="widget_found_initial">F</string>

@@ -42,6 +42,9 @@ Required environment variables:
 	uploads, signed URLs, and matching-index cleanup. The service-role key must
 	remain server-side only. The API creates and verifies the private
 	`report-images` bucket during startup.
+- `USE_LOCAL_IMAGE_EMBEDDING_MODEL=true`: enable image embeddings using the
+  backend's local MobileCLIP-S1 ONNX model. The model and its weights are
+  downloaded by the backend, not by Firebase Cloud Functions.
 - `VAULT_STORAGE_BUCKET` (default `private-vault`) and
   `VAULT_ENCRYPTION_KEY`: configure the private object bucket and base64-encoded
   32-byte AES-256 key used for encrypted vault images. Keep the key stable and
@@ -92,6 +95,28 @@ separate private buckets; the API blocks public access to legacy
 Legacy `/static/uploads/` references require recovery from a backup and manual
 upload to private Supabase Storage.
 
+### Local visual search
+
+Visual search generates 512-dimensional image vectors locally with
+MobileCLIP-S1 ONNX; Firebase Cloud Functions and Cloud Vision are not required.
+`render.yaml` enables this mode. The first visual-search request downloads the
+pinned 86 MB ONNX model from Hugging Face and can take longer while it
+initializes. The model is SHA-256 verified, and the ONNX CPU runtime is limited
+to one thread. A local smoke test peaked at about 247 MiB of process memory.
+The model is distributed under Apple's MobileCLIP license; review the
+[upstream license](https://huggingface.co/Xenova/mobileclip_s1/blob/main/LICENSE)
+before redistributing model files.
+
+Image embeddings are generated after report creation so model loading does not
+delay report submission. Each stored image vector records its model version;
+the existing My Reports visual-search flow automatically re-indexes old or
+stale vectors in batches of five and reports whether results are incomplete.
+The authenticated upload API
+`POST /api/items/{lost|found}/visual-search` accepts JPEG, PNG, or WebP
+multipart image uploads and returns at most 10 report IDs with cosine
+similarity scores. It indexes up to five stale active reports per request
+before searching.
+
 ## API
 
 - `GET /health`
@@ -101,6 +126,12 @@ upload to private Supabase Storage.
 - Device IMEI collection and SafeTrade verification are disabled. The retired
   `GET /api/v1/imei/verify/{imei_number}` path returns HTTP 410.
 - `GET /api/items/mine` (authenticated owner-only reports)
+- `POST /api/items/{lost|found}/visual-search` (authenticated multipart image
+  upload; searches active opposite-type reports and returns up to 10 IDs with
+  cosine similarity scores; requires local CLIP to be enabled)
+- `POST /api/items/{lost|found}/{report_id}/visual-matches` (owner-only visual
+  search for an active report with a photo; returns at most 10 limited
+  possible-match previews and the number of reports not yet indexed)
 - `POST /api/items/match` (admin-only matching)
 - `GET /api/notifications` and `POST /api/notifications/read` (owner-scoped
   in-app notification inbox)
@@ -115,7 +146,9 @@ upload to private Supabase Storage.
 - `/static/delete-account.html` (external account-deletion request page)
 - `GET /api/users/username/{username}`
 - `POST /api/users/username`
-- `GET /api/admin/items`
+- `GET /api/admin/items/summary` and `GET /api/admin/items/browse?type=LOST&offset=0&limit=30`
+  (admin-only; lightweight report counts and paginated report browsing)
+- `GET /api/admin/items` (admin-only full legacy report export)
 - `GET /api/admin/adoptions` and `DELETE /api/admin/adoptions/{listing_id}`
 - `GET /api/admin/matches/{found_item_id}`
 - `POST /api/admin/matches/{found_item_id}/notify`

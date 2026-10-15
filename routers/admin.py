@@ -8,10 +8,10 @@ import time
 from datetime import datetime, timezone
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy import desc, func, or_, select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, defer
 
 from ai_matching import create_embedding, item_text
 from adoption_social import delete_adoption_publications
@@ -46,16 +46,35 @@ TEST_REPORT_MARKER = re.compile(
 )
 
 
-def _report_image_fields(item: LostItem | FoundItem) -> dict[str, object]:
-    image_urls = item.image_urls or ([item.image_url] if item.image_url else [])
+def _report_image_fields_batch(
+    items: list[LostItem | FoundItem],
+) -> dict[tuple[str, str], dict[str, object]]:
+    urls: list[str | None] = []
+    item_url_indices: dict[tuple[str, str], tuple[int, list[int]]] = {}
+    for item in items:
+        primary_index = len(urls)
+        urls.append(item.image_url)
+        item_urls = item.image_urls or ([item.image_url] if item.image_url else [])
+        image_indices = list(range(len(urls), len(urls) + len(item_urls)))
+        urls.extend(item_urls)
+        item_url_indices[(item.__tablename__, item.id)] = (primary_index, image_indices)
+
+    refreshed_urls = refresh_private_image_urls(urls)
     return {
-        "image_url": refresh_private_image_url(item.image_url),
-        "image_urls": [
-            refreshed_url
-            for image_url in image_urls
-            if (refreshed_url := refresh_private_image_url(image_url))
-        ],
+        key: {
+            "image_url": refreshed_urls[primary_index],
+            "image_urls": [
+                refreshed_urls[index]
+                for index in image_indices
+                if refreshed_urls[index]
+            ],
+        }
+        for key, (primary_index, image_indices) in item_url_indices.items()
     }
+
+
+def _admin_report_query(model: type[LostItem] | type[FoundItem]):
+    return select(model).options(defer(model.embedding), defer(model.image_embedding))
 
 
 def _supabase_admin_alert_request(method: str, path: str, **kwargs):
@@ -168,6 +187,20 @@ def _is_test_report(item: LostItem | FoundItem) -> bool:
     return bool(TEST_REPORT_MARKER.match(item.title or "") or TEST_REPORT_MARKER.match(item.description or ""))
 
 
+def _non_test_report_conditions(model: type[LostItem] | type[FoundItem]):
+    test_creator_pattern = r"^(test|dummy|sample)([_:-]|$)"
+    test_content_pattern = (
+        r"^[[:space:]]*(\[(test|dummy|sample)\]|"
+        r"(test|dummy|sample)([[:space:]]+(report|item|data)"
+        r"([[:space:][:punct:]]|$)|[_:-]))"
+    )
+    return (
+        func.coalesce(model.created_by, "").op("!~*")(test_creator_pattern),
+        func.coalesce(model.title, "").op("!~*")(test_content_pattern),
+        func.coalesce(model.description, "").op("!~*")(test_content_pattern),
+    )
+
+
 def _report_search_conditions(model: type[LostItem] | type[FoundItem], terms: list[str]):
     conditions = []
     for term in terms:
@@ -237,6 +270,26 @@ def _english_report_fields(item: LostItem | FoundItem) -> dict[str, object]:
             else ENGLISH_UNAVAILABLE if item.report_location else ""
         ),
         "translation_available": item.title_en is not None and item.description_en is not None,
+    }
+
+
+def _admin_report_display_fields(item: LostItem | FoundItem) -> dict[str, object]:
+    return {
+        "title": item.title_en if item.title_en is not None else item.title,
+        "description": (
+            item.description_en
+            if item.description_en is not None
+            else item.description
+        ),
+        "category": item.category_en if item.category_en is not None else item.category,
+        "report_location": (
+            item.report_location_en
+            if item.report_location_en is not None
+            else item.report_location or ""
+        ),
+        "translation_available": (
+            item.title_en is not None and item.description_en is not None
+        ),
     }
 
 
@@ -342,12 +395,14 @@ async def list_all_items(
     session: Session = Depends(get_db),
     _: str = Depends(require_admin),
 ) -> list[dict[str, object]]:
-    lost = session.scalars(select(LostItem)).all()
-    found = session.scalars(select(FoundItem)).all()
+    lost = session.scalars(_admin_report_query(LostItem)).all()
+    found = session.scalars(_admin_report_query(FoundItem)).all()
     items = [("LOST", item) for item in lost if not _is_test_report(item)]
     items.extend(("FOUND", item) for item in found if not _is_test_report(item))
-    await _ensure_english_translations([item for _, item in items], session)
+    report_items = [item for _, item in items]
+    await _ensure_english_translations(report_items, session)
     items.sort(key=lambda pair: pair[1].created_at.timestamp() if pair[1].created_at else 0, reverse=True)
+    image_fields = _report_image_fields_batch(report_items)
     return [
         {
             "id": item.id,
@@ -360,12 +415,79 @@ async def list_all_items(
             "lng": item.lng,
             "report_date": item.report_date,
             "original_report_location": item.report_location,
-            **_report_image_fields(item),
+            **image_fields[(item.__tablename__, item.id)],
             "created_by": item.created_by,
             "created_at": item.created_at,
         }
         for item_type, item in items
     ]
+
+
+@router.get("/items/summary")
+def get_admin_item_summary(
+    session: Session = Depends(get_db),
+    _: str = Depends(require_admin),
+) -> dict[str, int]:
+    lost_count = session.scalar(
+        select(func.count(LostItem.id)).where(
+            *_non_test_report_conditions(LostItem)
+        )
+    )
+    found_count = session.scalar(
+        select(func.count(FoundItem.id)).where(
+            *_non_test_report_conditions(FoundItem)
+        )
+    )
+    return {"lost": int(lost_count or 0), "found": int(found_count or 0)}
+
+
+@router.get("/items/browse")
+async def browse_admin_items(
+    report_type: str = Query(..., alias="type"),
+    offset: int = Query(default=0, ge=0),
+    limit: int = Query(default=30, ge=1, le=50),
+    session: Session = Depends(get_db),
+    _: str = Depends(require_admin),
+) -> dict[str, object]:
+    normalized_type = report_type.strip().upper()
+    if normalized_type not in {"LOST", "FOUND"}:
+        raise HTTPException(400, "Report type must be LOST or FOUND")
+
+    model = LostItem if normalized_type == "LOST" else FoundItem
+    page = session.scalars(
+        _admin_report_query(model)
+        .where(*_non_test_report_conditions(model))
+        .order_by(desc(model.created_at), desc(model.id))
+        .offset(offset)
+        .limit(limit + 1)
+    ).all()
+    has_more = len(page) > limit
+    report_items = list(page[:limit])
+    image_fields = _report_image_fields_batch(report_items)
+    items = [
+        {
+            "id": item.id,
+            "type": normalized_type,
+            **_admin_report_display_fields(item),
+            "original_title": item.title,
+            "original_description": item.description,
+            "original_category": item.category,
+            "lat": item.lat,
+            "lng": item.lng,
+            "report_date": item.report_date,
+            "original_report_location": item.report_location,
+            **image_fields[(item.__tablename__, item.id)],
+            "created_by": item.created_by,
+            "created_at": item.created_at,
+        }
+        for item in report_items
+    ]
+    return {
+        "items": items,
+        "offset": offset,
+        "limit": limit,
+        "has_more": has_more,
+    }
 
 
 @router.get("/success-stories")
@@ -777,9 +899,13 @@ async def search_users_and_reports(
         reports = []
         report_items: list[tuple[str, LostItem | FoundItem]] = []
         for item_type, model in (("LOST", LostItem), ("FOUND", FoundItem)):
-            items = session.scalars(select(model).where(model.created_by == user.firebase_uid)).all()
+            items = session.scalars(
+                _admin_report_query(model).where(model.created_by == user.firebase_uid)
+            ).all()
             report_items.extend((item_type, item) for item in items if not _is_test_report(item))
-        await _ensure_english_translations([item for _, item in report_items], session)
+        user_report_items = [item for _, item in report_items]
+        await _ensure_english_translations(user_report_items, session)
+        image_fields = _report_image_fields_batch(user_report_items)
         reports.extend({
             "id": item.id,
             "type": item_type,
@@ -791,7 +917,7 @@ async def search_users_and_reports(
             "lng": item.lng,
             "report_date": item.report_date,
             "original_report_location": item.report_location,
-            **_report_image_fields(item),
+            **image_fields[(item.__tablename__, item.id)],
             "created_at": item.created_at,
         } for item_type, item in report_items)
         reports.sort(key=lambda item: item["created_at"].timestamp() if item["created_at"] else 0, reverse=True)
@@ -827,14 +953,20 @@ async def search_admin_reports(
     if len(q.strip()) < 2 or not terms:
         return []
 
-    lost = session.scalars(select(LostItem).where(*_report_search_conditions(LostItem, terms))).all()
-    found = session.scalars(select(FoundItem).where(*_report_search_conditions(FoundItem, terms))).all()
+    lost = session.scalars(
+        _admin_report_query(LostItem).where(*_report_search_conditions(LostItem, terms))
+    ).all()
+    found = session.scalars(
+        _admin_report_query(FoundItem).where(*_report_search_conditions(FoundItem, terms))
+    ).all()
     items = [
         (item_type, item) for item_type, item in [("LOST", item) for item in lost] + [("FOUND", item) for item in found]
         if not _is_test_report(item)
     ]
-    await _ensure_english_translations([item for _, item in items], session)
+    report_items = [item for _, item in items]
+    await _ensure_english_translations(report_items, session)
     items.sort(key=lambda pair: pair[1].created_at.timestamp() if pair[1].created_at else 0, reverse=True)
+    image_fields = _report_image_fields_batch(report_items)
     return [
         {
             "id": item.id,
@@ -847,7 +979,7 @@ async def search_admin_reports(
             "lng": item.lng,
             "report_date": item.report_date,
             "original_report_location": item.report_location,
-            **_report_image_fields(item),
+            **image_fields[(item.__tablename__, item.id)],
             "created_by": item.created_by,
             "created_at": item.created_at,
         }
@@ -896,10 +1028,12 @@ async def find_matches(
         score = float(result["score"])
         if score >= 0.85:
             persist_admin_match_alert(session, found_item, result["item"], score)
+    ranked_items = [result["item"] for result in ranked]
+    image_fields = _report_image_fields_batch(ranked_items)
     for result in ranked:
         item = result["item"]
         item_response = ItemResponse.model_validate(item).model_dump()
         item_response.update(_english_report_fields(item))
-        item_response.update(_report_image_fields(item))
+        item_response.update(image_fields[(item.__tablename__, item.id)])
         result["item"] = item_response
     return ranked

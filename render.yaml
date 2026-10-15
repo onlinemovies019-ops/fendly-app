@@ -19,8 +19,8 @@ services:
         value: private-vault
       - key: VAULT_ENCRYPTION_KEY
         sync: false
-      - key: IMAGE_MATCHING_FUNCTION_URL
-        value: https://us-central1-fendly-6d746.cloudfunctions.net/matchReportImages
+      - key: USE_LOCAL_IMAGE_EMBEDDING_MODEL
+        value: "true"
       - key: CLOUDINARY_CLOUD_NAME
         sync: false
       - key: CLOUDINARY_API_KEY

@@ -1,4 +1,5 @@
 import asyncio
+from collections import Counter
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -51,6 +52,28 @@ def reports_client(monkeypatch):
 def test_user_report_listing_is_not_exposed(reports_client):
     client, _ = reports_client
     assert client.get("/api/reports").status_code == 404
+
+
+def test_api_routes_have_unique_paths_and_openapi_operation_ids():
+    registered_routes = [
+        (method, route.path)
+        for route in main.app.routes
+        for method in (getattr(route, "methods", None) or ())
+        if method in {"GET", "POST", "PUT", "PATCH", "DELETE"}
+    ]
+    duplicates = [
+        route for route, count in Counter(registered_routes).items() if count > 1
+    ]
+    assert duplicates == []
+
+    operations = [
+        operation
+        for path in main.app.openapi()["paths"].values()
+        for method, operation in path.items()
+        if method in {"get", "post", "put", "patch", "delete"}
+    ]
+    operation_ids = [operation["operationId"] for operation in operations]
+    assert len(operation_ids) == len(set(operation_ids))
 
 
 def test_static_uploads_are_not_publicly_served(reports_client):

@@ -1,5 +1,7 @@
 package com.example.fendly;
 
+import android.net.Uri;
+
 import org.json.JSONException;
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -16,7 +18,8 @@ import java.util.Locale;
 public final class AiMatchService {
     private static final String API_BASE = "https://fendly-api.onrender.com";
     private static final int CONNECT_TIMEOUT_MS = 15000;
-    private static final int READ_TIMEOUT_MS = 60000;
+    private static final int READ_TIMEOUT_MS = 110000;
+    private static final int VISUAL_SEARCH_READ_TIMEOUT_MS = 260000;
 
     private AiMatchService() {
     }
@@ -102,6 +105,27 @@ public final class AiMatchService {
         return post("/api/items/match", payload, idToken);
     }
 
+    public static ApiResponse findVisualMatches(
+            String reportId,
+            String reportType,
+            String idToken
+    ) throws Exception {
+        if (reportId == null || reportId.trim().isEmpty()) {
+            throw new IllegalArgumentException("A report ID is required for visual search");
+        }
+        String normalizedType = reportType == null ? "" : reportType.toLowerCase(Locale.US);
+        if (!"lost".equals(normalizedType) && !"found".equals(normalizedType)) {
+            throw new IllegalArgumentException("Report type must be lost or found");
+        }
+        return post(
+                "/api/items/" + normalizedType + "/" + Uri.encode(reportId.trim())
+                        + "/visual-matches",
+                new JSONObject(),
+                idToken,
+                VISUAL_SEARCH_READ_TIMEOUT_MS
+        );
+    }
+
     public static ApiResponse findMatches(String itemId, String itemType, String idToken) throws Exception {
         JSONObject payload = new JSONObject()
                 .put("radius_degrees", 10.0);
@@ -116,6 +140,15 @@ public final class AiMatchService {
     }
 
     private static ApiResponse post(String path, JSONObject payload, String idToken) throws Exception {
+        return post(path, payload, idToken, READ_TIMEOUT_MS);
+    }
+
+    private static ApiResponse post(
+            String path,
+            JSONObject payload,
+            String idToken,
+            int readTimeoutMs
+    ) throws Exception {
         if (idToken == null || idToken.trim().isEmpty()) {
             throw new IllegalArgumentException("A Firebase ID token is required");
         }
@@ -125,7 +158,7 @@ public final class AiMatchService {
             connection = (HttpURLConnection) new URL(API_BASE + path).openConnection();
             connection.setRequestMethod("POST");
             connection.setConnectTimeout(CONNECT_TIMEOUT_MS);
-            connection.setReadTimeout(READ_TIMEOUT_MS);
+            connection.setReadTimeout(readTimeoutMs);
             connection.setDoOutput(true);
             connection.setRequestProperty("Authorization", "Bearer " + idToken);
             connection.setRequestProperty("Content-Type", "application/json; charset=UTF-8");
