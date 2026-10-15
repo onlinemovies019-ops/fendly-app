@@ -1,6 +1,7 @@
 import json
 import logging
 import os
+import re
 from datetime import datetime
 from typing import Literal
 
@@ -55,6 +56,74 @@ SUPPORTED_LANGUAGES = {
     "kn": "Kannada",
     "ml": "Malayalam",
 }
+MAHARASHTRA_CITY_NAMES = (
+    "Mumbai", "Pune", "Nagpur", "Nashik", "Aurangabad", "Thane", "Navi Mumbai",
+    "Kolhapur", "Solapur", "Amravati", "Nanded", "Sangli", "Jalgaon", "Akola",
+    "Latur", "Dhule", "Ahmednagar", "Satara", "Ratnagiri", "Beed", "Bhandara",
+    "Buldhana", "Chandrapur", "Gadchiroli", "Gondia", "Hingoli", "Jalna",
+    "Karad", "Lonavala", "Malegaon", "Malkapur", "Nandurbar", "Osmanabad",
+    "Palghar", "Parbhani", "Raigad", "Sangamner", "Sindhudurg", "Wardha",
+    "Washim", "Yavatmal", "Baramati", "Bhiwandi", "Kalyan", "Mira Bhayandar",
+    "Panvel", "Vasai Virar", "Ichalkaranji", "Ulhasnagar",
+)
+MAHARASHTRA_CITY_ALIASES = {
+    "नागपूर": "Nagpur",
+    "नागपूरमध्ये": "Nagpur",
+    "नागपूरला": "Nagpur",
+    "अमरावती": "Amravati",
+    "अमरावतीमध्ये": "Amravati",
+    "अमरावतीत": "Amravati",
+    "अमरावतीला": "Amravati",
+    "वर्धा": "Wardha",
+    "वर्ध्यामध्ये": "Wardha",
+    "वर्ध्यात": "Wardha",
+    "वर्ध्याला": "Wardha",
+}
+
+
+def _mentioned_maharashtra_cities(text: str) -> list[str]:
+    matches: list[tuple[int, str]] = []
+    for city in MAHARASHTRA_CITY_NAMES:
+        match = re.search(
+            rf"(?<!\w){re.escape(city)}(?!\w)",
+            text,
+            flags=re.IGNORECASE,
+        )
+        if match:
+            matches.append((match.start(), city))
+    for alias, city in MAHARASHTRA_CITY_ALIASES.items():
+        match = re.search(rf"(?<!\w){re.escape(alias)}(?!\w)", text)
+        if match:
+            matches.append((match.start(), city))
+    return [city for _, city in sorted(matches)]
+
+
+def _phrase_is_present(phrase: str, text: str) -> bool:
+    phrase = phrase.strip()
+    if not phrase:
+        return False
+    return re.search(
+        rf"(?<!\w){re.escape(phrase)}(?!\w)",
+        text,
+        flags=re.IGNORECASE,
+    ) is not None
+
+
+def _remove_city_from_area(area: str, city: str) -> str:
+    aliases = [
+        alias
+        for alias, canonical in MAHARASHTRA_CITY_ALIASES.items()
+        if canonical == city
+    ]
+    for name in (city, *aliases):
+        area = re.sub(
+            rf"(?<!\w)(?:(?:in|at|near|within)\s+)?{re.escape(name)}(?!\w)",
+            "",
+            area,
+            flags=re.IGNORECASE,
+        )
+    area = re.sub(r"\s*[,;]\s*[,;]*\s*", ", ", area)
+    return area.strip(" ,;:-")
 
 
 class VoiceIntakeResponse(BaseModel):
@@ -227,6 +296,20 @@ async def _extract_report_details(
         if not isinstance(extracted, dict):
             raise ValueError("Extraction provider response was not a JSON object")
         extracted.setdefault("report_type", current_report_type)
+        mentioned_cities = _mentioned_maharashtra_cities(transcription)
+        if mentioned_cities:
+            city = mentioned_cities[-1]
+            extracted["city_tag"] = city
+            if isinstance(extracted.get("location_hint"), str):
+                extracted["location_hint"] = _remove_city_from_area(
+                    extracted["location_hint"],
+                    city,
+                )
+        elif isinstance(extracted.get("city_tag"), str) and not _phrase_is_present(
+            extracted["city_tag"],
+            transcription,
+        ):
+            extracted["city_tag"] = ""
         return VoiceIntakeResponse.model_validate({
             **extracted,
             "transcription": transcription,

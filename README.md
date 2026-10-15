@@ -132,9 +132,9 @@ before searching.
   selected app `language`, local `current_date`, and current
   `current_report_type`; returns report fields in that language, separates
   neighborhood/area `location_hint` from city-only `city_tag`, classifies
-  items/pets/people and lost/found intent, formats stated dates as
-  `DD/MM/YYYY`, and separates brand/model/serial details into
-  `identifier_details`)
+  items/pets/people and lost/found intent, verifies Maharashtra city names
+  against the transcript, formats stated dates as `DD/MM/YYYY`, and separates
+  brand/model/serial details into `identifier_details`)
 - `POST /api/items/lost`
 - `POST /api/items/found`
 - Device IMEI collection and SafeTrade verification are disabled. The retired

@@ -409,3 +409,73 @@ def test_voice_intake_preserves_selected_type_when_transcript_does_not_classify_
 
     assert response.status_code == 200
     assert response.json()["report_type"] == "found"
+
+
+@pytest.mark.parametrize(
+    "transcript,ai_city,ai_location,expected_city,expected_location",
+    [
+        (
+            "I lost my wallet in Amravati.",
+            "Nagpur",
+            "Amravati",
+            "Amravati",
+            "",
+        ),
+        (
+            "I lost my wallet near Mahal, Burdi.",
+            "Nagpur",
+            "Mahal, Burdi",
+            "",
+            "Mahal, Burdi",
+        ),
+        (
+            "माझी बॅग अमरावतीमध्ये हरवली.",
+            "Nagpur",
+            "अमरावती",
+            "Amravati",
+            "",
+        ),
+    ],
+)
+def test_voice_intake_uses_only_cities_spoken_in_transcript(
+    voice_client,
+    transcript,
+    ai_city,
+    ai_location,
+    expected_city,
+    expected_location,
+):
+    FakeAsyncClient.responses = [
+        FakeResponse({"text": transcript}),
+        FakeResponse({
+            "choices": [{
+                "message": {
+                    "content": json.dumps({
+                        "title": "Wallet",
+                        "category": "item",
+                        "report_type": "lost",
+                        "color": "",
+                        "location_hint": ai_location,
+                        "city_tag": ai_city,
+                        "report_date": "",
+                        "identifier_details": "",
+                        "additional_notes": "",
+                    }, ensure_ascii=False)
+                }
+            }]
+        }),
+    ]
+
+    response = voice_client.post(
+        "/api/intake/voice",
+        files={"audio": ("report.m4a", b"audio bytes", "audio/mp4")},
+        data={
+            "language": "en",
+            "current_date": "2026-10-15",
+            "current_report_type": "lost",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["city_tag"] == expected_city
+    assert response.json()["location_hint"] == expected_location
