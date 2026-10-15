@@ -143,13 +143,13 @@ def test_voice_intake_requires_authentication(monkeypatch):
             401,
             "Incorrect API key provided",
             503,
-            "Voice transcription is not configured correctly. Please contact support.",
+            "OpenAI transcription is not configured correctly. Please check the server API key.",
         ),
         (
             429,
             "Quota exceeded",
             503,
-            "Voice transcription is temporarily unavailable due to service limits. Please try again later.",
+            "OpenAI transcription is temporarily rate-limited or out of quota. Check the provider usage limits and try again later.",
         ),
         (
             400,
@@ -180,3 +180,28 @@ def test_voice_intake_reports_actionable_transcription_provider_errors(
 
     assert response.status_code == expected_status
     assert response.json()["detail"] == expected_detail
+
+
+def test_voice_intake_uses_groq_when_groq_api_key_is_configured(
+    voice_client,
+    monkeypatch,
+):
+    monkeypatch.setenv("GROQ_API_KEY", "test-groq-key")
+
+    response = voice_client.post(
+        "/api/intake/voice",
+        files={"audio": ("report.m4a", b"audio bytes", "audio/mp4")},
+    )
+
+    assert response.status_code == 200
+    transcription_call, extraction_call = FakeAsyncClient.calls
+    assert transcription_call[0] == (
+        "https://api.groq.com/openai/v1/audio/transcriptions"
+    )
+    assert transcription_call[1]["headers"]["Authorization"] == "Bearer test-groq-key"
+    assert transcription_call[1]["data"]["model"] == "whisper-large-v3-turbo"
+    assert extraction_call[0] == (
+        "https://api.groq.com/openai/v1/chat/completions"
+    )
+    assert extraction_call[1]["headers"]["Authorization"] == "Bearer test-groq-key"
+    assert extraction_call[1]["json"]["model"] == "llama-3.3-70b-versatile"

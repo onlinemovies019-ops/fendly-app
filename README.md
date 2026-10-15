@@ -35,6 +35,13 @@ Required environment variables:
   `OPENAI_MODERATION_URL` defaults to OpenAI's moderation endpoint. If the key
   is missing or the provider is unavailable, submissions are rejected with a
   temporary-service error; there is no keyword-only fallback.
+- `GROQ_API_KEY`: Preferred provider key for authenticated `/api/intake/voice`
+  speech transcription and structured report extraction. Uses Groq's
+  `whisper-large-v3-turbo` and `llama-3.3-70b-versatile` by default; configure
+  `GROQ_TRANSCRIPTION_MODEL` or `GROQ_VOICE_INTAKE_MODEL` to override. If no
+  Groq key is present, voice intake uses `OPENAI_API_KEY` instead. The OpenAI
+  key remains required for production report moderation. Provider usage is
+  subject to the configured account's current limits.
 - `CORS_ORIGINS`: Comma-separated browser origins allowed to call the API.
   Defaults to the production API origin; wildcard entries are ignored in
   production and logged. Bearer-token authentication is used instead of cookies.

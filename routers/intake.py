@@ -39,24 +39,80 @@ class VoiceIntakeResponse(BaseModel):
     additional_notes: str = Field(max_length=3000)
 
 
-async def _transcribe_audio(data: bytes, filename: str, content_type: str) -> str:
-    api_key = os.getenv("OPENAI_API_KEY")
-    if not api_key:
-        raise HTTPException(
-            status.HTTP_503_SERVICE_UNAVAILABLE,
-            "Voice intake is not configured",
-        )
-
-    endpoint = os.getenv(
-        "OPENAI_AUDIO_TRANSCRIPTIONS_URL",
-        "https://api.openai.com/v1/audio/transcriptions",
+def _voice_provider() -> tuple[str, str]:
+    groq_api_key = os.getenv("GROQ_API_KEY")
+    if groq_api_key:
+        return groq_api_key, "groq"
+    openai_api_key = os.getenv("OPENAI_API_KEY")
+    if openai_api_key:
+        return openai_api_key, "openai"
+    raise HTTPException(
+        status.HTTP_503_SERVICE_UNAVAILABLE,
+        "Voice intake is not configured",
     )
+
+
+def _provider_error(
+    response: httpx.Response,
+    provider: str,
+    operation: str,
+) -> HTTPException:
+    provider_name = {"openai": "OpenAI", "groq": "Groq"}[provider]
+    try:
+        error_payload = response.json()
+        error_value = error_payload.get("error", "")
+        provider_detail = (
+            error_value.get("message", "")
+            if isinstance(error_value, dict)
+            else error_value
+        )
+    except (ValueError, TypeError, AttributeError):
+        provider_detail = response.text
+    logger.error(
+        "%s %s provider rejected the request (HTTP %s): %s",
+        provider_name,
+        operation,
+        response.status_code,
+        str(provider_detail)[:1000],
+    )
+    if response.status_code in {401, 403}:
+        return HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            f"{provider_name} {operation} is not configured correctly. Please check the server API key.",
+        )
+    if response.status_code == 429:
+        return HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            f"{provider_name} {operation} is temporarily rate-limited or out of quota. Check the provider usage limits and try again later.",
+        )
+    if response.status_code == 400 and operation == "transcription":
+        return HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            "The transcription service could not process this recording. Please record again and try.",
+        )
+    return HTTPException(
+        status.HTTP_502_BAD_GATEWAY,
+        f"{provider_name} {operation} is temporarily unavailable. Please try again.",
+    )
+
+
+async def _transcribe_audio(data: bytes, filename: str, content_type: str) -> str:
+    api_key, provider = _voice_provider()
+    if provider == "groq":
+        endpoint = "https://api.groq.com/openai/v1/audio/transcriptions"
+        model = os.getenv("GROQ_TRANSCRIPTION_MODEL", "whisper-large-v3-turbo")
+    else:
+        endpoint = os.getenv(
+            "OPENAI_AUDIO_TRANSCRIPTIONS_URL",
+            "https://api.openai.com/v1/audio/transcriptions",
+        )
+        model = os.getenv("OPENAI_TRANSCRIPTION_MODEL", "whisper-1")
     try:
         async with httpx.AsyncClient(timeout=httpx.Timeout(120, connect=10)) as client:
             response = await client.post(
                 endpoint,
                 headers={"Authorization": f"Bearer {api_key}"},
-                data={"model": os.getenv("OPENAI_TRANSCRIPTION_MODEL", "whisper-1")},
+                data={"model": model},
                 files={"file": (filename, data, content_type)},
             )
         response.raise_for_status()
@@ -68,58 +124,28 @@ async def _transcribe_audio(data: bytes, filename: str, content_type: str) -> st
             raise ValueError("Transcription provider returned no transcript")
         return transcription.strip()
     except httpx.HTTPStatusError as exc:
-        response = exc.response
-        try:
-            error_payload = response.json()
-            provider_detail = error_payload.get("error", {}).get("message", "")
-        except (ValueError, TypeError, AttributeError):
-            provider_detail = response.text
-        logger.error(
-            "Voice transcription provider rejected the request (HTTP %s): %s",
-            response.status_code,
-            str(provider_detail)[:1000],
-        )
-        if response.status_code in {401, 403}:
-            raise HTTPException(
-                status.HTTP_503_SERVICE_UNAVAILABLE,
-                "Voice transcription is not configured correctly. Please contact support.",
-            ) from None
-        if response.status_code == 429:
-            raise HTTPException(
-                status.HTTP_503_SERVICE_UNAVAILABLE,
-                "Voice transcription is temporarily unavailable due to service limits. Please try again later.",
-            ) from None
-        if response.status_code == 400:
-            raise HTTPException(
-                status.HTTP_422_UNPROCESSABLE_ENTITY,
-                "The transcription service could not process this recording. Please record again and try.",
-            ) from None
-        raise HTTPException(
-            status.HTTP_502_BAD_GATEWAY,
-            "The transcription service is temporarily unavailable. Please try again.",
-        ) from None
+        raise _provider_error(exc.response, provider, "transcription") from None
     except (httpx.HTTPError, ValueError, KeyError, TypeError):
-        logger.exception("Voice transcription provider request failed")
+        logger.exception("%s transcription provider request failed", provider)
         raise HTTPException(
             status.HTTP_502_BAD_GATEWAY,
-            "The transcription service is temporarily unavailable. Please try again.",
+            f"{'OpenAI' if provider == 'openai' else 'Groq'} transcription is temporarily unavailable. Please try again.",
         ) from None
 
 
 async def _extract_report_details(transcription: str) -> VoiceIntakeResponse:
-    api_key = os.getenv("OPENAI_API_KEY")
-    if not api_key:
-        raise HTTPException(
-            status.HTTP_503_SERVICE_UNAVAILABLE,
-            "Voice intake is not configured",
+    api_key, provider = _voice_provider()
+    if provider == "groq":
+        endpoint = "https://api.groq.com/openai/v1/chat/completions"
+        model = os.getenv("GROQ_VOICE_INTAKE_MODEL", "llama-3.3-70b-versatile")
+    else:
+        endpoint = os.getenv(
+            "OPENAI_CHAT_COMPLETIONS_URL",
+            "https://api.openai.com/v1/chat/completions",
         )
-
-    endpoint = os.getenv(
-        "OPENAI_CHAT_COMPLETIONS_URL",
-        "https://api.openai.com/v1/chat/completions",
-    )
+        model = os.getenv("OPENAI_VOICE_INTAKE_MODEL", "gpt-4o-mini")
     payload = {
-        "model": os.getenv("OPENAI_VOICE_INTAKE_MODEL", "gpt-4o-mini"),
+        "model": model,
         "temperature": 0,
         "response_format": {"type": "json_object"},
         "messages": [
@@ -145,6 +171,8 @@ async def _extract_report_details(transcription: str) -> VoiceIntakeResponse:
             **extracted,
             "transcription": transcription,
         })
+    except httpx.HTTPStatusError as exc:
+        raise _provider_error(exc.response, provider, "report extraction") from None
     except (
         httpx.HTTPError,
         ValueError,
@@ -154,10 +182,10 @@ async def _extract_report_details(transcription: str) -> VoiceIntakeResponse:
         AttributeError,
         ValidationError,
     ):
-        logger.exception("Voice report extraction provider request failed")
+        logger.exception("%s report extraction provider request failed", provider)
         raise HTTPException(
             status.HTTP_502_BAD_GATEWAY,
-            "Could not extract report details from the audio. Please try again.",
+            f"{'OpenAI' if provider == 'openai' else 'Groq'} report extraction is temporarily unavailable. Please try again.",
         ) from None
 
 
