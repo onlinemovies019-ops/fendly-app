@@ -37,7 +37,7 @@ Required environment variables:
   temporary-service error; there is no keyword-only fallback.
 - `GROQ_API_KEY`: Preferred provider key for authenticated `/api/intake/voice`
   speech transcription and structured report extraction. Uses Groq's
-  `whisper-large-v3-turbo` and `llama-3.3-70b-versatile` by default; configure
+  `whisper-large-v3-turbo` and `openai/gpt-oss-120b` by default; configure
   `GROQ_TRANSCRIPTION_MODEL` or `GROQ_VOICE_INTAKE_MODEL` to override. If no
   Groq key is present, voice intake uses `OPENAI_API_KEY` instead. The OpenAI
   key remains required for production report moderation. Provider usage is

@@ -137,7 +137,7 @@ async def _extract_report_details(transcription: str) -> VoiceIntakeResponse:
     api_key, provider = _voice_provider()
     if provider == "groq":
         endpoint = "https://api.groq.com/openai/v1/chat/completions"
-        model = os.getenv("GROQ_VOICE_INTAKE_MODEL", "llama-3.3-70b-versatile")
+        model = os.getenv("GROQ_VOICE_INTAKE_MODEL", "openai/gpt-oss-120b")
     else:
         endpoint = os.getenv(
             "OPENAI_CHAT_COMPLETIONS_URL",

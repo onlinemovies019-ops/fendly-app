@@ -187,6 +187,7 @@ def test_voice_intake_uses_groq_when_groq_api_key_is_configured(
     monkeypatch,
 ):
     monkeypatch.setenv("GROQ_API_KEY", "test-groq-key")
+    monkeypatch.delenv("GROQ_VOICE_INTAKE_MODEL", raising=False)
 
     response = voice_client.post(
         "/api/intake/voice",
@@ -204,4 +205,4 @@ def test_voice_intake_uses_groq_when_groq_api_key_is_configured(
         "https://api.groq.com/openai/v1/chat/completions"
     )
     assert extraction_call[1]["headers"]["Authorization"] == "Bearer test-groq-key"
-    assert extraction_call[1]["json"]["model"] == "llama-3.3-70b-versatile"
+    assert extraction_call[1]["json"]["model"] == "openai/gpt-oss-120b"
