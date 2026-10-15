@@ -64,6 +64,8 @@ def voice_client(monkeypatch):
                         "category": "item",
                         "color": "blue",
                         "location_hint": "Central Park",
+                        "report_date": "14/10/2026",
+                        "identifier_details": "Northstar X7",
                         "additional_notes": "",
                     })
                 }
@@ -96,6 +98,7 @@ def test_voice_intake_transcribes_and_extracts_report_details(
     response = voice_client.post(
         "/api/intake/voice",
         files={"audio": (filename, b"audio bytes", content_type)},
+        data={"language": "en", "current_date": "2026-10-15"},
     )
 
     assert response.status_code == 200
@@ -105,14 +108,22 @@ def test_voice_intake_transcribes_and_extracts_report_details(
         "category": "item",
         "color": "blue",
         "location_hint": "Central Park",
+        "report_date": "14/10/2026",
+        "identifier_details": "Northstar X7",
         "additional_notes": "",
     }
     assert FakeAsyncClient.calls[0][0].endswith("/audio/transcriptions")
     assert FakeAsyncClient.calls[0][1]["data"]["model"] == "whisper-1"
     assert FakeAsyncClient.calls[0][1]["files"]["file"][2] == content_type
     assert FakeAsyncClient.calls[1][1]["json"]["messages"][1]["content"] == json.dumps(
-        {"transcript": "I lost a blue backpack near Central Park."}
+        {
+            "transcript": "I lost a blue backpack near Central Park.",
+            "target_language": "English",
+            "current_date": "2026-10-15",
+        },
+        ensure_ascii=False,
     )
+    assert "Target output language: English." in FakeAsyncClient.calls[1][1]["json"]["messages"][0]["content"]
 
 
 @pytest.mark.parametrize("filename", ["report.aac", "report.wav.exe", "report"])
@@ -120,6 +131,7 @@ def test_voice_intake_rejects_unsupported_file_types(voice_client, filename):
     response = voice_client.post(
         "/api/intake/voice",
         files={"audio": (filename, b"audio bytes", "audio/wav")},
+        data={"language": "en", "current_date": "2026-10-15"},
     )
 
     assert response.status_code == 415
@@ -131,9 +143,32 @@ def test_voice_intake_requires_authentication(monkeypatch):
         response = client.post(
             "/api/intake/voice",
             files={"audio": ("report.mp3", b"audio bytes", "audio/mpeg")},
+            data={"language": "en", "current_date": "2026-10-15"},
         )
 
     assert response.status_code == 401
+
+
+@pytest.mark.parametrize(
+    "language,current_date",
+    [
+        ("fr", "2026-10-15"),
+        ("en", "2026-02-30"),
+    ],
+)
+def test_voice_intake_rejects_unsupported_language_or_invalid_current_date(
+    voice_client,
+    language,
+    current_date,
+):
+    response = voice_client.post(
+        "/api/intake/voice",
+        files={"audio": ("report.m4a", b"audio bytes", "audio/mp4")},
+        data={"language": language, "current_date": current_date},
+    )
+
+    assert response.status_code == 422
+    assert FakeAsyncClient.calls == []
 
 
 @pytest.mark.parametrize(
@@ -176,6 +211,7 @@ def test_voice_intake_reports_actionable_transcription_provider_errors(
     response = voice_client.post(
         "/api/intake/voice",
         files={"audio": ("report.m4a", b"audio bytes", "audio/mp4")},
+        data={"language": "en", "current_date": "2026-10-15"},
     )
 
     assert response.status_code == expected_status
@@ -192,6 +228,7 @@ def test_voice_intake_uses_groq_when_groq_api_key_is_configured(
     response = voice_client.post(
         "/api/intake/voice",
         files={"audio": ("report.m4a", b"audio bytes", "audio/mp4")},
+        data={"language": "en", "current_date": "2026-10-15"},
     )
 
     assert response.status_code == 200
@@ -206,3 +243,51 @@ def test_voice_intake_uses_groq_when_groq_api_key_is_configured(
     )
     assert extraction_call[1]["headers"]["Authorization"] == "Bearer test-groq-key"
     assert extraction_call[1]["json"]["model"] == "openai/gpt-oss-120b"
+
+
+@pytest.mark.parametrize(
+    "selected_language,expected_language,spoken_transcript,localized_title",
+    [
+        ("en", "English", "माझी निळी बॅग काल हरवली.", "Blue bag"),
+        ("mr", "Marathi", "I lost my blue bag yesterday.", "निळी पिशवी"),
+    ],
+)
+def test_voice_intake_uses_selected_app_language_and_extracts_date_and_brand(
+    voice_client,
+    selected_language,
+    expected_language,
+    spoken_transcript,
+    localized_title,
+):
+    FakeAsyncClient.responses = [
+        FakeResponse({"text": spoken_transcript}),
+        FakeResponse({
+            "choices": [{
+                "message": {
+                    "content": json.dumps({
+                        "title": localized_title,
+                        "category": "item",
+                        "color": "blue" if selected_language == "en" else "नीला",
+                        "location_hint": "",
+                        "report_date": "14/10/2026",
+                        "identifier_details": "Northstar X7",
+                        "additional_notes": "",
+                    }, ensure_ascii=False)
+                }
+            }]
+        }),
+    ]
+
+    response = voice_client.post(
+        "/api/intake/voice",
+        files={"audio": ("report.m4a", b"audio bytes", "audio/mp4")},
+        data={"language": selected_language, "current_date": "2026-10-15"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["title"] == localized_title
+    assert response.json()["report_date"] == "14/10/2026"
+    assert response.json()["identifier_details"] == "Northstar X7"
+    extraction_payload = FakeAsyncClient.calls[1][1]["json"]
+    assert f"Target output language: {expected_language}." in extraction_payload["messages"][0]["content"]
+    assert json.loads(extraction_payload["messages"][1]["content"])["target_language"] == expected_language

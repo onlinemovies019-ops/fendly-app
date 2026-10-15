@@ -4269,7 +4269,10 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             button.setEnabled(false);
             button.setText(localizeReportWizardText("Preparing report details…"));
         }
-        voiceIntakeViewModel.submitRecording(audioFile, new VoiceIntakeCallback() {
+        voiceIntakeViewModel.submitRecording(
+                audioFile,
+                languageCodeForIndex(selectedLanguage),
+                new VoiceIntakeCallback() {
             @Override
             public void onSuccess(VoiceIntakeResult result) {
                 voiceIntakeInProgress = false;
@@ -4319,9 +4322,16 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             }
         }
 
+        if (!result.getReportDate().trim().isEmpty()) {
+            draftDate = result.getReportDate().trim();
+        }
+        if (!result.getIdentifierDetails().trim().isEmpty()) {
+            draftIdentifier = result.getIdentifierDetails().trim();
+        }
+
         List<String> identifyingDetails = new ArrayList<>();
         if (!result.getColor().trim().isEmpty()) {
-            identifyingDetails.add("Color: " + result.getColor().trim());
+            identifyingDetails.add(result.getColor().trim());
         }
         if (!result.getAdditionalNotes().trim().isEmpty()) {
             identifyingDetails.add(result.getAdditionalNotes().trim());

@@ -128,6 +128,10 @@ before searching.
 
 - `GET /health`
 - `POST /api/upload`
+- `POST /api/intake/voice` (authenticated WAV, M4A, or MP3 upload with the
+  selected app `language` and local `current_date`; returns report fields in
+  that language, with stated dates formatted `DD/MM/YYYY` and brand/model/
+  serial details separated into `identifier_details`)
 - `POST /api/items/lost`
 - `POST /api/items/found`
 - Device IMEI collection and SafeTrade verification are disabled. The retired

@@ -11,6 +11,9 @@ import java.io.File
 import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URL
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import java.util.UUID
 
 data class VoiceIntakeResult(
@@ -19,6 +22,8 @@ data class VoiceIntakeResult(
     val category: String,
     val color: String,
     val locationHint: String,
+    val reportDate: String,
+    val identifierDetails: String,
     val additionalNotes: String,
 )
 
@@ -28,7 +33,11 @@ interface VoiceIntakeCallback {
 }
 
 class VoiceIntakeViewModel : ViewModel() {
-    fun submitRecording(file: File, callback: VoiceIntakeCallback) {
+    fun submitRecording(
+        file: File,
+        languageCode: String,
+        callback: VoiceIntakeCallback,
+    ) {
         if (!file.isFile || file.length() == 0L) {
             callback.onError("The audio recording is empty. Please record again.")
             return
@@ -52,7 +61,7 @@ class VoiceIntakeViewModel : ViewModel() {
                 viewModelScope.launch {
                     try {
                         val result = withContext(Dispatchers.IO) {
-                            uploadRecording(file, token)
+                            uploadRecording(file, token, languageCode)
                         }
                         callback.onSuccess(result)
                     } catch (error: Exception) {
@@ -65,8 +74,9 @@ class VoiceIntakeViewModel : ViewModel() {
             }
     }
 
-    private fun uploadRecording(file: File, token: String): VoiceIntakeResult {
+    private fun uploadRecording(file: File, token: String, languageCode: String): VoiceIntakeResult {
         val boundary = "FendlyVoice${UUID.randomUUID()}"
+        val currentDate = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date())
         val connection = URL("${BuildConfig.API_BASE_URL}/api/intake/voice")
             .openConnection() as HttpURLConnection
         connection.requestMethod = "POST"
@@ -79,6 +89,16 @@ class VoiceIntakeViewModel : ViewModel() {
 
         try {
             connection.outputStream.use { output ->
+                output.write(
+                    ("--$boundary\r\n" +
+                        "Content-Disposition: form-data; name=\"language\"\r\n\r\n" +
+                        "$languageCode\r\n").toByteArray(Charsets.UTF_8)
+                )
+                output.write(
+                    ("--$boundary\r\n" +
+                        "Content-Disposition: form-data; name=\"current_date\"\r\n\r\n" +
+                        "$currentDate\r\n").toByteArray(Charsets.UTF_8)
+                )
                 output.write(
                     ("--$boundary\r\n" +
                         "Content-Disposition: form-data; name=\"audio\"; filename=\"report.m4a\"\r\n" +
@@ -111,6 +131,8 @@ class VoiceIntakeViewModel : ViewModel() {
                 category = json.optString("category"),
                 color = json.optString("color"),
                 locationHint = json.optString("location_hint"),
+                reportDate = json.optString("report_date"),
+                identifierDetails = json.optString("identifier_details"),
                 additionalNotes = json.optString("additional_notes"),
             )
         } finally {
