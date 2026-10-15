@@ -62,8 +62,10 @@ def voice_client(monkeypatch):
                     "content": json.dumps({
                         "title": "Backpack",
                         "category": "item",
+                        "report_type": "lost",
                         "color": "blue",
                         "location_hint": "Central Park",
+                        "city_tag": "",
                         "report_date": "14/10/2026",
                         "identifier_details": "Northstar X7",
                         "additional_notes": "",
@@ -106,8 +108,10 @@ def test_voice_intake_transcribes_and_extracts_report_details(
         "transcription": "I lost a blue backpack near Central Park.",
         "title": "Backpack",
         "category": "item",
+        "report_type": "lost",
         "color": "blue",
         "location_hint": "Central Park",
+        "city_tag": "",
         "report_date": "14/10/2026",
         "identifier_details": "Northstar X7",
         "additional_notes": "",
@@ -120,6 +124,7 @@ def test_voice_intake_transcribes_and_extracts_report_details(
             "transcript": "I lost a blue backpack near Central Park.",
             "target_language": "English",
             "current_date": "2026-10-15",
+            "current_report_type": "lost",
         },
         ensure_ascii=False,
     )
@@ -267,8 +272,10 @@ def test_voice_intake_uses_selected_app_language_and_extracts_date_and_brand(
                     "content": json.dumps({
                         "title": localized_title,
                         "category": "item",
+                        "report_type": "lost",
                         "color": "blue" if selected_language == "en" else "नीला",
                         "location_hint": "",
+                        "city_tag": "",
                         "report_date": "14/10/2026",
                         "identifier_details": "Northstar X7",
                         "additional_notes": "",
@@ -286,8 +293,119 @@ def test_voice_intake_uses_selected_app_language_and_extracts_date_and_brand(
 
     assert response.status_code == 200
     assert response.json()["title"] == localized_title
+    assert response.json()["report_type"] == "lost"
     assert response.json()["report_date"] == "14/10/2026"
     assert response.json()["identifier_details"] == "Northstar X7"
     extraction_payload = FakeAsyncClient.calls[1][1]["json"]
     assert f"Target output language: {expected_language}." in extraction_payload["messages"][0]["content"]
     assert json.loads(extraction_payload["messages"][1]["content"])["target_language"] == expected_language
+
+
+@pytest.mark.parametrize(
+    "transcript,current_type,extracted_type,title,category,area,city",
+    [
+        ("My wallet was lost near Mahal, Burdi in Nagpur.", "lost", "lost", "Wallet", "item", "Mahal, Burdi", "Nagpur"),
+        ("I found a dog in Wardha.", "lost", "found", "Dog", "pet", "", "Wardha"),
+        ("A missing person was found in Amravati.", "lost", "found", "Missing person", "person", "", "Amravati"),
+    ],
+)
+def test_voice_intake_separates_area_city_and_classifies_report(
+    voice_client,
+    transcript,
+    current_type,
+    extracted_type,
+    title,
+    category,
+    area,
+    city,
+):
+    FakeAsyncClient.responses = [
+        FakeResponse({"text": transcript}),
+        FakeResponse({
+            "choices": [{
+                "message": {
+                    "content": json.dumps({
+                        "title": title,
+                        "category": category,
+                        "report_type": extracted_type,
+                        "color": "",
+                        "location_hint": area,
+                        "city_tag": city,
+                        "report_date": "",
+                        "identifier_details": "",
+                        "additional_notes": "",
+                    })
+                }
+            }]
+        }),
+    ]
+
+    response = voice_client.post(
+        "/api/intake/voice",
+        files={"audio": ("report.m4a", b"audio bytes", "audio/mp4")},
+        data={
+            "language": "en",
+            "current_date": "2026-10-15",
+            "current_report_type": current_type,
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["report_type"] == extracted_type
+    assert response.json()["category"] == category
+    assert response.json()["location_hint"] == area
+    assert response.json()["city_tag"] == city
+    extraction_request = FakeAsyncClient.calls[1][1]["json"]
+    assert "Put neighborhoods, local areas, streets, landmarks, and buildings only in location_hint." in (
+        extraction_request["messages"][0]["content"]
+    )
+    assert json.loads(extraction_request["messages"][1]["content"])["current_report_type"] == current_type
+
+
+def test_voice_intake_rejects_invalid_current_report_type(voice_client):
+    response = voice_client.post(
+        "/api/intake/voice",
+        files={"audio": ("report.m4a", b"audio bytes", "audio/mp4")},
+        data={
+            "language": "en",
+            "current_date": "2026-10-15",
+            "current_report_type": "adopt",
+        },
+    )
+
+    assert response.status_code == 422
+    assert FakeAsyncClient.calls == []
+
+
+def test_voice_intake_preserves_selected_type_when_transcript_does_not_classify_it(
+    voice_client,
+):
+    FakeAsyncClient.responses[1] = FakeResponse({
+        "choices": [{
+            "message": {
+                "content": json.dumps({
+                    "title": "Wallet",
+                    "category": "item",
+                    "color": "",
+                    "location_hint": "",
+                    "city_tag": "",
+                    "report_date": "",
+                    "identifier_details": "",
+                    "additional_notes": "",
+                })
+            }
+        }]
+    })
+
+    response = voice_client.post(
+        "/api/intake/voice",
+        files={"audio": ("report.m4a", b"audio bytes", "audio/mp4")},
+        data={
+            "language": "en",
+            "current_date": "2026-10-15",
+            "current_report_type": "found",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["report_type"] == "found"

@@ -4272,6 +4272,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         voiceIntakeViewModel.submitRecording(
                 audioFile,
                 languageCodeForIndex(selectedLanguage),
+                currentReportType == null ? "lost" : currentReportType,
                 new VoiceIntakeCallback() {
             @Override
             public void onSuccess(VoiceIntakeResult result) {
@@ -4310,17 +4311,15 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             draftReportCategory = category;
         }
 
-        String locationHint = result.getLocationHint().trim();
-        if (!locationHint.isEmpty()) {
-            int lastComma = locationHint.lastIndexOf(',');
-            if (lastComma > 0 && lastComma < locationHint.length() - 1) {
-                draftLocation = locationHint.substring(0, lastComma).trim();
-                draftCityTag = locationHint.substring(lastComma + 1).trim();
-            } else {
-                draftLocation = locationHint;
-                draftCityTag = locationHint;
-            }
+        String reportType = result.getReportType().trim().toLowerCase(Locale.US);
+        if ("lost".equals(reportType) || "found".equals(reportType)) {
+            currentReportType = reportType.toUpperCase(Locale.US);
         }
+
+        String locationHint = result.getLocationHint().trim();
+        if (!locationHint.isEmpty()) draftLocation = locationHint;
+        String cityTag = result.getCityTag().trim();
+        if (!cityTag.isEmpty()) draftCityTag = cityTag;
 
         if (!result.getReportDate().trim().isEmpty()) {
             draftDate = result.getReportDate().trim();

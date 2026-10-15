@@ -20,8 +20,10 @@ data class VoiceIntakeResult(
     val transcription: String,
     val title: String,
     val category: String,
+    val reportType: String,
     val color: String,
     val locationHint: String,
+    val cityTag: String,
     val reportDate: String,
     val identifierDetails: String,
     val additionalNotes: String,
@@ -36,6 +38,7 @@ class VoiceIntakeViewModel : ViewModel() {
     fun submitRecording(
         file: File,
         languageCode: String,
+        currentReportType: String,
         callback: VoiceIntakeCallback,
     ) {
         if (!file.isFile || file.length() == 0L) {
@@ -61,7 +64,7 @@ class VoiceIntakeViewModel : ViewModel() {
                 viewModelScope.launch {
                     try {
                         val result = withContext(Dispatchers.IO) {
-                            uploadRecording(file, token, languageCode)
+                            uploadRecording(file, token, languageCode, currentReportType)
                         }
                         callback.onSuccess(result)
                     } catch (error: Exception) {
@@ -74,7 +77,12 @@ class VoiceIntakeViewModel : ViewModel() {
             }
     }
 
-    private fun uploadRecording(file: File, token: String, languageCode: String): VoiceIntakeResult {
+    private fun uploadRecording(
+        file: File,
+        token: String,
+        languageCode: String,
+        currentReportType: String,
+    ): VoiceIntakeResult {
         val boundary = "FendlyVoice${UUID.randomUUID()}"
         val currentDate = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date())
         val connection = URL("${BuildConfig.API_BASE_URL}/api/intake/voice")
@@ -98,6 +106,11 @@ class VoiceIntakeViewModel : ViewModel() {
                     ("--$boundary\r\n" +
                         "Content-Disposition: form-data; name=\"current_date\"\r\n\r\n" +
                         "$currentDate\r\n").toByteArray(Charsets.UTF_8)
+                )
+                output.write(
+                    ("--$boundary\r\n" +
+                        "Content-Disposition: form-data; name=\"current_report_type\"\r\n\r\n" +
+                        "${currentReportType.lowercase(Locale.US)}\r\n").toByteArray(Charsets.UTF_8)
                 )
                 output.write(
                     ("--$boundary\r\n" +
@@ -129,8 +142,10 @@ class VoiceIntakeViewModel : ViewModel() {
                 transcription = json.optString("transcription"),
                 title = json.optString("title"),
                 category = json.optString("category"),
+                reportType = json.optString("report_type", currentReportType.lowercase(Locale.US)),
                 color = json.optString("color"),
                 locationHint = json.optString("location_hint"),
+                cityTag = json.optString("city_tag"),
                 reportDate = json.optString("report_date"),
                 identifierDetails = json.optString("identifier_details"),
                 additionalNotes = json.optString("additional_notes"),

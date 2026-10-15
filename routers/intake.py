@@ -27,14 +27,22 @@ VOICE_INTAKE_INSTRUCTIONS = (
     "even when the transcript is spoken in a different language. Preserve names, "
     "brand names, model numbers, serial numbers, and other identifiers exactly as spoken. "
     "Set category to exactly one of: item, pet, person. "
-    "Use item for objects and belongings, pet for animals, and person for a missing person. "
+    "Classify objects and belongings as item, animals such as cats or dogs as pet, "
+    "and missing people as person, regardless of the language used. "
+    "Set report_type to lost when the speaker says an item/person/pet is lost or missing; "
+    "set it to found when the speaker says they found it. If the transcript does not "
+    "clearly state either intent, keep the supplied current report type. "
+    "Put neighborhoods, local areas, streets, landmarks, and buildings only in "
+    "location_hint. Put a city name only in city_tag. Never copy a city into "
+    "location_hint or an area/locality into city_tag. If only one location level is "
+    "stated, fill only its matching field. "
     "Extract a stated report date, including relative dates resolved against the supplied "
     "current date, and format it as ASCII DD/MM/YYYY. Use an empty string if no date is "
     "stated. Put brand, model, serial number, and other identifying codes in "
     "identifier_details, not additional_notes. "
-    "Return JSON with exactly these string fields: title, category, color, "
-    "location_hint, report_date, identifier_details, additional_notes. Keep title concise, "
-    "and do not repeat the title in additional_notes."
+    "Return JSON with exactly these string fields: title, category, report_type, color, "
+    "location_hint, city_tag, report_date, identifier_details, additional_notes. "
+    "Keep title concise, and do not repeat the title in additional_notes."
 )
 SUPPORTED_LANGUAGES = {
     "en": "English",
@@ -53,8 +61,10 @@ class VoiceIntakeResponse(BaseModel):
     transcription: str
     title: str = Field(max_length=160)
     category: Literal["item", "pet", "person"]
+    report_type: Literal["lost", "found"] = "lost"
     color: str = Field(max_length=160)
     location_hint: str = Field(max_length=500)
+    city_tag: str = Field(default="", max_length=160)
     report_date: str = Field(default="", max_length=10)
     identifier_details: str = Field(default="", max_length=500)
     additional_notes: str = Field(max_length=3000)
@@ -165,6 +175,7 @@ async def _extract_report_details(
     transcription: str,
     language: str,
     current_date: str,
+    current_report_type: str,
 ) -> VoiceIntakeResponse:
     api_key, provider = _voice_provider()
     if provider == "groq":
@@ -186,7 +197,8 @@ async def _extract_report_details(
                 "content": (
                     f"{VOICE_INTAKE_INSTRUCTIONS} "
                     f"Target output language: {SUPPORTED_LANGUAGES[language]}. "
-                    f"Current local date: {current_date}."
+                    f"Current local date: {current_date}. "
+                    f"Current report type: {current_report_type}."
                 ),
             },
             {
@@ -195,6 +207,7 @@ async def _extract_report_details(
                     "transcript": transcription,
                     "target_language": SUPPORTED_LANGUAGES[language],
                     "current_date": current_date,
+                    "current_report_type": current_report_type,
                 }, ensure_ascii=False),
             },
         ],
@@ -213,6 +226,7 @@ async def _extract_report_details(
         extracted = json.loads(content)
         if not isinstance(extracted, dict):
             raise ValueError("Extraction provider response was not a JSON object")
+        extracted.setdefault("report_type", current_report_type)
         return VoiceIntakeResponse.model_validate({
             **extracted,
             "transcription": transcription,
@@ -240,6 +254,7 @@ async def create_voice_intake(
     audio: UploadFile = File(...),
     language: str = Form(default="en"),
     current_date: str = Form(..., pattern=r"^\d{4}-\d{2}-\d{2}$"),
+    current_report_type: str = Form(default="lost"),
     _uid: str = Depends(get_current_user),
 ) -> VoiceIntakeResponse:
     if language not in SUPPORTED_LANGUAGES:
@@ -254,6 +269,11 @@ async def create_voice_intake(
             status.HTTP_422_UNPROCESSABLE_ENTITY,
             "Current date must use YYYY-MM-DD format",
         ) from exc
+    if current_report_type not in {"lost", "found"}:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            "Current report type must be lost or found",
+        )
 
     filename = (audio.filename or "").strip()
     extension = os.path.splitext(filename)[1].lower()
@@ -274,4 +294,9 @@ async def create_voice_intake(
         )
 
     transcription = await _transcribe_audio(data, filename, content_type)
-    return await _extract_report_details(transcription, language, current_date)
+    return await _extract_report_details(
+        transcription,
+        language,
+        current_date,
+        current_report_type,
+    )
