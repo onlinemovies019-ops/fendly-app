@@ -1,0 +1,121 @@
+import json
+from unittest.mock import Mock
+
+import pytest
+from fastapi.testclient import TestClient
+
+import main
+from routers import intake as intake_module
+
+
+class FakeResponse:
+    def __init__(self, payload):
+        self.payload = payload
+
+    def raise_for_status(self):
+        return None
+
+    def json(self):
+        return self.payload
+
+
+class FakeAsyncClient:
+    responses = []
+    calls = []
+
+    def __init__(self, **_kwargs):
+        pass
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *_args):
+        return False
+
+    async def post(self, url, **kwargs):
+        self.calls.append((url, kwargs))
+        return self.responses.pop(0)
+
+
+@pytest.fixture
+def voice_client(monkeypatch):
+    FakeAsyncClient.responses = [
+        FakeResponse({"text": "I lost a blue backpack near Central Park."}),
+        FakeResponse({
+            "choices": [{
+                "message": {
+                    "content": json.dumps({
+                        "title": "Backpack",
+                        "category": "item",
+                        "color": "blue",
+                        "location_hint": "Central Park",
+                        "additional_notes": "",
+                    })
+                }
+            }]
+        }),
+    ]
+    FakeAsyncClient.calls = []
+    monkeypatch.setenv("OPENAI_API_KEY", "test-openai-key")
+    monkeypatch.setattr(intake_module.httpx, "AsyncClient", FakeAsyncClient)
+    main.app.dependency_overrides[intake_module.get_current_user] = lambda: "regular-user"
+    client = TestClient(main.app)
+    yield client
+    client.close()
+    main.app.dependency_overrides.pop(intake_module.get_current_user, None)
+
+
+@pytest.mark.parametrize(
+    "filename,content_type",
+    [
+        ("report.wav", "audio/wav"),
+        ("report.m4a", "audio/mp4"),
+        ("report.mp3", "audio/mpeg"),
+    ],
+)
+def test_voice_intake_transcribes_and_extracts_report_details(
+    voice_client,
+    filename,
+    content_type,
+):
+    response = voice_client.post(
+        "/api/intake/voice",
+        files={"audio": (filename, b"audio bytes", content_type)},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "transcription": "I lost a blue backpack near Central Park.",
+        "title": "Backpack",
+        "category": "item",
+        "color": "blue",
+        "location_hint": "Central Park",
+        "additional_notes": "",
+    }
+    assert FakeAsyncClient.calls[0][0].endswith("/audio/transcriptions")
+    assert FakeAsyncClient.calls[0][1]["data"]["model"] == "whisper-1"
+    assert FakeAsyncClient.calls[0][1]["files"]["file"][2] == content_type
+    assert FakeAsyncClient.calls[1][1]["json"]["messages"][1]["content"] == json.dumps(
+        {"transcript": "I lost a blue backpack near Central Park."}
+    )
+
+
+@pytest.mark.parametrize("filename", ["report.aac", "report.wav.exe", "report"])
+def test_voice_intake_rejects_unsupported_file_types(voice_client, filename):
+    response = voice_client.post(
+        "/api/intake/voice",
+        files={"audio": (filename, b"audio bytes", "audio/wav")},
+    )
+
+    assert response.status_code == 415
+
+
+def test_voice_intake_requires_authentication(monkeypatch):
+    monkeypatch.setattr(intake_module, "_transcribe_audio", Mock())
+    with TestClient(main.app) as client:
+        response = client.post(
+            "/api/intake/voice",
+            files={"audio": ("report.mp3", b"audio bytes", "audio/mpeg")},
+        )
+
+    assert response.status_code == 401

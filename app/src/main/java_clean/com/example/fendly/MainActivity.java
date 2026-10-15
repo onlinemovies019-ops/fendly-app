@@ -149,6 +149,7 @@ import com.google.android.gms.tasks.OnSuccessListener;
 import androidx.biometric.BiometricManager;
 import androidx.biometric.BiometricPrompt;
 import androidx.fragment.app.FragmentActivity;
+import androidx.lifecycle.ViewModelProvider;
 import com.razorpay.PaymentData;
 import com.razorpay.PaymentResultWithDataListener;
 import com.razorpay.Checkout;
@@ -206,6 +207,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
     private final Uri[] pendingReportCameraUris = new Uri[3];
     private int pendingImageSlot = -1;
     private static final int REQUEST_CAMERA_PERMISSION = 705;
+    private static final int REQUEST_AUDIO_PERMISSION = 708;
     private double currentLat;
     private double currentLng;
     private boolean hasLocation;
@@ -284,6 +286,9 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
     private String draftReportCategory = "item";
     private int reportWizardStep = 1;
     private boolean draftGuidelinesAccepted;
+    private VoiceAudioRecorder voiceAudioRecorder;
+    private VoiceIntakeViewModel voiceIntakeViewModel;
+    private boolean voiceIntakeInProgress;
     private String localEmailOtp = "";
     private String draftFullName = "";
     private String draftEmail = "";
@@ -409,6 +414,8 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         LanguageManager.restoreSavedLanguage(this);
         int savedLanguage = LanguageManager.getSavedLanguageIndex(this);
         super.onCreate(savedInstanceState);
+        voiceAudioRecorder = new VoiceAudioRecorder(this);
+        voiceIntakeViewModel = new ViewModelProvider(this).get(VoiceIntakeViewModel.class);
         getOnBackPressedDispatcher().addCallback(this, new OnBackPressedCallback(true) {
             @Override
             public void handleOnBackPressed() {
@@ -682,6 +689,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
 
     @Override
     protected void onDestroy() {
+        if (voiceAudioRecorder != null) voiceAudioRecorder.cancel();
         stopActiveLocationUpdates();
         stopSmsUserConsent();
         if (cloudProfileListener != null) cloudProfileListener.remove();
@@ -4155,6 +4163,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                 localizeReportWizardText("Step " + reportWizardStep + " of 4")
         );
         addReportWizardProgress(root);
+        if (editingReportId == null) addVoiceIntakeButton(root);
 
         EditText item = field("");
         EditText description = field("");
@@ -4183,6 +4192,143 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             return;
         }
         renderReportWizardReviewStep(root, type, item, description, location, city, date, identifier);
+    }
+
+    private void addVoiceIntakeButton(LinearLayout root) {
+        TextView voiceButton = actionButton(
+                localizeReportWizardText(
+                        voiceAudioRecorder.isRecording()
+                                ? "Recording — tap when finished"
+                                : "Tap to describe your report"
+                ),
+                false
+        );
+        voiceButton.setContentDescription(localizeReportWizardText("Record report details by voice"));
+        voiceButton.setOnClickListener(view -> handleVoiceIntakeTap(voiceButton));
+        addField(root, voiceButton);
+    }
+
+    private void handleVoiceIntakeTap(TextView button) {
+        if (voiceIntakeInProgress) return;
+        if (voiceAudioRecorder != null && voiceAudioRecorder.isRecording()) {
+            finishVoiceRecording(button);
+            return;
+        }
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO)
+                != PackageManager.PERMISSION_GRANTED) {
+            ActivityCompat.requestPermissions(
+                    this,
+                    new String[]{Manifest.permission.RECORD_AUDIO},
+                    REQUEST_AUDIO_PERMISSION
+            );
+            return;
+        }
+        startVoiceRecording(button);
+    }
+
+    private void startVoiceRecording(TextView button) {
+        try {
+            voiceAudioRecorder.start();
+            if (button != null) {
+                button.setText(localizeReportWizardText("Recording — tap when finished"));
+            }
+            Toast.makeText(
+                    this,
+                    localizeReportWizardText("Speak now, then tap the voice button to finish."),
+                    Toast.LENGTH_LONG
+            ).show();
+        } catch (Exception error) {
+            Log.e("VOICE_INTAKE", "Could not start the user's report recording", error);
+            Toast.makeText(
+                    this,
+                    localizeReportWizardText("Could not start recording. Please try again."),
+                    Toast.LENGTH_LONG
+            ).show();
+        }
+    }
+
+    private void finishVoiceRecording(TextView button) {
+        final java.io.File audioFile;
+        try {
+            audioFile = voiceAudioRecorder.stop();
+        } catch (Exception error) {
+            Log.e("VOICE_INTAKE", "Could not finish the user's report recording", error);
+            if (currentPage == PAGE_REPORT && currentReportType != null) {
+                showReport(currentReportType);
+            }
+            Toast.makeText(
+                    this,
+                    localizeReportWizardText("Recording was too short. Please try again."),
+                    Toast.LENGTH_LONG
+            ).show();
+            return;
+        }
+
+        voiceIntakeInProgress = true;
+        if (button != null) {
+            button.setEnabled(false);
+            button.setText(localizeReportWizardText("Preparing report details…"));
+        }
+        voiceIntakeViewModel.submitRecording(audioFile, new VoiceIntakeCallback() {
+            @Override
+            public void onSuccess(VoiceIntakeResult result) {
+                voiceIntakeInProgress = false;
+                audioFile.delete();
+                if (isFinishing() || isDestroyed()) return;
+                applyVoiceIntakeResult(result);
+                reportWizardStep = 3;
+                showReport(currentReportType == null ? "LOST" : currentReportType);
+                Toast.makeText(
+                        MainActivity.this,
+                        localizeReportWizardText("Voice details added. Review them before continuing."),
+                        Toast.LENGTH_LONG
+                ).show();
+            }
+
+            @Override
+            public void onError(String message) {
+                voiceIntakeInProgress = false;
+                audioFile.delete();
+                if (isFinishing() || isDestroyed()) return;
+                if (button != null) {
+                    button.setEnabled(true);
+                    button.setText(localizeReportWizardText("Tap to describe your report"));
+                }
+                Log.w("VOICE_INTAKE", "User report voice intake failed: " + message);
+                Toast.makeText(MainActivity.this, message, Toast.LENGTH_LONG).show();
+            }
+        });
+    }
+
+    private void applyVoiceIntakeResult(VoiceIntakeResult result) {
+        if (!result.getTitle().trim().isEmpty()) draftItem = result.getTitle().trim();
+        String category = result.getCategory().trim().toLowerCase(Locale.US);
+        if ("item".equals(category) || "pet".equals(category) || "person".equals(category)) {
+            draftReportCategory = category;
+        }
+
+        String locationHint = result.getLocationHint().trim();
+        if (!locationHint.isEmpty()) {
+            int lastComma = locationHint.lastIndexOf(',');
+            if (lastComma > 0 && lastComma < locationHint.length() - 1) {
+                draftLocation = locationHint.substring(0, lastComma).trim();
+                draftCityTag = locationHint.substring(lastComma + 1).trim();
+            } else {
+                draftLocation = locationHint;
+                draftCityTag = locationHint;
+            }
+        }
+
+        List<String> identifyingDetails = new ArrayList<>();
+        if (!result.getColor().trim().isEmpty()) {
+            identifyingDetails.add("Color: " + result.getColor().trim());
+        }
+        if (!result.getAdditionalNotes().trim().isEmpty()) {
+            identifyingDetails.add(result.getAdditionalNotes().trim());
+        }
+        if (!identifyingDetails.isEmpty()) {
+            draftDescription = TextUtils.join("\n", identifyingDetails);
+        }
     }
 
     private void addReportWizardProgress(LinearLayout root) {
@@ -10767,6 +10913,18 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         if (requestCode == REQUEST_PROFILE_CAMERA && grantResults.length > 0
                 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
             openProfilePhotoCamera();
+        }
+        if (requestCode == REQUEST_AUDIO_PERMISSION) {
+            if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+                startVoiceRecording(null);
+                if (currentReportType != null) showReport(currentReportType);
+            } else {
+                Toast.makeText(
+                        this,
+                        localizeReportWizardText("Microphone permission is required for voice intake."),
+                        Toast.LENGTH_LONG
+                ).show();
+            }
         }
     }
 
