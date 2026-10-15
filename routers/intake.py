@@ -67,11 +67,42 @@ async def _transcribe_audio(data: bytes, filename: str, content_type: str) -> st
         if not isinstance(transcription, str) or not transcription.strip():
             raise ValueError("Transcription provider returned no transcript")
         return transcription.strip()
+    except httpx.HTTPStatusError as exc:
+        response = exc.response
+        try:
+            error_payload = response.json()
+            provider_detail = error_payload.get("error", {}).get("message", "")
+        except (ValueError, TypeError, AttributeError):
+            provider_detail = response.text
+        logger.error(
+            "Voice transcription provider rejected the request (HTTP %s): %s",
+            response.status_code,
+            str(provider_detail)[:1000],
+        )
+        if response.status_code in {401, 403}:
+            raise HTTPException(
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                "Voice transcription is not configured correctly. Please contact support.",
+            ) from None
+        if response.status_code == 429:
+            raise HTTPException(
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                "Voice transcription is temporarily unavailable due to service limits. Please try again later.",
+            ) from None
+        if response.status_code == 400:
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                "The transcription service could not process this recording. Please record again and try.",
+            ) from None
+        raise HTTPException(
+            status.HTTP_502_BAD_GATEWAY,
+            "The transcription service is temporarily unavailable. Please try again.",
+        ) from None
     except (httpx.HTTPError, ValueError, KeyError, TypeError):
         logger.exception("Voice transcription provider request failed")
         raise HTTPException(
             status.HTTP_502_BAD_GATEWAY,
-            "Could not transcribe the audio. Please try again.",
+            "The transcription service is temporarily unavailable. Please try again.",
         ) from None
 
 
