@@ -1,4 +1,5 @@
 import asyncio
+import hmac
 import json
 import logging
 import math
@@ -26,6 +27,7 @@ from models import (
     AdoptionListing,
     FoundItem,
     LostItem,
+    ReportClaim,
     SocialAccount,
     User,
     UserNotification,
@@ -110,6 +112,15 @@ class AlertReviewRequest(BaseModel):
 
 class SubscriptionOverrideRequest(BaseModel):
     action: str = Field(pattern="^(add|cancel)$")
+
+
+class VerificationDetailUpdate(BaseModel):
+    detail: str = Field(max_length=2000)
+
+
+class ReportClaimReviewRequest(BaseModel):
+    decision: str = Field(pattern="^(confirmed|rejected)$")
+    review_notes: str | None = Field(default=None, max_length=1000)
 
 
 def _parse_admin_uids(raw_value: str | None) -> set[str]:
@@ -494,6 +505,126 @@ async def browse_admin_items(
 def list_opted_in_success_stories(
     session: Session = Depends(get_db),
     _: str = Depends(require_admin),
+@router.get("/items/{report_type}/{item_id}/verification-detail")
+def get_report_verification_detail(
+    report_type: str,
+    item_id: str,
+    session: Session = Depends(get_db),
+    _: str = Depends(require_admin),
+) -> dict[str, str]:
+    model = LostItem if report_type.lower() == "lost" else FoundItem if report_type.lower() == "found" else None
+    if model is None:
+        raise HTTPException(400, "Report type must be lost or found")
+    item = session.get(model, item_id)
+    if item is None:
+        raise HTTPException(404, "Report not found")
+    return {"detail": item.hidden_verification_detail or ""}
+
+
+@router.patch("/items/{report_type}/{item_id}/verification-detail")
+def update_report_verification_detail(
+    report_type: str,
+    item_id: str,
+    payload: VerificationDetailUpdate,
+    session: Session = Depends(get_db),
+    _: str = Depends(require_admin),
+) -> dict[str, str]:
+    model = LostItem if report_type.lower() == "lost" else FoundItem if report_type.lower() == "found" else None
+    if model is None:
+        raise HTTPException(400, "Report type must be lost or found")
+    item = session.get(model, item_id)
+    if item is None:
+        raise HTTPException(404, "Report not found")
+    item.hidden_verification_detail = payload.detail.strip() or None
+    session.commit()
+    return {"status": "saved"}
+
+
+@router.get("/claims")
+def list_report_claims(
+    status_filter: str = Query(default="pending", alias="status", pattern="^(pending|confirmed|rejected|all)$"),
+    session: Session = Depends(get_db),
+    _: str = Depends(require_admin),
+) -> list[dict[str, object]]:
+    query = select(ReportClaim).order_by(desc(ReportClaim.created_at)).limit(100)
+    if status_filter != "all":
+        query = query.where(ReportClaim.status == status_filter)
+    claims = session.scalars(query).all()
+    result: list[dict[str, object]] = []
+    for claim in claims:
+        lost_item = session.get(LostItem, claim.lost_item_id)
+        found_item = session.get(FoundItem, claim.found_item_id)
+        if lost_item is None or found_item is None:
+            continue
+        submitted = " ".join(claim.verification_detail.split()).casefold()
+        expected = " ".join((found_item.hidden_verification_detail or "").split()).casefold()
+        result.append({
+            "id": claim.id,
+            "claimant_uid": claim.claimant_uid,
+            "lost_item_id": claim.lost_item_id,
+            "lost_title": lost_item.title,
+            "found_item_id": claim.found_item_id,
+            "found_title": found_item.title,
+            "verification_detail": claim.verification_detail,
+            "hidden_verification_detail": found_item.hidden_verification_detail or "",
+            "details_match": bool(expected) and hmac.compare_digest(submitted, expected),
+            "status": claim.status,
+            "review_notes": claim.review_notes,
+            "created_at": claim.created_at.isoformat() if claim.created_at else None,
+        })
+    return result
+
+
+@router.post("/claims/{claim_id}/review")
+def review_report_claim(
+    claim_id: str,
+    payload: ReportClaimReviewRequest,
+    session: Session = Depends(get_db),
+    uid: str = Depends(require_admin),
+) -> dict[str, str]:
+    claim = session.get(ReportClaim, claim_id)
+    if claim is None:
+        raise HTTPException(404, "Claim not found")
+    if claim.status != "pending":
+        raise HTTPException(409, "This claim has already been reviewed")
+    notes = (payload.review_notes or "").strip()
+    if payload.decision == "confirmed":
+        found_item = session.get(FoundItem, claim.found_item_id)
+        submitted = " ".join(claim.verification_detail.split()).casefold()
+        expected = " ".join(
+            ((found_item.hidden_verification_detail if found_item else "") or "").split()
+        ).casefold()
+        if not expected or not hmac.compare_digest(submitted, expected):
+            raise HTTPException(400, "Submitted details do not match the administrator verification detail")
+        if len(notes) < 3:
+            raise HTTPException(400, "Add review notes before confirming the claim")
+
+    claim.status = payload.decision
+    claim.reviewed_by = uid
+    claim.review_notes = notes or None
+    claim.reviewed_at = datetime.now(timezone.utc)
+    notification = UserNotification(
+        firebase_uid=claim.claimant_uid,
+        found_item_id=claim.found_item_id,
+        lost_item_id=claim.lost_item_id,
+        notification_type="claim_reviewed",
+        title="Fendly claim reviewed",
+        body=(
+            "Fendly has reviewed your claim. An administrator will coordinate next steps."
+            if payload.decision == "confirmed"
+            else "Fendly has reviewed your claim. Please contact support if you need help."
+        ),
+        score=1.0,
+    )
+    session.add(notification)
+    session.commit()
+    try:
+        send_user_notification_push(session, notification)
+    except Exception:
+        logger.exception("Could not send report claim review notification")
+    return {"status": claim.status}
+
+
 ) -> list[dict[str, object]]:
     reports: list[tuple[str, LostItem | FoundItem]] = []
     for item_type, model in (("lost", LostItem), ("found", FoundItem)):

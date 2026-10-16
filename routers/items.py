@@ -33,7 +33,7 @@ from image_matching import (
     local_image_embeddings_enabled,
 )
 from moderation import moderate_content
-from models import AdminMatchAlert, FoundItem, LostItem
+from models import AdminMatchAlert, FoundItem, LostItem, ReportClaim
 from notifications import persist_admin_match_alert, send_admin_match_email
 from report_deletion import delete_report_from_app
 from image_storage import (
@@ -49,6 +49,8 @@ from schemas import (
     ItemUpdate,
     MatchRequest,
     MatchResponse,
+    ReportClaimCreate,
+    ReportClaimResponse,
     ReportResolutionUpdate,
     VisualSearchResponse,
     VisualSearchUploadResponse,
@@ -201,6 +203,7 @@ class ItemSubmission(BaseModel):
     report_location: str | None = Field(default=None, max_length=500)
     category: str = Field(default="other", min_length=1, max_length=80)
     community_guidelines_accepted: bool = False
+    client_draft_id: UUID | None = None
     payment_id: str | None = Field(default=None, max_length=128)
 
     @model_validator(mode="before")
@@ -328,7 +331,18 @@ async def _save_item(
     uid: str,
     model: type[LostItem] | type[FoundItem],
     background_tasks: BackgroundTasks | None = None,
-):
+    client_draft_id: str | None = None,
+) -> tuple[LostItem | FoundItem, bool]:
+    if client_draft_id:
+        existing = session.scalar(
+            select(model).where(
+                model.created_by == uid,
+                model.client_draft_id == client_draft_id,
+            )
+        )
+        if existing is not None:
+            return existing, False
+
     if not payload.community_guidelines_accepted:
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST,
@@ -372,6 +386,7 @@ async def _save_item(
     # 4. Create and persist record
     item_values = payload.model_dump(
         exclude={"payment_id", "community_guidelines_accepted"}
+    item_values["client_draft_id"] = client_draft_id
     )
     item_values["category"] = category
     item_values["image_url"] = private_image_reference(
@@ -393,10 +408,23 @@ async def _save_item(
     record = model(**item_values, created_by=uid, embedding=embedding)
 
     session.add(record)
-    session.flush()
-    session.commit()
-    session.refresh(record)
-    return record
+    try:
+        session.flush()
+        session.commit()
+        session.refresh(record)
+    except IntegrityError:
+        session.rollback()
+        if client_draft_id:
+            existing = session.scalar(
+                select(model).where(
+                    model.created_by == uid,
+                    model.client_draft_id == client_draft_id,
+                )
+            )
+            if existing is not None:
+                return existing, False
+        raise
+    return record, True
 
 
 async def _process_created_report(record: LostItem | FoundItem, session: Session) -> None:
@@ -593,11 +621,13 @@ async def create_item_compat(
             payment_id=request.payment_id,
         )
         model = LostItem if request.type == "lost" else FoundItem
-        record = await _save_item(payload, session, uid, model, background_tasks)
-        background_tasks.add_task(
-            _process_created_report_background,
-            record.id,
-            "lost" if model is LostItem else "found",
+        record, created = await _save_item(
+            payload,
+            session,
+            uid,
+            model,
+            background_tasks,
+            str(request.client_draft_id) if request.client_draft_id else None,
         )
         response = ItemResponse.model_validate(record).model_dump()
         response.update(_report_image_fields(record))
@@ -615,6 +645,77 @@ async def get_community_poster(
     language: str | None = None,
     session: Session | None = Depends(get_db),
     uid: str = Depends(get_current_user),
+@router.post(
+    "/items/lost/{lost_item_id}/claims",
+    response_model=ReportClaimResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def submit_report_claim(
+    lost_item_id: str,
+    payload: ReportClaimCreate,
+    session: Session = Depends(get_db),
+    uid: str = Depends(get_current_user),
+) -> ReportClaimResponse:
+    lost_item = session.get(LostItem, lost_item_id)
+    found_item = session.get(FoundItem, payload.found_item_id)
+    if lost_item is None or found_item is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "The matched reports are no longer available")
+    if lost_item.created_by != uid:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "You can only claim a match from your own lost report")
+    if found_item.created_by == uid:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "You cannot submit a claim against your own found report")
+    if (found_item.status or "").strip().upper() not in {"FOUND", "ACTIVE"}:
+        raise HTTPException(status.HTTP_409_CONFLICT, "This found report is no longer active")
+    if not found_item.hidden_verification_detail:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "This report is not ready for a claim. Please contact Fendly support.",
+        )
+
+    detail = payload.verification_detail.strip()
+    if not detail:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Enter identifying details for administrator review")
+
+    claim = session.scalar(
+        select(ReportClaim).where(
+            ReportClaim.claimant_uid == uid,
+            ReportClaim.lost_item_id == lost_item.id,
+            ReportClaim.found_item_id == found_item.id,
+        )
+    )
+    if claim is None:
+        claim = ReportClaim(
+            claimant_uid=uid,
+            lost_item_id=lost_item.id,
+            found_item_id=found_item.id,
+            verification_detail=detail,
+        )
+        session.add(claim)
+    else:
+        if claim.status != "pending":
+            raise HTTPException(status.HTTP_409_CONFLICT, "This claim has already been reviewed")
+        claim.verification_detail = detail
+        claim.created_at = datetime.now(timezone.utc)
+    try:
+        session.commit()
+    except IntegrityError:
+        session.rollback()
+        existing = session.scalar(
+            select(ReportClaim).where(
+                ReportClaim.claimant_uid == uid,
+                ReportClaim.lost_item_id == lost_item.id,
+                ReportClaim.found_item_id == found_item.id,
+            )
+        )
+        if existing is None:
+            raise
+        if existing.status != "pending":
+            raise HTTPException(status.HTTP_409_CONFLICT, "This claim has already been reviewed")
+        return ReportClaimResponse(id=existing.id, status=existing.status)
+    session.refresh(claim)
+    return ReportClaimResponse(id=claim.id, status=claim.status)
+
+
 ) -> Response:
     session = _require_db_session(session)
     model = (
@@ -887,6 +988,7 @@ async def search_visual_matches(
                 "report_type": (
                     "FOUND" if normalized_type == "lost" else "LOST"
                 ),
+                "report_id": candidate.id,
             },
             "score": max(0.0, min(1.0, float(score))),
             "matchType": "IMAGE",

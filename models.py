@@ -226,9 +226,14 @@ class AdminMatchAlert(Base):
 class LostItem(Base):
     __tablename__ = "lost_items"
 
+    __table_args__ = (
+        UniqueConstraint("created_by", "client_draft_id", name="uq_lost_items_client_draft"),
+    )
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
     created_by: Mapped[str] = mapped_column(String(128), index=True)
     status: Mapped[str] = mapped_column(
+    client_draft_id: Mapped[str | None] = mapped_column(String(36))
+    hidden_verification_detail: Mapped[str | None] = mapped_column(Text)
         String(16), default="LOST", server_default="LOST", index=True
     )
     title: Mapped[str] = mapped_column(String(160))
@@ -261,9 +266,14 @@ class LostItem(Base):
 class FoundItem(Base):
     __tablename__ = "found_items"
 
+    __table_args__ = (
+        UniqueConstraint("created_by", "client_draft_id", name="uq_found_items_client_draft"),
+    )
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
     created_by: Mapped[str] = mapped_column(String(128), index=True)
     status: Mapped[str] = mapped_column(
+    client_draft_id: Mapped[str | None] = mapped_column(String(36))
+    hidden_verification_detail: Mapped[str | None] = mapped_column(Text)
         String(16), default="FOUND", server_default="FOUND", index=True
     )
     title: Mapped[str] = mapped_column(String(160))
@@ -294,6 +304,31 @@ class FoundItem(Base):
 
 
 class SocialAccount(Base):
+class ReportClaim(Base):
+    __tablename__ = "report_claims"
+    __table_args__ = (
+        UniqueConstraint(
+            "claimant_uid",
+            "lost_item_id",
+            "found_item_id",
+            name="uq_report_claims_claimant_pair",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    claimant_uid: Mapped[str] = mapped_column(String(128), index=True)
+    lost_item_id: Mapped[str] = mapped_column(String(36), index=True)
+    found_item_id: Mapped[str] = mapped_column(String(36), index=True)
+    verification_detail: Mapped[str] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(String(16), default="pending", index=True)
+    reviewed_by: Mapped[str | None] = mapped_column(String(128))
+    review_notes: Mapped[str | None] = mapped_column(Text)
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+
     __tablename__ = "social_accounts"
 
     provider: Mapped[str] = mapped_column(String(16), primary_key=True)

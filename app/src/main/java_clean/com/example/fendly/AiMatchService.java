@@ -64,7 +64,8 @@ public final class AiMatchService {
             String sourceLanguage,
             String idToken,
             String reportCategory,
-            boolean communityGuidelinesAccepted
+            boolean communityGuidelinesAccepted,
+            String clientDraftId
     ) throws Exception {
         JSONArray images = new JSONArray();
         if (imageUrls != null) {
@@ -87,7 +88,8 @@ public final class AiMatchService {
                         ? inferCategory(title, description)
                         : reportCategory.trim())
                 .put("community_guidelines_accepted", communityGuidelinesAccepted)
-                .put("payment_id", paymentId == null ? JSONObject.NULL : paymentId);
+                .put("payment_id", paymentId == null ? JSONObject.NULL : paymentId)
+                .put("client_draft_id", clientDraftId == null ? JSONObject.NULL : clientDraftId);
         return post("/api/items", payload, idToken);
     }
 

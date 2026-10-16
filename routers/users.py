@@ -27,6 +27,7 @@ from models import (
     EmailOTPChallenge,
     FoundItem,
     LostItem,
+    ReportClaim,
     SocialPublication,
     User,
     UserNotification,
@@ -297,8 +298,19 @@ def delete_account(
         _delete_supabase_account_matching_data(report_ids)
         if report_ids:
             session.execute(
+                delete(ReportClaim).where(
+                    or_(
+                        ReportClaim.claimant_uid == uid,
+                        ReportClaim.lost_item_id.in_(report_ids),
+                        ReportClaim.found_item_id.in_(report_ids),
+                    )
+                )
+            )
+            session.execute(
                 delete(SocialPublication).where(SocialPublication.report_id.in_(report_ids))
             )
+        else:
+            session.execute(delete(ReportClaim).where(ReportClaim.claimant_uid == uid))
             session.execute(
                 delete(ContentReport).where(
                     ContentReport.report_type.in_(("lost", "found")),

@@ -402,6 +402,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
     }
 
     @Override
+    private volatile int lastImageUploadStatus;
     protected void attachBaseContext(Context newBase) {
         super.attachBaseContext(LanguageManager.wrapContext(newBase));
     }
@@ -1162,6 +1163,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
     }
 
     private void showLogoutConfirmationDialog() {
+            OfflineReportSyncWorker.enqueue(this);
         Dialog dialog = new Dialog(this);
         dialog.requestWindowFeature(Window.FEATURE_NO_TITLE);
         LinearLayout content = themedDialogContent(
@@ -1584,6 +1586,16 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         authCard.addView(emblemWrap, emblemWrapParams);
 
         LinearLayout.LayoutParams cardParams = new LinearLayout.LayoutParams(-1, -2);
+            boolean offlineDraftsRemoved = true;
+            if (finalResponseCode == 204) {
+                try (OfflineReportDraftStore store = new OfflineReportDraftStore(MainActivity.this)) {
+                    store.deleteDraftsForOwner(user.getUid());
+                } catch (Exception error) {
+                    offlineDraftsRemoved = false;
+                    Log.e("ACCOUNT_DELETE", "Could not remove locally queued report drafts", error);
+                }
+            }
+            final boolean finalOfflineDraftsRemoved = offlineDraftsRemoved;
         cardParams.setMargins(0, dp(10), 0, 0);
         centerArea.addView(authCard, cardParams);
 
@@ -5157,8 +5169,8 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             network.execute(() -> {
                 ItemSubmissionResult submission = postItem(
                         type, title, details, location.getText().toString().trim(),
-                        date.getText().toString().trim(), latitude, longitude,
-                        images, cameraImages, token.getToken(), paymentId);
+                        normalizeLocalizedDigits(date.getText().toString().trim()), latitude, longitude,
+                        images, cameraImages, token.getToken(), paymentId, submissionDraftId);
                 runOnUiThread(() -> {
                     publish.setEnabled(true);
                     int code = submission.statusCode;
@@ -5193,7 +5205,51 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                 });
             });
         }).addOnFailureListener(error -> {
-            publish.setText(getString(R.string.report_retry_submission));
+            if ("LOST".equalsIgnoreCase(type)) {
+                queueOfflineLostReport(
+                        submissionDraftId,
+                        title,
+                        details,
+                        location.getText().toString().trim(),
+                        normalizeLocalizedDigits(date.getText().toString().trim()),
+                        latitude,
+                        longitude,
+                        paymentId,
+                        images,
+                        cameraImages,
+                        publish
+                );
+            } else {
+                publish.setText(getString(R.string.report_retry_submission));
+                publish.setEnabled(true);
+                Toast.makeText(this, "Authentication failed", Toast.LENGTH_LONG).show();
+            }
+        });
+    }
+
+    private boolean isRetryableReportSubmission(int statusCode) {
+        return statusCode == -1
+                || statusCode == 408
+                || statusCode == 429
+                || statusCode >= 500;
+    }
+
+    private void queueOfflineLostReport(
+            String draftId,
+            String title,
+            String description,
+            String location,
+            String date,
+            double latitude,
+            double longitude,
+            String paymentId,
+            Uri[] images,
+            Bitmap[] cameraImages,
+            TextView publish
+    ) {
+        FirebaseUser owner = FirebaseAuth.getInstance().getCurrentUser();
+        if (owner == null) {
+            publish.setText(getString(R.string.report_sign_in_required));
             publish.setEnabled(true);
             Toast.makeText(this, "Authentication failed", Toast.LENGTH_LONG).show();
         });
@@ -5215,7 +5271,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         }
     }
 
-    private ItemSubmissionResult postItem(String type, String title, String description, String location, String date, double latitude, double longitude, Uri[] images, Bitmap[] cameraImages, String idToken, String paymentId) {
+    private ItemSubmissionResult postItem(String type, String title, String description, String location, String date, double latitude, double longitude, Uri[] images, Bitmap[] cameraImages, String idToken, String paymentId, String clientDraftId) {
         lastSubmissionError = null;
         try {
             List<String> imageUrls = new ArrayList<>();
@@ -5223,7 +5279,10 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                 if (images[slot] == null && cameraImages[slot] == null) continue;
                 String uploadedUrl = uploadImage(images[slot], cameraImages[slot], idToken);
                 if (uploadedUrl == null || uploadedUrl.trim().isEmpty()) {
-                    lastSubmissionError = "one or more images could not be uploaded";
+                    return new ItemSubmissionResult(
+                            lastImageUploadStatus == 0 ? -1 : lastImageUploadStatus,
+                            lastSubmissionError == null ? "One or more report images could not be uploaded" : lastSubmissionError
+                    );
                 } else {
                     imageUrls.add(uploadedUrl);
                 }
@@ -5235,7 +5294,8 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                     location, date, paymentId,
                     getTtsLocaleForSelectedLanguage().getLanguage(), idToken,
                     backendReportCategory(),
-                    draftGuidelinesAccepted);
+                    draftGuidelinesAccepted,
+                    clientDraftId);
             if (!response.isSuccessful()) {
                 lastSubmissionError = "Could not save report (" + response.getStatusCode() + "): " + response.getErrorMessage();
                 return new ItemSubmissionResult(response.getStatusCode(), lastSubmissionError);
@@ -5330,6 +5390,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                 } else {
                     return null;
                 }
+        String submissionDraftId = UUID.randomUUID().toString();
             } else if (cameraImage != null) {
                 ByteArrayOutputStream output = new ByteArrayOutputStream();
                 cameraImage.compress(Bitmap.CompressFormat.JPEG, 80, output);
@@ -5368,6 +5429,22 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
     }
 
     private String readErrorResponse(HttpURLConnection connection, int responseCode) {
+                        if ("LOST".equalsIgnoreCase(type) && isRetryableReportSubmission(code)) {
+                            queueOfflineLostReport(
+                                    submissionDraftId,
+                                    title,
+                                    details,
+                                    location.getText().toString().trim(),
+                                    normalizeLocalizedDigits(date.getText().toString().trim()),
+                                    latitude,
+                                    longitude,
+                                    paymentId,
+                                    images,
+                                    cameraImages,
+                                    publish
+                            );
+                            return;
+                        }
         try {
             InputStream errorStream = connection.getErrorStream();
             if (errorStream == null) return formatDefaultError(responseCode);
@@ -5442,6 +5519,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                 code = putItem(
                         type,
                         editingReportId,
+        lastImageUploadStatus = 0;
                         item.getText().toString().trim(),
                         description.getText().toString().trim(),
                         location.getText().toString().trim(),
@@ -5478,7 +5556,42 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         })).addOnFailureListener(error -> {
             saveButton.setText(translate("Retry update"));
             saveButton.setEnabled(true);
-            Toast.makeText(this, "Authentication failed", Toast.LENGTH_LONG).show();
+            Toast.makeText(this, LanguageManager.profileText(this, "offline_report_save_failed"), Toast.LENGTH_LONG).show();
+            return;
+        }
+        publish.setEnabled(false);
+        network.execute(() -> {
+            try (OfflineReportDraftStore store = new OfflineReportDraftStore(this)) {
+                store.saveLostDraft(
+                        this,
+                        draftId,
+                        owner.getUid(),
+                        title,
+                        description,
+                        location,
+                        date,
+                        latitude,
+                        longitude,
+                        backendReportCategory(),
+                        getTtsLocaleForSelectedLanguage().toLanguageTag(),
+                        paymentId,
+                        images,
+                        cameraImages
+                );
+                OfflineReportSyncWorker.enqueue(this);
+                runOnUiThread(() -> {
+                    publish.setText(LanguageManager.profileText(this, "offline_report_saved"));
+                    publish.setEnabled(false);
+                    Toast.makeText(this, LanguageManager.profileText(this, "offline_report_saved"), Toast.LENGTH_LONG).show();
+                });
+            } catch (Exception error) {
+                Log.e("OFFLINE_REPORT", "Could not save report draft locally", error);
+                runOnUiThread(() -> {
+                    publish.setText(getString(R.string.report_retry_submission));
+                    publish.setEnabled(true);
+                    Toast.makeText(this, LanguageManager.profileText(this, "offline_report_save_failed"), Toast.LENGTH_LONG).show();
+                });
+            }
         });
     }
 
@@ -5545,11 +5658,13 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         picker.show();
     }
 
+                lastImageUploadStatus = responseCode;
     private void uploadProfilePhotoBackground(Uri imageUri, Bitmap cameraBitmap) {
         FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
         if (user == null) return;
 
         user.getIdToken(false).addOnSuccessListener(token -> network.execute(() -> {
+            lastImageUploadStatus = -1;
             String imageUrl = uploadImage(imageUri, cameraBitmap, token.getToken());
             if (imageUrl == null || imageUrl.isEmpty()) {
                 runOnUiThread(() -> Toast.makeText(this, "Profile picture upload failed", Toast.LENGTH_LONG).show());
@@ -8826,6 +8941,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                         || parseBooleanValue(document.get("isEmailVerified"))
                         || parseBooleanValue(document.get("email_verified"));
                 String cloudEmail = document.getString("email");
+        OfflineReportSyncWorker.enqueue(this);
                 String localEmail = account.getString("email", "").trim();
                 boolean localEmailVerified = account.getBoolean("email_verified", false);
                 FirebaseUser firebaseUser = auth.getCurrentUser();
@@ -11069,6 +11185,17 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                     SharedPreferences account = getSharedPreferences("fendly_account", MODE_PRIVATE);
                     account.edit()
                         .putString("profile_image_uri", savedPath)
+        TextView claimsButton = actionButton("Possible-match claims", false);
+        root.addView(claimsButton, contentParams(-1, dp(44), dp(10)));
+        LinearLayout claimsContainer = new LinearLayout(this);
+        claimsContainer.setOrientation(LinearLayout.VERTICAL);
+        root.addView(claimsContainer, contentParams(-1, -2, 0));
+        claimsContainer.setVisibility(View.GONE);
+        claimsButton.setOnClickListener(view -> {
+            boolean show = claimsContainer.getVisibility() != View.VISIBLE;
+            claimsContainer.setVisibility(show ? View.VISIBLE : View.GONE);
+            if (show) loadAdminReportClaims(claimsContainer);
+        });
                         .remove("profile_image_cache_url")
                         .apply();
 
@@ -11310,6 +11437,208 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             boolean isLost = "LOST".equals(selectedType);
             int reportIndex = isLost ? 0 : 1;
             if (reportPageLoading[reportIndex] || !reportHasMore[reportIndex]) return;
+    private void addAdminVerificationEditor(LinearLayout details, JSONObject report) {
+        String itemId = report.optString("id", "").trim();
+        String itemType = report.optString("type", "").trim().toLowerCase(Locale.ROOT);
+        if (itemId.isEmpty() || !(itemType.equals("lost") || itemType.equals("found"))) return;
+
+        details.addView(text(
+                "Hidden verification detail (admin only)",
+                12,
+                primaryTextColor(),
+                Typeface.BOLD
+        ), new LinearLayout.LayoutParams(-1, dp(24)));
+        EditText secret = field("Full serial number, identifying mark, or private contents");
+        secret.setMinLines(2);
+        secret.setMaxLines(4);
+        details.addView(secret, new LinearLayout.LayoutParams(-1, dp(88)));
+        TextView save = actionButton("Save hidden detail", true);
+        details.addView(save, new LinearLayout.LayoutParams(-1, dp(42)));
+
+        String endpoint = "/api/admin/items/" + itemType + "/" + Uri.encode(itemId)
+                + "/verification-detail";
+        FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
+        if (user == null) {
+            save.setEnabled(false);
+            return;
+        }
+        user.getIdToken(false).addOnSuccessListener(token -> adminPanelNetwork.execute(() -> {
+            AuthorizedResponse response = authorizedRequest("GET", endpoint, token.getToken());
+            runOnUiThread(() -> {
+                if (response.statusCode < 200 || response.statusCode >= 300) {
+                    save.setEnabled(false);
+                    Toast.makeText(this, authorizedRequestError(response), Toast.LENGTH_LONG).show();
+                    return;
+                }
+                try {
+                    secret.setText(new JSONObject(response.body).optString("detail", ""));
+                } catch (Exception error) {
+                    save.setEnabled(false);
+                    Log.e("ADMIN_CLAIM", "Invalid verification-detail response", error);
+                }
+            });
+        })).addOnFailureListener(error -> {
+            save.setEnabled(false);
+            Log.e("ADMIN_CLAIM", "Could not authenticate for secret-detail retrieval", error);
+        });
+        save.setOnClickListener(view -> user.getIdToken(false).addOnSuccessListener(token ->
+                adminPanelNetwork.execute(() -> {
+                    try {
+                        String json = new JSONObject()
+                                .put("detail", secret.getText().toString().trim())
+                                .toString();
+                        AuthorizedResponse response = authorizedRequest("PATCH", endpoint, token.getToken(), json);
+                        runOnUiThread(() -> {
+                            if (response.statusCode >= 200 && response.statusCode < 300) {
+                                Toast.makeText(this, "Hidden verification detail saved.", Toast.LENGTH_LONG).show();
+                            } else {
+                                Toast.makeText(this, authorizedRequestError(response), Toast.LENGTH_LONG).show();
+                            }
+                        });
+                    } catch (Exception error) {
+                        Log.e("ADMIN_CLAIM", "Could not save secret verification detail", error);
+                        runOnUiThread(() -> Toast.makeText(
+                                this,
+                                "Could not save the hidden detail.",
+                                Toast.LENGTH_LONG
+                        ).show());
+                    }
+                })
+        ).addOnFailureListener(error -> Toast.makeText(
+                this,
+                "Could not verify administrator sign-in.",
+                Toast.LENGTH_LONG
+        ).show()));
+    }
+
+    private void loadAdminReportClaims(LinearLayout container) {
+        container.removeAllViews();
+        container.addView(text("Loading claims…", 12, secondaryTextColor(), Typeface.NORMAL));
+        FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
+        if (user == null) {
+            container.removeAllViews();
+            container.addView(text("Sign in as an administrator to review claims.", 12,
+                    secondaryTextColor(), Typeface.NORMAL));
+            return;
+        }
+        user.getIdToken(false).addOnSuccessListener(token -> adminPanelNetwork.execute(() -> {
+            AuthorizedResponse response = authorizedRequest("GET", "/api/admin/claims?status=pending", token.getToken());
+            runOnUiThread(() -> {
+                container.removeAllViews();
+                if (response.statusCode < 200 || response.statusCode >= 300) {
+                    container.addView(text(authorizedRequestError(response), 12,
+                            secondaryTextColor(), Typeface.NORMAL));
+                    return;
+                }
+                try {
+                    JSONArray claims = new JSONArray(response.body);
+                    if (claims.length() == 0) {
+                        container.addView(text("No pending possible-match claims.", 12,
+                                secondaryTextColor(), Typeface.NORMAL));
+                        return;
+                    }
+                    for (int index = 0; index < claims.length(); index++) {
+                        JSONObject claim = claims.getJSONObject(index);
+                        container.addView(adminReportClaimCard(claim, container),
+                                contentParams(-1, -2, dp(8)));
+                    }
+                } catch (Exception error) {
+                    Log.e("ADMIN_CLAIM", "Could not parse pending claims", error);
+                    container.addView(text("Claims could not be loaded.", 12,
+                            secondaryTextColor(), Typeface.NORMAL));
+                }
+            });
+        })).addOnFailureListener(error -> {
+            Log.e("ADMIN_CLAIM", "Could not retrieve administrator token for claims", error);
+            runOnUiThread(() -> {
+                container.removeAllViews();
+                container.addView(text("Claims could not be loaded.", 12,
+                        secondaryTextColor(), Typeface.NORMAL));
+            });
+        });
+    }
+
+    private LinearLayout adminReportClaimCard(JSONObject claim, LinearLayout container) {
+        LinearLayout card = new LinearLayout(this);
+        card.setOrientation(LinearLayout.VERTICAL);
+        card.setPadding(dp(12), dp(12), dp(12), dp(12));
+        card.setBackground(roundWithStroke(surfaceColor(), 14, borderColor()));
+        card.addView(text(
+                claim.optString("lost_title", "Lost report") + "  ↔  "
+                        + claim.optString("found_title", "Found report"),
+                14,
+                primaryTextColor(),
+                Typeface.BOLD
+        ));
+        card.addView(text("Claimant: " + claim.optString("claimant_uid", ""),
+                11, secondaryTextColor(), Typeface.NORMAL));
+        card.addView(text("Submitted detail: " + claim.optString("verification_detail", ""),
+                12, secondaryTextColor(), Typeface.NORMAL));
+        card.addView(text("Admin-only detail: " + claim.optString("hidden_verification_detail", ""),
+                12, secondaryTextColor(), Typeface.NORMAL));
+        boolean matches = claim.optBoolean("details_match", false);
+        card.addView(text(
+                matches ? "Entered details match." : "Entered details do not match.",
+                12,
+                matches ? LOST_GREEN : Color.rgb(180, 45, 45),
+                Typeface.BOLD
+        ));
+        EditText notes = field("Review notes (required to confirm)");
+        notes.setMinLines(2);
+        notes.setMaxLines(3);
+        card.addView(notes, new LinearLayout.LayoutParams(-1, dp(76)));
+        LinearLayout actions = new LinearLayout(this);
+        actions.setOrientation(LinearLayout.HORIZONTAL);
+        TextView reject = actionButton("Reject", false);
+        TextView confirm = actionButton("Confirm", true);
+        actions.addView(reject, new LinearLayout.LayoutParams(0, dp(42), 1f));
+        LinearLayout.LayoutParams confirmParams = new LinearLayout.LayoutParams(0, dp(42), 1f);
+        confirmParams.setMargins(dp(8), 0, 0, 0);
+        actions.addView(confirm, confirmParams);
+        confirm.setEnabled(matches);
+        card.addView(actions, new LinearLayout.LayoutParams(-1, dp(42)));
+        reject.setOnClickListener(view -> reviewAdminReportClaim(
+                claim.optString("id", ""), "rejected", notes.getText().toString(), container));
+        confirm.setOnClickListener(view -> reviewAdminReportClaim(
+                claim.optString("id", ""), "confirmed", notes.getText().toString(), container));
+        return card;
+    }
+
+    private void reviewAdminReportClaim(
+            String claimId,
+            String decision,
+            String notes,
+            LinearLayout container
+    ) {
+        FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
+        if (user == null || claimId.trim().isEmpty()) return;
+        user.getIdToken(false).addOnSuccessListener(token -> adminPanelNetwork.execute(() -> {
+            try {
+                String body = new JSONObject()
+                        .put("decision", decision)
+                        .put("review_notes", notes.trim())
+                        .toString();
+                AuthorizedResponse response = authorizedRequest(
+                        "POST",
+                        "/api/admin/claims/" + Uri.encode(claimId) + "/review",
+                        token.getToken(),
+                        body
+                );
+                runOnUiThread(() -> {
+                    if (response.statusCode >= 200 && response.statusCode < 300) {
+                        Toast.makeText(this, "Claim reviewed. Fendly will coordinate privately.", Toast.LENGTH_LONG).show();
+                        loadAdminReportClaims(container);
+                    } else {
+                        Toast.makeText(this, authorizedRequestError(response), Toast.LENGTH_LONG).show();
+                    }
+                });
+            } catch (Exception error) {
+                Log.e("ADMIN_CLAIM", "Could not review report claim", error);
+                runOnUiThread(() -> Toast.makeText(this, "Could not review claim.", Toast.LENGTH_LONG).show());
+            }
+        })).addOnFailureListener(error -> Toast.makeText(
+                this, "Could not verify administrator sign-in.", Toast.LENGTH_LONG).show());
+    }
             FirebaseUser adminUser = FirebaseAuth.getInstance().getCurrentUser();
             if (adminUser == null) return;
             reportPageLoading[reportIndex] = true;
@@ -11809,6 +12138,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                     Toast.makeText(
                             this,
                             "Adoption listing was not deleted. "
+            addAdminVerificationEditor(details, report);
                                     + authorizedRequestError(response),
                             Toast.LENGTH_LONG
                     ).show();
@@ -13253,6 +13583,21 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                     }
 
                     @Override
+                String sourceReportType = report.optString("type", "");
+                String foundReportId = item.optString("report_id", "").trim();
+                if ("LOST".equalsIgnoreCase(sourceReportType)
+                        && "FOUND".equalsIgnoreCase(reportType)
+                        && !foundReportId.isEmpty()) {
+                    TextView claim = actionButton(
+                            LanguageManager.profileText(this, "claim_submit"),
+                            false
+                    );
+                    LinearLayout.LayoutParams claimParams =
+                            new LinearLayout.LayoutParams(-1, dp(42));
+                    claimParams.setMargins(0, dp(10), 0, 0);
+                    card.addView(claim, claimParams);
+                    claim.setOnClickListener(view -> showReportClaimDialog(report, foundReportId));
+                }
                     public void onAuthenticationError(
                             int errorCode,
                             CharSequence errorString
@@ -13280,6 +13625,101 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
 
     private String fetchAdminItemSummary(String idToken) {
         return getAuthorized("/api/admin/items/summary", idToken);
+    }
+
+    private void showReportClaimDialog(JSONObject lostReport, String foundReportId) {
+        String lostReportId = lostReport.optString("id", "").trim();
+        if (lostReportId.isEmpty() || foundReportId.trim().isEmpty()) {
+            Toast.makeText(this, LanguageManager.profileText(this, "claim_unavailable"), Toast.LENGTH_LONG).show();
+            return;
+        }
+        LinearLayout content = new LinearLayout(this);
+        content.setOrientation(LinearLayout.VERTICAL);
+        content.setPadding(dp(20), dp(12), dp(20), dp(8));
+        TextView instructions = text(
+                LanguageManager.profileText(this, "claim_prompt"),
+                13,
+                secondaryTextColor(),
+                Typeface.NORMAL
+        );
+        content.addView(instructions, new LinearLayout.LayoutParams(-1, -2));
+        EditText verificationDetail = new EditText(this);
+        verificationDetail.setTextColor(primaryTextColor());
+        verificationDetail.setHintTextColor(secondaryTextColor());
+        verificationDetail.setHint(LanguageManager.profileText(this, "claim_detail_hint"));
+        verificationDetail.setGravity(Gravity.TOP | Gravity.START);
+        verificationDetail.setMinLines(3);
+        verificationDetail.setMaxLines(6);
+        verificationDetail.setInputType(
+                android.text.InputType.TYPE_CLASS_TEXT
+                        | android.text.InputType.TYPE_TEXT_FLAG_MULTI_LINE
+                        | android.text.InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
+        );
+        LinearLayout.LayoutParams inputParams = new LinearLayout.LayoutParams(-1, dp(112));
+        inputParams.setMargins(0, dp(12), 0, 0);
+        content.addView(verificationDetail, inputParams);
+        AlertDialog dialog = new AlertDialog.Builder(this)
+                .setTitle(LanguageManager.profileText(this, "claim_title"))
+                .setView(content)
+                .setNegativeButton(LanguageManager.profileText(this, "cancel"), null)
+                .setPositiveButton(LanguageManager.profileText(this, "claim_submit"), null)
+                .create();
+        dialog.setOnShowListener(ignored -> dialog.getButton(AlertDialog.BUTTON_POSITIVE)
+                .setOnClickListener(view -> {
+                    String entered = verificationDetail.getText().toString().trim();
+                    if (entered.isEmpty()) {
+                        verificationDetail.setError(LanguageManager.profileText(this, "claim_detail_required"));
+                        return;
+                    }
+                    FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
+                    if (user == null) {
+                        Toast.makeText(this, getString(R.string.report_sign_in_required), Toast.LENGTH_LONG).show();
+                        return;
+                    }
+                    user.getIdToken(false).addOnSuccessListener(token -> network.execute(() -> {
+                        try {
+                            JSONObject body = new JSONObject()
+                                    .put("found_item_id", foundReportId)
+                                    .put("verification_detail", entered);
+                            AuthorizedResponse response = authorizedRequest(
+                                    "POST",
+                                    "/api/items/lost/" + Uri.encode(lostReportId) + "/claims",
+                                    token.getToken(),
+                                    body.toString()
+                            );
+                            runOnUiThread(() -> {
+                                if (response.statusCode >= 200 && response.statusCode < 300) {
+                                    dialog.dismiss();
+                                    Toast.makeText(
+                                            this,
+                                            LanguageManager.profileText(this, "claim_pending"),
+                                            Toast.LENGTH_LONG
+                                    ).show();
+                                } else {
+                                    Toast.makeText(
+                                            this,
+                                            response.statusCode == 409
+                                                    ? LanguageManager.profileText(this, "claim_not_ready")
+                                                    : authorizedRequestError(response),
+                                            Toast.LENGTH_LONG
+                                    ).show();
+                                }
+                            });
+                        } catch (Exception error) {
+                            Log.e("REPORT_CLAIM", "Could not submit possible-match claim", error);
+                            runOnUiThread(() -> Toast.makeText(
+                                    this,
+                                    LanguageManager.profileText(this, "claim_unavailable"),
+                                    Toast.LENGTH_LONG
+                            ).show());
+                        }
+                    })).addOnFailureListener(error -> Toast.makeText(
+                            this,
+                            LanguageManager.profileText(this, "claim_unavailable"),
+                            Toast.LENGTH_LONG
+                    ).show());
+                }));
+        dialog.show();
     }
 
     private String fetchAdminReportPage(String reportType, int offset, String idToken) {

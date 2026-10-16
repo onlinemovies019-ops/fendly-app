@@ -7,6 +7,7 @@ from models import (
     ContentReport,
     FoundItem,
     LostItem,
+    ReportClaim,
     SocialPublication,
     UserNotification,
 )
@@ -39,6 +40,10 @@ def delete_report_from_app(
             ContentReport.report_id == report.id,
         )
     )
+    claim_column = (
+        ReportClaim.lost_item_id if report_type == "lost" else ReportClaim.found_item_id
+    )
+    session.execute(delete(ReportClaim).where(claim_column == report.id))
     session.execute(
         delete(SocialPublication).where(SocialPublication.report_id == report.id)
     )

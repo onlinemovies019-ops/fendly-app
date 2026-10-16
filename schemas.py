@@ -65,6 +65,7 @@ class MatchRequest(BaseModel):
 
 
 class MatchPreview(BaseModel):
+    report_id: str | None = None
     title: str
     category: str
     report_date: str | None = None
@@ -76,6 +77,16 @@ class MatchResponse(BaseModel):
     item: ItemResponse | MatchPreview | None = None
     score: float = Field(ge=0, le=1)
     matchType: str | None = None
+
+
+class ReportClaimCreate(BaseModel):
+    found_item_id: str = Field(min_length=1, max_length=36)
+    verification_detail: str = Field(min_length=1, max_length=2000)
+
+
+class ReportClaimResponse(BaseModel):
+    id: str
+    status: str
 
 
 class VisualSearchResponse(BaseModel):
