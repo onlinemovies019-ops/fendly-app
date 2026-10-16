@@ -36,6 +36,7 @@ from profile_service import update_profile_record
 from schemas import ProfileUpdate, UsernameRequest
 from routers.notifications import (
     get_user_notification_payload,
+    mark_user_notification_read,
     mark_user_notifications_read as mark_notifications_as_read,
 )
 
@@ -386,6 +387,21 @@ def mark_user_notifications_read(
     uid: str = Depends(get_current_user),
 ) -> dict[str, int]:
     return {"updated": mark_notifications_as_read(session, uid)}
+
+
+@router.post("/notifications/{notification_id}/read")
+def mark_one_user_notification_read(
+    notification_id: str,
+    session: Session = Depends(get_db),
+    uid: str = Depends(get_current_user),
+) -> dict[str, int]:
+    return {
+        "updated": mark_user_notification_read(
+            session=session,
+            uid=uid,
+            notification_id=notification_id,
+        )
+    }
 
 
 def normalize_username(value: str) -> str:

@@ -136,6 +136,57 @@ def test_user_inbox_and_read_state_are_scoped_to_authenticated_uid(notification_
     assert other.is_read is False
 
 
+def test_marking_one_notification_read_removes_only_that_users_unread_item(
+    notification_session,
+):
+    own = UserNotification(
+        id="own-notification",
+        firebase_uid="user-1",
+        notification_type="adoption_application_received",
+        title="New adoption request",
+        body="Review the application.",
+        score=0,
+    )
+    other = UserNotification(
+        id="other-notification",
+        firebase_uid="user-2",
+        notification_type="adoption_application_received",
+        title="New adoption request",
+        body="Review the application.",
+        score=0,
+    )
+    notification_session.add_all([own, other])
+    notification_session.commit()
+
+    result = users_module.mark_one_user_notification_read(
+        notification_id=own.id,
+        session=notification_session,
+        uid="user-1",
+    )
+
+    assert result == {"updated": 1}
+    own_inbox = users_module.get_user_notifications(
+        session=notification_session,
+        uid="user-1",
+    )
+    other_inbox = users_module.get_user_notifications(
+        session=notification_session,
+        uid="user-2",
+    )
+    assert own_inbox["unread_count"] == 0
+    assert own_inbox["notifications"] == []
+    assert other_inbox["unread_count"] == 1
+    assert [item["id"] for item in other_inbox["notifications"]] == [other.id]
+
+    foreign_read = users_module.mark_one_user_notification_read(
+        notification_id=other.id,
+        session=notification_session,
+        uid="user-1",
+    )
+    assert foreign_read == {"updated": 0}
+    assert notification_session.get(UserNotification, other.id).is_read is False
+
+
 def test_admin_auth_allows_allowlisted_firebase_uid(notification_session, monkeypatch):
     monkeypatch.setenv("ADMIN_FIREBASE_UIDS", "admin-uid")
 

@@ -21,7 +21,10 @@ def get_user_notification_payload(session: Session, uid: str) -> dict[str, objec
     ) or 0
     notifications = session.scalars(
         select(UserNotification)
-        .where(UserNotification.firebase_uid == uid)
+        .where(
+            UserNotification.firebase_uid == uid,
+            UserNotification.is_read.is_(False),
+        )
         .order_by(desc(UserNotification.created_at))
         .limit(50)
     ).all()
@@ -61,6 +64,24 @@ def mark_user_notifications_read(session: Session, uid: str) -> int:
     return result.rowcount or 0
 
 
+def mark_user_notification_read(
+    session: Session,
+    uid: str,
+    notification_id: str,
+) -> int:
+    result = session.execute(
+        update(UserNotification)
+        .where(
+            UserNotification.id == notification_id,
+            UserNotification.firebase_uid == uid,
+            UserNotification.is_read.is_(False),
+        )
+        .values(is_read=True)
+    )
+    session.commit()
+    return result.rowcount or 0
+
+
 @inbox_router.get("")
 def list_notifications(
     session: Session = Depends(get_db),
@@ -75,6 +96,17 @@ def mark_notifications_read(
     uid: str = Depends(get_current_user),
 ) -> dict[str, int]:
     return {"updated": mark_user_notifications_read(session, uid)}
+
+
+@inbox_router.post("/{notification_id}/read")
+def mark_notification_read(
+    notification_id: str,
+    session: Session = Depends(get_db),
+    uid: str = Depends(get_current_user),
+) -> dict[str, int]:
+    return {
+        "updated": mark_user_notification_read(session, uid, notification_id)
+    }
 
 
 @router.post("/fcm-token", status_code=status.HTTP_204_NO_CONTENT)
