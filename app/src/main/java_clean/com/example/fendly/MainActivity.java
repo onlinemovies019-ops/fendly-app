@@ -41,6 +41,7 @@ import android.view.KeyEvent;
 import android.util.Log;
 import android.util.TypedValue;
 import android.view.View;
+import android.view.ContextThemeWrapper;
 import android.view.ViewGroup;
 import android.view.animation.Animation;
 import android.view.animation.ScaleAnimation;
@@ -168,11 +169,16 @@ import java.io.File;
 import java.io.FileOutputStream;
 import java.io.InputStream;
 import java.util.Locale;
+import java.util.UUID;
 import java.util.function.Function;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
 
 public final class MainActivity extends FragmentActivity implements PaymentResultWithDataListener {
+    public static final String EXTRA_ADOPTION_LISTING_ID = "adoption_listing_id";
+    public static final String EXTRA_USER_NOTIFICATION_ID = "user_notification_id";
+    private static final String ACTION_USER_NOTIFICATION_RECEIVED =
+            "com.example.fendly.USER_NOTIFICATION_RECEIVED";
     private static final int LIGHT_BACKGROUND = Color.rgb(247, 243, 238);
     private static final int LIGHT_SURFACE = Color.rgb(253, 251, 248);
     private static final int LIGHT_BORDER = Color.rgb(216, 208, 196);
@@ -329,6 +335,16 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
     private final LinkedHashSet<String> expandedMyReportIds = new LinkedHashSet<>();
     private int unreadUserNotificationCount = 0;
     private TextView userNotificationBadge;
+    private boolean notificationRefreshReceiverRegistered;
+    private String pendingAdoptionNotificationListingId = "";
+    private String pendingUserNotificationId = "";
+    private boolean notificationUnlockStarted;
+    private final BroadcastReceiver notificationRefreshReceiver = new BroadcastReceiver() {
+        @Override
+        public void onReceive(Context context, Intent intent) {
+            if (currentPage == PAGE_AUTH) fetchUserNotificationCount();
+        }
+    };
     private boolean accountCreated;
     private boolean profileSetupVisible;
     private boolean profileHydrationInFlight = false;
@@ -352,8 +368,18 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
     private volatile int guideSpeechPosition;
     private int guideSpeechGeneration;
     private ImageView guideSpeechPlayButton;
+    private TextToSpeech assistantTtsEngine;
+    private boolean assistantTtsReady;
+    private String pendingAssistantSpeech;
+    private Dialog fendlyAssistantDialog;
+    private EditText fendlyAssistantInput;
+    private TextView fendlyAssistantAskButton;
+    private boolean assistantSpeakNextAnswer;
+    private boolean pendingAssistantRecognition;
     private EditText[] visibleMobileCells;
     private static final int REQUEST_SMS_USER_CONSENT = 913;
+    private static final int REQUEST_ASSISTANT_AUDIO_PERMISSION = 914;
+    private static final int REQUEST_ASSISTANT_SPEECH = 915;
     private BroadcastReceiver smsUserConsentReceiver;
     private boolean smsUserConsentReceiverRegistered;
     private Intent pendingSmsUserConsentIntent;
@@ -376,6 +402,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
     private final ExecutorService network = Executors.newSingleThreadExecutor();
     private final ExecutorService adminPanelNetwork = Executors.newFixedThreadPool(2);
     private volatile String lastSubmissionError;
+    private volatile int lastImageUploadStatus;
 
     private String normalizeDocumentKey(String rawUsername) {
         if (rawUsername == null) return "";
@@ -402,7 +429,6 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
     }
 
     @Override
-    private volatile int lastImageUploadStatus;
     protected void attachBaseContext(Context newBase) {
         super.attachBaseContext(LanguageManager.wrapContext(newBase));
     }
@@ -415,6 +441,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         LanguageManager.restoreSavedLanguage(this);
         int savedLanguage = LanguageManager.getSavedLanguageIndex(this);
         super.onCreate(savedInstanceState);
+        captureAdoptionNotificationIntent(getIntent());
         voiceAudioRecorder = new VoiceAudioRecorder(this);
         voiceIntakeViewModel = new ViewModelProvider(this).get(VoiceIntakeViewModel.class);
         getOnBackPressedDispatcher().addCallback(this, new OnBackPressedCallback(true) {
@@ -473,6 +500,9 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             return;
         }
 
+        if (hasPendingNotificationOpen() && firebaseUser == null) {
+            currentPage = PAGE_AUTH;
+        }
         if (firebaseUser == null
                 && !getSharedPreferences("fendly_onboarding", MODE_PRIVATE)
                         .getBoolean("welcome_seen", false)) {
@@ -483,7 +513,13 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                         .apply();
                 restoreProfileDrafts();
                 applySystemBarColors();
-                restoreScreenState();
+                if (hasPendingNotificationOpen()
+                        && FirebaseAuth.getInstance().getCurrentUser() == null) {
+                    currentPage = PAGE_AUTH;
+                    buildScreen();
+                } else {
+                    restoreScreenState();
+                }
                 FcmRegistration.registerCurrentToken();
             });
             return;
@@ -499,6 +535,140 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             checkAndReloadUserVerification();
             refreshAnnualSubscription(null);
         }
+        if (hasPendingNotificationOpen() && firebaseUser != null) {
+            new Handler(Looper.getMainLooper()).post(this::authenticateAdoptionNotificationOpen);
+        }
+    }
+
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+        captureAdoptionNotificationIntent(intent);
+        if (!hasPendingNotificationOpen()) return;
+        if (FirebaseAuth.getInstance().getCurrentUser() == null) {
+            currentPage = PAGE_AUTH;
+            buildScreen();
+        } else {
+            authenticateAdoptionNotificationOpen();
+        }
+    }
+
+    private void captureAdoptionNotificationIntent(Intent intent) {
+        if (intent == null) return;
+        String notificationId = intent.getStringExtra(EXTRA_USER_NOTIFICATION_ID);
+        if (notificationId != null && !notificationId.trim().isEmpty()) {
+            pendingUserNotificationId = notificationId.trim();
+            notificationUnlockStarted = false;
+        }
+        String listingId = intent.getStringExtra(EXTRA_ADOPTION_LISTING_ID);
+        if (listingId != null && !listingId.trim().isEmpty()) {
+            pendingAdoptionNotificationListingId = listingId.trim();
+            notificationUnlockStarted = false;
+        }
+    }
+
+    private boolean hasPendingNotificationOpen() {
+        return !pendingUserNotificationId.isEmpty()
+                || !pendingAdoptionNotificationListingId.isEmpty();
+    }
+
+    private void authenticateAdoptionNotificationOpen() {
+        if (!hasPendingNotificationOpen() || notificationUnlockStarted) return;
+        notificationUnlockStarted = true;
+        if (FirebaseAuth.getInstance().getCurrentUser() == null) {
+            currentPage = PAGE_AUTH;
+            buildScreen();
+            return;
+        }
+        int authenticators = BiometricManager.Authenticators.BIOMETRIC_STRONG;
+        if (BiometricManager.from(this).canAuthenticate(authenticators)
+                != BiometricManager.BIOMETRIC_SUCCESS) {
+            notificationUnlockStarted = false;
+            showPinLogin();
+            return;
+        }
+        BiometricPrompt prompt = new BiometricPrompt(
+                this,
+                ContextCompat.getMainExecutor(this),
+                new BiometricPrompt.AuthenticationCallback() {
+                    @Override
+                    public void onAuthenticationSucceeded(
+                            BiometricPrompt.AuthenticationResult result
+                    ) {
+                        notificationUnlockStarted = false;
+                        openPendingAdoptionNotification();
+                    }
+
+                    @Override
+                    public void onAuthenticationError(
+                            int errorCode,
+                            CharSequence errorString
+                    ) {
+                        notificationUnlockStarted = false;
+                        if (errorCode == BiometricPrompt.ERROR_NEGATIVE_BUTTON) {
+                            showPinLogin();
+                        } else if (errorCode != BiometricPrompt.ERROR_USER_CANCELED
+                                && errorCode != BiometricPrompt.ERROR_CANCELED) {
+                            Toast.makeText(
+                                    MainActivity.this,
+                                    errorString,
+                                    Toast.LENGTH_SHORT
+                            ).show();
+                        }
+                    }
+                }
+        );
+        BiometricPrompt.PromptInfo promptInfo = new BiometricPrompt.PromptInfo.Builder()
+                .setTitle(LanguageManager.adoptionText(this, "adopt_open_request"))
+                .setSubtitle(LanguageManager.adoptionText(this, "adopt_confirm_identity"))
+                .setAllowedAuthenticators(authenticators)
+                .setNegativeButtonText(translate("Use PIN"))
+                .build();
+        prompt.authenticate(promptInfo);
+    }
+
+    private void openPendingAdoptionNotification() {
+        String listingId = pendingAdoptionNotificationListingId;
+        String notificationId = pendingUserNotificationId;
+        if (listingId.isEmpty() && notificationId.isEmpty()) return;
+        pendingAdoptionNotificationListingId = "";
+        pendingUserNotificationId = "";
+        Intent currentIntent = getIntent();
+        if (currentIntent != null) {
+            currentIntent.removeExtra(EXTRA_ADOPTION_LISTING_ID);
+            currentIntent.removeExtra(EXTRA_USER_NOTIFICATION_ID);
+            currentIntent.setAction(null);
+        }
+        if (!notificationId.isEmpty()) markUserNotificationRead(notificationId, null, null);
+        if (!listingId.isEmpty()) {
+            startActivity(
+                    new Intent(this, AdoptionActivity.class)
+                            .putExtra(AdoptionActivity.EXTRA_OPEN_LISTING_ID, listingId)
+            );
+        } else {
+            showHome();
+        }
+    }
+
+    private void showHomeOrOpenPendingAdoptionNotification() {
+        if (!hasPendingNotificationOpen()) {
+            showHome();
+        } else {
+            openPendingAdoptionNotification();
+        }
+    }
+
+    @Override
+    protected void onStart() {
+        super.onStart();
+        ContextCompat.registerReceiver(
+                this,
+                notificationRefreshReceiver,
+                new IntentFilter(ACTION_USER_NOTIFICATION_RECEIVED),
+                ContextCompat.RECEIVER_NOT_EXPORTED
+        );
+        notificationRefreshReceiverRegistered = true;
     }
 
     private void showWelcomeOnboarding() {
@@ -514,28 +684,45 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         screen.setOrientation(LinearLayout.VERTICAL);
         screen.setPadding(dp(14), dp(14), dp(14), dp(14));
         screen.setBackgroundColor(backgroundColor());
+        screen.setClipChildren(true);
+        screen.setClipToPadding(true);
         WindowInsetsHelper.applySafeArea(screen);
+        screen.setLayoutParams(new ViewGroup.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT
+        ));
 
         LinearLayout card = new LinearLayout(this);
         card.setOrientation(LinearLayout.VERTICAL);
         card.setPadding(dp(22), dp(24), dp(22), dp(20));
         card.setBackground(roundWithStroke(surfaceColor(), 28, borderColor()));
-        card.setElevation(dp(8));
-        screen.addView(card, new LinearLayout.LayoutParams(-1, 0, 1f));
+        card.setClipChildren(true);
+        card.setClipToPadding(true);
+        FendlyMotion.setElevation(card, dp(8));
+        screen.addView(card, new LinearLayout.LayoutParams(-1, -1));
 
         TextView title = text(onboardingText("title"), 23, primaryTextColor(), Typeface.BOLD);
         title.setGravity(Gravity.CENTER);
         title.setTextAlignment(View.TEXT_ALIGNMENT_CENTER);
-        title.setPadding(0, 0, 0, dp(18));
+        title.setPadding(0, 0, 0, dp(16));
         card.addView(title, new LinearLayout.LayoutParams(-1, -2));
+
+        FrameLayout scrollViewport = new FrameLayout(this);
+        scrollViewport.setClipChildren(true);
+        scrollViewport.setClipToPadding(true);
+        card.addView(scrollViewport, new LinearLayout.LayoutParams(-1, 0, 1f));
 
         ScrollView scroll = new ScrollView(this);
         scroll.setFillViewport(false);
         scroll.setVerticalScrollBarEnabled(true);
+        scroll.setClipChildren(true);
+        scroll.setClipToPadding(true);
         LinearLayout content = new LinearLayout(this);
         content.setOrientation(LinearLayout.VERTICAL);
+        content.setClipChildren(true);
+        content.setClipToPadding(true);
         scroll.addView(content, new ScrollView.LayoutParams(-1, -2));
-        card.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1f));
+        scrollViewport.addView(scroll, new FrameLayout.LayoutParams(-1, -1));
 
         addWelcomeSection(content, "purpose_heading", "purpose_body");
         addWelcomeHeading(content, "how_heading");
@@ -574,13 +761,19 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         dialog.setContentView(screen);
         dialog.setCanceledOnTouchOutside(false);
         dialog.setOnDismissListener(ignored -> stopGuideSpeech());
-        dialog.show();
         Window window = dialog.getWindow();
         if (window != null) {
             window.setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
-            window.setLayout(WindowManager.LayoutParams.MATCH_PARENT, WindowManager.LayoutParams.MATCH_PARENT);
+            WindowCompat.setDecorFitsSystemWindows(window, true);
             window.setStatusBarColor(backgroundColor());
             window.setNavigationBarColor(backgroundColor());
+        }
+        dialog.show();
+        if (window != null) {
+            window.setLayout(
+                    WindowManager.LayoutParams.MATCH_PARENT,
+                    WindowManager.LayoutParams.MATCH_PARENT
+            );
         }
     }
 
@@ -700,6 +893,12 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             ttsEngine.shutdown();
             ttsEngine = null;
             ttsReady = false;
+        }
+        if (assistantTtsEngine != null) {
+            assistantTtsEngine.stop();
+            assistantTtsEngine.shutdown();
+            assistantTtsEngine = null;
+            assistantTtsReady = false;
         }
         network.shutdownNow();
         super.onDestroy();
@@ -896,38 +1095,23 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                     + "4. Check progress:\n• Open My Reports to find your report and check its status. Search using at least 3 characters. Tap a report for details and use its arrow to show or hide actions.";
         }
 
-        String[] lostButtonLabels = {
-            "LOST", "खोया", "हरवले/चोरी", "ખોવાયેલું", "হারানো",
-            "தொலைந்தது", "పోగొట్టుకున్న", "ಕಳೆದುಹೋದ", "നഷ്ടപ്പെട്ട"
-        };
-        String[] foundButtonLabels = {
-            "FOUND", "मिला", "सापडले", "મળેલ", "পাওয়া",
-            "கிடைத்தது", "దొరికిన", "ಸಿಕ್ಕಿದ", "കണ്ടെത്തിയത്"
-        };
-        String[] myReportsLabels = {
-            "My Reports", "मेरी रिपोर्टें", "माझे अहवाल", "મારા અહેવાલો", "আমার রিপোর্ট",
-            "எனது அறிக்கைகள்", "నా నివేదికలు", "ನನ್ನ ವರದಿಗಳು", "എന്റെ റിപ്പോർട്ടുകൾ"
-        };
-        return texts[lang]
-            .replace("LOST", lostButtonLabels[lang])
-            .replace("FOUND", foundButtonLabels[lang])
-            .replace("My Reports", myReportsLabels[lang]);
+        return LanguageManager.localizeReportGuideText(this, texts[lang]);
     }
 
     private String translateMyReportsTitle() {
         String[] titles = {
                 "How to Use My Reports",
-                "My Reports का उपयोग कैसे करें",
+                "मेरी रिपोर्टों का उपयोग कैसे करें",
                 "माझे अहवाल कसे वापरावे",
-                "My Reports નો ઉપયોગ કેવી રીતે કરવો",
-                "My Reports কীভাবে ব্যবহার করবেন",
-                "My Reports ஐ எவ்வாறு பயன்படுத்துவது",
-                "My Reports ఎలా ఉపయోగించాలి",
+                "મારા રિપોર્ટનો ઉપયોગ કેવી રીતે કરવો",
+                "আমার রিপোর্ট কীভাবে ব্যবহার করবেন",
+                "எனது அறிக்கைகளை எவ்வாறு பயன்படுத்துவது",
+                "నా నివేదికలను ఎలా ఉపయోగించాలి",
                 "My Reports ಅನ್ನು ಹೇಗೆ ಬಳಸುವುದು",
-                "My Reports എങ്ങനെ ഉപയോഗിക്കാം"
+                "എന്റെ റിപ്പോർട്ടുകൾ എങ്ങനെ ഉപയോഗിക്കാം"
         };
         int lang = Math.max(0, Math.min(selectedLanguage, titles.length - 1));
-        return titles[lang];
+        return LanguageManager.localizeReportGuideText(this, titles[lang]);
     }
 
     private String translateMyReportsText() {
@@ -965,19 +1149,9 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                 "ಪೂರ್ಣಗೊಂಡ ವರದಿಗಳು ಮೊದಲು ಮರೆಮಾಡಿರುತ್ತವೆ. ಅವನ್ನು ವಿಸ್ತರಿಸಲು Completed reports ಟ್ಯಾಪ್ ಮಾಡಿ; ಕುಗ್ಗಿಸಲು ಮತ್ತೆ ಟ್ಯಾಪ್ ಮಾಡಿ.",
                 "പൂർത്തിയായ റിപ്പോർട്ടുകൾ ആദ്യം മറച്ചിരിക്കും. അവ വികസിപ്പിക്കാൻ Completed reports ടാപ്പ് ചെയ്യുക; ചുരുക്കാൻ വീണ്ടും ടാപ്പ് ചെയ്യുക."
         };
-        String[] lostButtonLabels = {
-                "LOST", "खोया", "हरवले/चोरी", "ખોવાયેલું", "হারানো",
-                "தொலைந்தது", "పోగొట్టుకున్న", "ಕಳೆದುಹೋದ", "നഷ്ടപ്പെട്ട"
-        };
-        String[] foundButtonLabels = {
-                "FOUND", "मिला", "सापडले", "મળેલ", "পাওয়া",
-                "கிடைத்தது", "దొరికిన", "ಸಿಕ್ಕಿದ", "കണ്ടെത്തിയത്"
-        };
-        return texts[lang]
-                .replace(oldCompletedGroupInstructions[lang], completedGroupInstructions[lang])
-                .replace("LOST", lostButtonLabels[lang])
-                .replace("FOUND", foundButtonLabels[lang])
-                .replace("Completed reports", localizeReportsText("Completed reports"));
+        String localizedInstructions = texts[lang]
+                .replace(oldCompletedGroupInstructions[lang], completedGroupInstructions[lang]);
+        return LanguageManager.localizeReportGuideText(this, localizedInstructions);
     }
 
     @Override
@@ -989,6 +1163,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         // Only restore if user is authenticated.
         FirebaseUser firebaseUser = FirebaseAuth.getInstance().getCurrentUser();
         if (firebaseUser != null) {
+            OfflineReportSyncWorker.enqueue(this);
             selectedLanguage = getSharedPreferences("fendly_language", MODE_PRIVATE)
                     .getInt("selected_language_index", 0);
             restoreProfileDrafts();
@@ -1039,6 +1214,10 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
     @Override
     protected void onStop() {
         super.onStop();
+        if (notificationRefreshReceiverRegistered) {
+            unregisterReceiver(notificationRefreshReceiver);
+            notificationRefreshReceiverRegistered = false;
+        }
         saveProfileDrafts();
     }
 
@@ -1163,7 +1342,6 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
     }
 
     private void showLogoutConfirmationDialog() {
-            OfflineReportSyncWorker.enqueue(this);
         Dialog dialog = new Dialog(this);
         dialog.requestWindowFeature(Window.FEATURE_NO_TITLE);
         LinearLayout content = themedDialogContent(
@@ -1361,7 +1539,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         LinearLayout content = themedDialogContent(
                 R.drawable.ic_field_lock,
                 LanguageManager.profileText(this, "delete_account_title"),
-                LanguageManager.profileText(this, "delete_account_body")
+                LanguageManager.profileText(this, "delete_account_body_complete")
         );
         LinearLayout actions = new LinearLayout(this);
         actions.setOrientation(LinearLayout.HORIZONTAL);
@@ -1408,6 +1586,16 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                 if (connection != null) connection.disconnect();
             }
             final int finalResponseCode = responseCode;
+            boolean offlineDraftsRemoved = true;
+            if (finalResponseCode == 204) {
+                try (OfflineReportDraftStore store = new OfflineReportDraftStore(MainActivity.this)) {
+                    store.deleteDraftsForOwner(user.getUid());
+                } catch (Exception error) {
+                    offlineDraftsRemoved = false;
+                    Log.e("ACCOUNT_DELETE", "Could not remove locally queued report drafts", error);
+                }
+            }
+            final boolean finalOfflineDraftsRemoved = offlineDraftsRemoved;
             runOnUiThread(() -> {
                 if (finalResponseCode == 204) {
                     dialog.dismiss();
@@ -1415,7 +1603,16 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                     try {
                         FirebaseAuth.getInstance().signOut();
                     } catch (Exception ignored) {}
-                    Toast.makeText(MainActivity.this, LanguageManager.profileText(MainActivity.this, "account_deleted"), Toast.LENGTH_LONG).show();
+                    Toast.makeText(
+                            MainActivity.this,
+                            LanguageManager.profileText(
+                                    MainActivity.this,
+                                    finalOfflineDraftsRemoved
+                                            ? "account_deleted"
+                                            : "account_deleted_local_drafts_failed"
+                            ),
+                            Toast.LENGTH_LONG
+                    ).show();
                     buildScreen();
                 } else {
                     deleteButton.setEnabled(true);
@@ -1492,22 +1689,11 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         });
         root.addView(authScroll, centerParams);
 
-        ImageView standaloneF = new ImageView(this);
-        standaloneF.setImageResource(R.drawable.fendly_logo);
-        standaloneF.setContentDescription("Fendly F icon");
-        standaloneF.setScaleType(ImageView.ScaleType.FIT_CENTER);
-        standaloneF.setAdjustViewBounds(true);
-        LinearLayout.LayoutParams standaloneFParams = new LinearLayout.LayoutParams(dp(140), dp(100));
-        standaloneFParams.gravity = Gravity.CENTER_HORIZONTAL;
-        standaloneFParams.setMargins(0, 0, 0, dp(8));
-        centerArea.addView(standaloneF, standaloneFParams);
-        animateFendlyLogo(standaloneF);
-
         LinearLayout authCard = new LinearLayout(this);
         authCard.setOrientation(LinearLayout.VERTICAL);
         authCard.setPadding(dp(18), dp(16), dp(18), dp(18));
         authCard.setBackground(roundWithStroke(surfaceColor(), 30, borderColor()));
-        authCard.setElevation(authCardElevation);
+        FendlyMotion.setElevation(authCard, authCardElevation);
         authCard.setClipToOutline(true);
         if (Build.VERSION.SDK_INT >= 29) authCard.setForceDarkAllowed(false);
 
@@ -1554,6 +1740,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             showAdminLoginDialog();
             return true;
         });
+        animateFendlyLogo(emblem);
         LinearLayout.LayoutParams emblemParams = new LinearLayout.LayoutParams(-1, 0, 1f);
         emblem.setMinimumHeight(dp(88));
         emblemContent.addView(emblem, emblemParams);
@@ -1586,16 +1773,6 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         authCard.addView(emblemWrap, emblemWrapParams);
 
         LinearLayout.LayoutParams cardParams = new LinearLayout.LayoutParams(-1, -2);
-            boolean offlineDraftsRemoved = true;
-            if (finalResponseCode == 204) {
-                try (OfflineReportDraftStore store = new OfflineReportDraftStore(MainActivity.this)) {
-                    store.deleteDraftsForOwner(user.getUid());
-                } catch (Exception error) {
-                    offlineDraftsRemoved = false;
-                    Log.e("ACCOUNT_DELETE", "Could not remove locally queued report drafts", error);
-                }
-            }
-            final boolean finalOfflineDraftsRemoved = offlineDraftsRemoved;
         cardParams.setMargins(0, dp(10), 0, 0);
         centerArea.addView(authCard, cardParams);
 
@@ -1665,7 +1842,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         forgotPin.setImageResource(R.drawable.ic_field_key);
         forgotPin.setContentDescription("Forgot PIN");
         forgotPin.setColorFilter(accentColor());
-        forgotPin.setBackgroundColor(Color.TRANSPARENT);
+        applyIconDepth(forgotPin, 22);
         forgotPin.setScaleType(ImageView.ScaleType.CENTER_INSIDE);
         forgotPin.setPadding(dp(8), dp(8), dp(8), dp(8));
         forgotPin.setOnClickListener(view -> showForgotPinDialog(username));
@@ -1682,7 +1859,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         fingerprint.setImageResource(R.drawable.ic_fingerprint);
         fingerprint.setContentDescription("Sign in with fingerprint");
         fingerprint.setColorFilter(accentColor());
-        fingerprint.setBackgroundColor(Color.TRANSPARENT);
+        applyIconDepth(fingerprint, 22);
         fingerprint.setScaleType(ImageView.ScaleType.CENTER_INSIDE);
         fingerprint.setPadding(dp(8), dp(8), dp(8), dp(8));
         fingerprint.setOnClickListener(view -> showBiometricLoginDialog());
@@ -1692,7 +1869,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         login.setGravity(Gravity.CENTER);
         login.setPadding(dp(12), dp(8), dp(12), dp(8));
         login.setBackground(goldButton());
-        login.setElevation(dp(8));
+        FendlyMotion.setElevation(login, dp(8));
         login.setOnClickListener(view -> {
             String name = username.getText().toString().trim();
             String code = pinValue(pinCells);
@@ -1707,7 +1884,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                         handleSuccessfulLogin(name, code, () -> {
                             login.setText(loginText("login"));
                             login.setEnabled(true);
-                            showHome();
+                            showHomeOrOpenPendingAdoptionNotification();
                         });
                     })
                     .addOnFailureListener(error -> {
@@ -3060,7 +3237,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                         handleSuccessfulLogin(name, code, () -> {
                             login.setText(localizedFieldLabel("Log in"));
                             login.setEnabled(true);
-                            showHome();
+                            showHomeOrOpenPendingAdoptionNotification();
                         });
                     })
                     .addOnFailureListener(error -> {
@@ -3156,7 +3333,11 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                         FirebaseAuth.getInstance().signInWithEmailAndPassword(
                                         credentialEmail(username), credentialPassword(username, pin))
                                 .addOnSuccessListener(authResult -> {
-                                    handleSuccessfulLogin(username, pin, MainActivity.this::showHome);
+                                    handleSuccessfulLogin(
+                                            username,
+                                            pin,
+                                            MainActivity.this::showHomeOrOpenPendingAdoptionNotification
+                                    );
                                 })
                                 .addOnFailureListener(error -> Toast.makeText(
                                         MainActivity.this,
@@ -4170,10 +4351,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         currentReportType = type;
         restoreReportLocationState(type);
         LinearLayout root = screenBase("");
-        addHeading(
-                localizeReportWizardText("Report wizard"),
-                localizeReportWizardText("Step " + reportWizardStep + " of 4")
-        );
+        addHeading(localizeReportWizardText("Report wizard"), "");
         addReportWizardProgress(root);
         if (editingReportId == null) addVoiceIntakeButton(root);
 
@@ -4211,13 +4389,25 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                 localizeReportWizardText(
                         voiceAudioRecorder.isRecording()
                                 ? "Recording — tap when finished"
-                                : "Tap to describe your report"
+                                : "Describe report by voice"
                 ),
                 false
         );
         voiceButton.setContentDescription(localizeReportWizardText("Record report details by voice"));
         voiceButton.setOnClickListener(view -> handleVoiceIntakeTap(voiceButton));
         addField(root, voiceButton);
+        TextView voiceHint = text(
+                localizeReportWizardText(
+                        "Tap to record a short description, then tap again to finish. Fendly will fill in report details for you to review."
+                ),
+                11,
+                secondaryTextColor(),
+                Typeface.NORMAL
+        );
+        voiceHint.setGravity(Gravity.CENTER);
+        voiceHint.setMaxLines(3);
+        voiceHint.setPadding(dp(10), dp(2), dp(10), dp(4));
+        addField(root, voiceHint);
     }
 
     private void handleVoiceIntakeTap(TextView button) {
@@ -4308,7 +4498,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                 if (isFinishing() || isDestroyed()) return;
                 if (button != null) {
                     button.setEnabled(true);
-                    button.setText(localizeReportWizardText("Tap to describe your report"));
+                    button.setText(localizeReportWizardText("Describe report by voice"));
                 }
                 Log.w("VOICE_INTAKE", "User report voice intake failed: " + message);
                 Toast.makeText(MainActivity.this, message, Toast.LENGTH_LONG).show();
@@ -4458,7 +4648,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         addWizardSectionTitle(root, "Add a photo and location");
         addLabeledField(root, translate("FOUND".equalsIgnoreCase(type) ? "Place found" : "Last seen at"), location);
         addLabeledField(root, localizeReportWizardText("City / area tag"), city);
-        city.setHint(localizeReportWizardText("e.g. Nagpur"));
+        city.setHint(localizeReportWizardText("Your city"));
 
         boolean locationEnabled = isReportLocationEnabled(type);
         TextView preciseLocation = text(
@@ -4789,7 +4979,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             Toast.makeText(this, localizeReportWizardText("Add a location and city tag."), Toast.LENGTH_LONG).show();
             return false;
         }
-        String dateValue = date.getText().toString().trim();
+        String dateValue = normalizeLocalizedDigits(date.getText().toString().trim());
         if (!dateValue.isEmpty() && !validDate(dateValue)) {
             date.setError("Use a valid date in DD/MM/YYYY format");
             return false;
@@ -5139,7 +5329,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             description.setError("Describe the item");
             return;
         }
-        String dateValue = date.getText().toString().trim();
+        String dateValue = normalizeLocalizedDigits(date.getText().toString().trim());
         if (!dateValue.isEmpty() && !validDate(dateValue)) {
             date.setError("Use a valid date in DD/MM/YYYY format");
             return;
@@ -5152,6 +5342,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         publish.setEnabled(false);
         Uri[] images = reportImages.clone();
         Bitmap[] cameraImages = reportCameraImages.clone();
+        String submissionDraftId = UUID.randomUUID().toString();
         boolean reportHasLocation = isReportLocationEnabled(type);
         double latitude = reportHasLocation ? reportLocationLatitude(type) : 0.0;
         double longitude = reportHasLocation ? reportLocationLongitude(type) : 0.0;
@@ -5190,6 +5381,22 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                         }
                         showReports(createdReport);
                     } else {
+                        if ("LOST".equalsIgnoreCase(type) && isRetryableReportSubmission(code)) {
+                            queueOfflineLostReport(
+                                    submissionDraftId,
+                                    title,
+                                    details,
+                                    location.getText().toString().trim(),
+                                    normalizeLocalizedDigits(date.getText().toString().trim()),
+                                    latitude,
+                                    longitude,
+                                    paymentId,
+                                    images,
+                                    cameraImages,
+                                    publish
+                            );
+                            return;
+                        }
                         if (code == 402 && "LOST".equalsIgnoreCase(type)) {
                             publish.setText(getString(R.string.report_continue_payment));
                             publish.setOnClickListener(view ->
@@ -5251,7 +5458,42 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         if (owner == null) {
             publish.setText(getString(R.string.report_sign_in_required));
             publish.setEnabled(true);
-            Toast.makeText(this, "Authentication failed", Toast.LENGTH_LONG).show();
+            Toast.makeText(this, LanguageManager.profileText(this, "offline_report_save_failed"), Toast.LENGTH_LONG).show();
+            return;
+        }
+        publish.setEnabled(false);
+        network.execute(() -> {
+            try (OfflineReportDraftStore store = new OfflineReportDraftStore(this)) {
+                store.saveLostDraft(
+                        this,
+                        draftId,
+                        owner.getUid(),
+                        title,
+                        description,
+                        location,
+                        date,
+                        latitude,
+                        longitude,
+                        backendReportCategory(),
+                        getTtsLocaleForSelectedLanguage().toLanguageTag(),
+                        paymentId,
+                        images,
+                        cameraImages
+                );
+                OfflineReportSyncWorker.enqueue(this);
+                runOnUiThread(() -> {
+                    publish.setText(LanguageManager.profileText(this, "offline_report_saved"));
+                    publish.setEnabled(false);
+                    Toast.makeText(this, LanguageManager.profileText(this, "offline_report_saved"), Toast.LENGTH_LONG).show();
+                });
+            } catch (Exception error) {
+                Log.e("OFFLINE_REPORT", "Could not save report draft locally", error);
+                runOnUiThread(() -> {
+                    publish.setText(getString(R.string.report_retry_submission));
+                    publish.setEnabled(true);
+                    Toast.makeText(this, LanguageManager.profileText(this, "offline_report_save_failed"), Toast.LENGTH_LONG).show();
+                });
+            }
         });
     }
 
@@ -5273,6 +5515,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
 
     private ItemSubmissionResult postItem(String type, String title, String description, String location, String date, double latitude, double longitude, Uri[] images, Bitmap[] cameraImages, String idToken, String paymentId, String clientDraftId) {
         lastSubmissionError = null;
+        lastImageUploadStatus = 0;
         try {
             List<String> imageUrls = new ArrayList<>();
             for (int slot = 0; slot < Math.min(images.length, cameraImages.length); slot++) {
@@ -5390,7 +5633,6 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                 } else {
                     return null;
                 }
-        String submissionDraftId = UUID.randomUUID().toString();
             } else if (cameraImage != null) {
                 ByteArrayOutputStream output = new ByteArrayOutputStream();
                 cameraImage.compress(Bitmap.CompressFormat.JPEG, 80, output);
@@ -5416,11 +5658,13 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             }
             int responseCode = connection.getResponseCode();
             if (responseCode < 200 || responseCode >= 300) {
+                lastImageUploadStatus = responseCode;
                 lastSubmissionError = "Image upload failed (" + responseCode + "): " + readErrorResponse(connection, responseCode);
                 return null;
             }
             return new JSONObject(readStream(connection.getInputStream())).optString("url", null);
         } catch (Exception error) {
+            lastImageUploadStatus = -1;
             lastSubmissionError = "Image upload failed: " + error.getClass().getSimpleName();
             return null;
         } finally {
@@ -5429,22 +5673,6 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
     }
 
     private String readErrorResponse(HttpURLConnection connection, int responseCode) {
-                        if ("LOST".equalsIgnoreCase(type) && isRetryableReportSubmission(code)) {
-                            queueOfflineLostReport(
-                                    submissionDraftId,
-                                    title,
-                                    details,
-                                    location.getText().toString().trim(),
-                                    normalizeLocalizedDigits(date.getText().toString().trim()),
-                                    latitude,
-                                    longitude,
-                                    paymentId,
-                                    images,
-                                    cameraImages,
-                                    publish
-                            );
-                            return;
-                        }
         try {
             InputStream errorStream = connection.getErrorStream();
             if (errorStream == null) return formatDefaultError(responseCode);
@@ -5519,11 +5747,10 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                 code = putItem(
                         type,
                         editingReportId,
-        lastImageUploadStatus = 0;
                         item.getText().toString().trim(),
                         description.getText().toString().trim(),
                         location.getText().toString().trim(),
-                        date.getText().toString().trim(),
+                        normalizeLocalizedDigits(date.getText().toString().trim()),
                         retainedImageUrls,
                         editingReportLat,
                         editingReportLng,
@@ -5556,42 +5783,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         })).addOnFailureListener(error -> {
             saveButton.setText(translate("Retry update"));
             saveButton.setEnabled(true);
-            Toast.makeText(this, LanguageManager.profileText(this, "offline_report_save_failed"), Toast.LENGTH_LONG).show();
-            return;
-        }
-        publish.setEnabled(false);
-        network.execute(() -> {
-            try (OfflineReportDraftStore store = new OfflineReportDraftStore(this)) {
-                store.saveLostDraft(
-                        this,
-                        draftId,
-                        owner.getUid(),
-                        title,
-                        description,
-                        location,
-                        date,
-                        latitude,
-                        longitude,
-                        backendReportCategory(),
-                        getTtsLocaleForSelectedLanguage().toLanguageTag(),
-                        paymentId,
-                        images,
-                        cameraImages
-                );
-                OfflineReportSyncWorker.enqueue(this);
-                runOnUiThread(() -> {
-                    publish.setText(LanguageManager.profileText(this, "offline_report_saved"));
-                    publish.setEnabled(false);
-                    Toast.makeText(this, LanguageManager.profileText(this, "offline_report_saved"), Toast.LENGTH_LONG).show();
-                });
-            } catch (Exception error) {
-                Log.e("OFFLINE_REPORT", "Could not save report draft locally", error);
-                runOnUiThread(() -> {
-                    publish.setText(getString(R.string.report_retry_submission));
-                    publish.setEnabled(true);
-                    Toast.makeText(this, LanguageManager.profileText(this, "offline_report_save_failed"), Toast.LENGTH_LONG).show();
-                });
-            }
+            Toast.makeText(this, "Authentication failed", Toast.LENGTH_LONG).show();
         });
     }
 
@@ -5653,18 +5845,28 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
 
     private void pickDate(EditText target) {
         Calendar now = Calendar.getInstance();
-        DatePickerDialog picker = new DatePickerDialog(this, (dialog, year, month, day) -> target.setText(String.format(Locale.getDefault(), "%02d/%02d/%04d", day, month + 1, year)), now.get(Calendar.YEAR), now.get(Calendar.MONTH), now.get(Calendar.DAY_OF_MONTH));
+        Configuration pickerConfiguration = new Configuration(getResources().getConfiguration());
+        pickerConfiguration.setLocale(LanguageManager.datePickerLocale(this));
+        ContextThemeWrapper pickerContext = new ContextThemeWrapper(this, getTheme());
+        pickerContext.applyOverrideConfiguration(pickerConfiguration);
+        DatePickerDialog picker = new DatePickerDialog(
+                pickerContext,
+                (dialog, year, month, day) -> target.setText(localizeDigits(
+                        String.format(Locale.US, "%02d/%02d/%04d", day, month + 1, year)
+                )),
+                now.get(Calendar.YEAR),
+                now.get(Calendar.MONTH),
+                now.get(Calendar.DAY_OF_MONTH)
+        );
         picker.getDatePicker().setMaxDate(System.currentTimeMillis());
         picker.show();
     }
 
-                lastImageUploadStatus = responseCode;
     private void uploadProfilePhotoBackground(Uri imageUri, Bitmap cameraBitmap) {
         FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
         if (user == null) return;
 
         user.getIdToken(false).addOnSuccessListener(token -> network.execute(() -> {
-            lastImageUploadStatus = -1;
             String imageUrl = uploadImage(imageUri, cameraBitmap, token.getToken());
             if (imageUrl == null || imageUrl.isEmpty()) {
                 runOnUiThread(() -> Toast.makeText(this, "Profile picture upload failed", Toast.LENGTH_LONG).show());
@@ -6905,16 +7107,17 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             @Override public void onTextChanged(CharSequence value, int start, int before, int count) { }
             @Override public void afterTextChanged(Editable value) {
                 if (formatting) return;
-                String digits = value.toString().replaceAll("[^0-9]", "");
+                String digits = normalizeLocalizedDigits(value.toString()).replaceAll("[^0-9]", "");
                 if (digits.length() > 8) digits = digits.substring(0, 8);
                 StringBuilder formatted = new StringBuilder(digits);
                 if (digits.length() > 2) formatted.insert(2, '/');
                 if (digits.length() > 4) formatted.insert(5, '/');
                 String result = formatted.toString();
-                if (!result.equals(value.toString())) {
+                String localizedResult = localizeDigits(result);
+                if (!localizedResult.equals(value.toString())) {
                     formatting = true;
-                    date.setText(result);
-                    date.setSelection(result.length());
+                    date.setText(localizedResult);
+                    date.setSelection(localizedResult.length());
                     formatting = false;
                 }
                 String[] parts = result.split("/", -1);
@@ -6936,17 +7139,17 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         dateFrame.setBackground(roundWithStroke(surfaceColor(), 10, fieldBorderColor()));
         date.setBackgroundColor(Color.TRANSPARENT);
         date.setPadding(dp(16), dp(8), dp(48), dp(8));
-        dateFrame.addView(date, new FrameLayout.LayoutParams(-1, dp(52)));
+        dateFrame.addView(date, new FrameLayout.LayoutParams(-1, dp(60)));
         ImageView calendar = new ImageView(this);
         calendar.setImageResource(R.drawable.ic_field_calendar);
         calendar.setColorFilter(accentColor());
         calendar.setPadding(dp(11), dp(11), dp(11), dp(11));
         calendar.setContentDescription("Choose date");
         calendar.setOnClickListener(view -> pickDate(date));
-        FrameLayout.LayoutParams iconParams = new FrameLayout.LayoutParams(dp(52), dp(52), Gravity.END | Gravity.CENTER_VERTICAL);
+        FrameLayout.LayoutParams iconParams = new FrameLayout.LayoutParams(dp(60), dp(60), Gravity.END | Gravity.CENTER_VERTICAL);
         dateFrame.addView(calendar, iconParams);
         dateFrame.setOnClickListener(view -> pickDate(date));
-        LinearLayout.LayoutParams dateFrameParams = new LinearLayout.LayoutParams(-1, dp(52));
+        LinearLayout.LayoutParams dateFrameParams = new LinearLayout.LayoutParams(-1, dp(60));
         dateFrameParams.topMargin = dp(4);
         group.addView(dateFrame, dateFrameParams);
         parent.addView(
@@ -8738,6 +8941,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             if (onSuccess != null) onSuccess.run();
             return;
         }
+        OfflineReportSyncWorker.enqueue(this);
 
         if (onSuccess != null) onSuccess.run();
         refreshAnnualSubscription(null);
@@ -8941,7 +9145,6 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                         || parseBooleanValue(document.get("isEmailVerified"))
                         || parseBooleanValue(document.get("email_verified"));
                 String cloudEmail = document.getString("email");
-        OfflineReportSyncWorker.enqueue(this);
                 String localEmail = account.getString("email", "").trim();
                 boolean localEmailVerified = account.getBoolean("email_verified", false);
                 FirebaseUser firebaseUser = auth.getCurrentUser();
@@ -9885,7 +10088,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         sizeThemedDialog(dialog);
         policyView.loadDataWithBaseURL(
                 API_BASE + "/static/",
-                LanguageManager.privacyInformationHtml(this),
+                LanguageManager.privacyInformationHtml(this, darkMode),
                 "text/html",
                 "UTF-8",
                 null
@@ -9893,17 +10096,22 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
     }
 
     private void openCommunityGuidelines() {
-        Uri uri = Uri.parse(BuildConfig.API_BASE_URL + "/static/community-guidelines.html");
-        try {
-            startActivity(new Intent(Intent.ACTION_VIEW, uri));
-        } catch (ActivityNotFoundException error) {
-            Log.e("COMMUNITY_GUIDELINES", "No app is available to open the guidelines", error);
-            Toast.makeText(
-                    this,
-                    LanguageManager.profileText(this, "privacy_open_link_failed"),
-                    Toast.LENGTH_LONG
-            ).show();
-        }
+        WebView guidelinesView = new WebView(this);
+        guidelinesView.setBackgroundColor(backgroundColor());
+        guidelinesView.loadDataWithBaseURL(
+                BuildConfig.API_BASE_URL + "/static/",
+                LanguageManager.communityGuidelinesHtml(this, darkMode),
+                "text/html",
+                "UTF-8",
+                null
+        );
+        int contentHeight = Math.min(dp(620), (int) (getResources().getDisplayMetrics().heightPixels * 0.72f));
+        guidelinesView.setLayoutParams(new ViewGroup.LayoutParams(-1, contentHeight));
+        new AlertDialog.Builder(this)
+                .setTitle(LanguageManager.profileText(this, "community_guidelines"))
+                .setView(guidelinesView)
+                .setPositiveButton(LanguageManager.profileText(this, "close"), null)
+                .show();
     }
 
     private boolean handlePrivacyPolicyNavigation(Uri uri) {
@@ -9941,7 +10149,26 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         root.setBackgroundColor(backgroundColor());
         if (Build.VERSION.SDK_INT >= 29) root.setForceDarkAllowed(false);
         WindowInsetsHelper.applySafeArea(root);
-        addAppControls(root, false);
+        boolean overlayToolbar = currentPage == PAGE_PROFILE
+                || currentPage == PAGE_HOME
+                || currentPage == PAGE_REPORT
+                || currentPage == PAGE_REPORTS
+                || currentPage == PAGE_ADMIN
+                || currentPage == PAGE_ADMIN_SUBSCRIPTIONS;
+        FrameLayout contentFrame = overlayToolbar ? new FrameLayout(this) : null;
+        LinearLayout toolbar = overlayToolbar ? new LinearLayout(this) : null;
+        View topMask = overlayToolbar ? new View(this) : null;
+        if (overlayToolbar) {
+            root.setClipChildren(false);
+            root.setClipToPadding(false);
+            contentFrame.setClipChildren(false);
+            contentFrame.setClipToPadding(false);
+            addAppControls(toolbar, false);
+            topMask.setBackgroundColor(backgroundColor());
+            topMask.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+        } else {
+            addAppControls(root, false);
+        }
         ScrollView scroll = new ScrollView(this);
         scroll.setFillViewport(true);
         scroll.setVerticalScrollBarEnabled(false);
@@ -9959,10 +10186,44 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         }
         activeContent = new LinearLayout(this);
         activeContent.setOrientation(LinearLayout.VERTICAL);
-        activeContent.setPadding(0, dp(26), 0, 0);
+        int contentTopPadding = overlayToolbar
+                ? (currentPage == PAGE_REPORT ? 62 : 70)
+                : 26;
+        activeContent.setPadding(0, dp(contentTopPadding), 0, 0);
         activeContent.setLayoutParams(new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         scroll.addView(activeContent, new ScrollView.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-        root.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1));
+        if (overlayToolbar) {
+            contentFrame.addView(scroll, new FrameLayout.LayoutParams(-1, -1));
+            FrameLayout.LayoutParams maskParams = new FrameLayout.LayoutParams(-1, dp(56), Gravity.TOP);
+            contentFrame.addView(topMask, maskParams);
+            FrameLayout.LayoutParams toolbarParams = new FrameLayout.LayoutParams(
+                    -1,
+                    dp(56),
+                    Gravity.TOP
+            );
+            contentFrame.addView(toolbar, toolbarParams);
+            root.addView(contentFrame, new LinearLayout.LayoutParams(-1, 0, 1));
+            contentFrame.post(() -> {
+                if (!contentFrame.isAttachedToWindow()) return;
+                int[] rootPosition = new int[2];
+                int[] framePosition = new int[2];
+                int[] toolbarPosition = new int[2];
+                root.getLocationOnScreen(rootPosition);
+                contentFrame.getLocationOnScreen(framePosition);
+                toolbar.getLocationOnScreen(toolbarPosition);
+                int rootTop = rootPosition[1];
+                int toolbarBottom = toolbarPosition[1] + toolbar.getHeight();
+                FrameLayout.LayoutParams updatedMaskParams =
+                        (FrameLayout.LayoutParams) topMask.getLayoutParams();
+                updatedMaskParams.topMargin = rootTop - framePosition[1];
+                updatedMaskParams.leftMargin = rootPosition[0] - framePosition[0];
+                updatedMaskParams.width = root.getWidth();
+                updatedMaskParams.height = toolbarBottom - rootTop;
+                topMask.setLayoutParams(updatedMaskParams);
+            });
+        } else {
+            root.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1));
+        }
         setContentView(root);
         LinearLayout contentToAnimate = activeContent;
         contentToAnimate.post(() -> {
@@ -10004,6 +10265,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         titleView.setTextAlignment(View.TEXT_ALIGNMENT_CENTER);
         activeContent.addView(titleView, new LinearLayout.LayoutParams(-1, -2));
 
+        if (subtitle == null || subtitle.trim().isEmpty()) return;
         TextView subtitleView = text(translate(subtitle), 11, secondaryTextColor(), Typeface.NORMAL);
         subtitleView.setGravity(Gravity.CENTER);
         subtitleView.setTextAlignment(View.TEXT_ALIGNMENT_CENTER);
@@ -10108,6 +10370,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         card.setGravity(isCompact ? Gravity.START : Gravity.CENTER_VERTICAL);
         card.setPadding(dp(16), dp(12), dp(16), dp(12));
         card.setBackground(roundWithStroke(surfaceColor(), 18, borderColor()));
+        FendlyMotion.setElevation(card, dp(3));
 
         TextView titleView = text(title, isCompact ? 15 : 18, secondaryTextColor(), Typeface.NORMAL);
         titleView.setGravity(Gravity.START | Gravity.CENTER_VERTICAL);
@@ -10285,7 +10548,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                 fieldLabel(label, true),
                 new LinearLayout.LayoutParams(-1, dp(36))
         );
-        LinearLayout.LayoutParams inputParams = new LinearLayout.LayoutParams(-1, dp(52));
+        LinearLayout.LayoutParams inputParams = new LinearLayout.LayoutParams(-1, dp(60));
         inputParams.topMargin = dp(4);
         if (input != null) {
             if (input.getParent() instanceof ViewGroup) {
@@ -10665,11 +10928,10 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
 
     private TextView filledButton(String label, int background, int foreground) {
         TextView button = text(label, 12, foreground, Typeface.NORMAL);
-        ButtonPressAnimator.attach(button);
         button.setTextSize(responsiveTextSize(12));
         button.setTextColor(background == LOST_GREEN ? Color.WHITE : foreground);
         button.setGravity(Gravity.CENTER);
-        button.setBackground(round(background, 24));
+        button.setBackground(depthButtonBackground(background, 24, 0));
         button.setClickable(true);
         button.setFocusable(true);
         button.setEnabled(true);
@@ -10678,19 +10940,50 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         button.setPadding(dp(12), dp(6), dp(12), dp(6));
         button.setSingleLine(false);
         button.setIncludeFontPadding(true);
+        FendlyMotion.setElevation(button, dp(6));
+        ButtonPressAnimator.attach(button);
         return button;
     }
 
     private TextView outlinedButton(String label) {
         TextView button = text(label, 12, primaryTextColor(), Typeface.NORMAL);
-        ButtonPressAnimator.attach(button);
         button.setTextSize(responsiveTextSize(12));
         button.setGravity(Gravity.CENTER);
         button.setMinHeight(dp(44));
         button.setPadding(dp(12), dp(8), dp(12), dp(8));
         button.setSingleLine(false);
-        button.setBackground(roundWithStroke(surfaceColor(), 24, borderColor()));
+        button.setBackground(depthButtonBackground(surfaceColor(), 24, borderColor()));
+        FendlyMotion.setElevation(button, dp(3));
+        ButtonPressAnimator.attach(button);
         return button;
+    }
+
+    private GradientDrawable depthButtonBackground(int color, int radius, int strokeColor) {
+        GradientDrawable drawable = new GradientDrawable(
+                GradientDrawable.Orientation.TOP_BOTTOM,
+                new int[]{blendColor(color, Color.WHITE, 0.14f), color, blendColor(color, Color.BLACK, 0.12f)}
+        );
+        drawable.setCornerRadius(dp(radius));
+        if (strokeColor != 0) drawable.setStroke(dp(1), strokeColor);
+        return drawable;
+    }
+
+    private void applyIconDepth(View icon, int cornerRadius) {
+        icon.setBackground(depthButtonBackground(surfaceColor(), cornerRadius, borderColor()));
+        FendlyMotion.setElevation(icon, dp(4));
+        icon.setTranslationZ(dp(1));
+        icon.setCameraDistance(8000f * getResources().getDisplayMetrics().density);
+        ButtonPressAnimator.attach(icon);
+    }
+
+    private int blendColor(int color, int overlay, float ratio) {
+        float inverseRatio = 1f - ratio;
+        return Color.argb(
+                Color.alpha(color),
+                Math.round(Color.red(color) * inverseRatio + Color.red(overlay) * ratio),
+                Math.round(Color.green(color) * inverseRatio + Color.green(overlay) * ratio),
+                Math.round(Color.blue(color) * inverseRatio + Color.blue(overlay) * ratio)
+        );
     }
 
     private float responsiveTextSize(float baseSize) {
@@ -10703,12 +10996,13 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
 
     private TextView reportTypeToggle(String label, boolean selected, int selectedBackground, int selectedForeground) {
         TextView toggle = text(label, 11, selected ? selectedForeground : secondaryTextColor(), Typeface.NORMAL);
-        ButtonPressAnimator.attach(toggle);
         if (selected && selectedBackground == LOST_GREEN) toggle.setTextColor(Color.WHITE);
         toggle.setGravity(Gravity.CENTER);
         toggle.setBackground(selected
-                ? round(selectedBackground, 24)
-                : roundWithStroke(surfaceColor(), 24, fieldBorderColor()));
+                ? depthButtonBackground(selectedBackground, 24, 0)
+                : depthButtonBackground(surfaceColor(), 24, fieldBorderColor()));
+        FendlyMotion.setElevation(toggle, dp(selected ? 4 : 2));
+        ButtonPressAnimator.attach(toggle);
         return toggle;
     }
 
@@ -10718,6 +11012,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         card.setGravity(Gravity.CENTER_VERTICAL);
         card.setPadding(dp(16), dp(12), dp(16), dp(12));
         card.setBackground(roundWithStroke(surfaceColor(), 18, borderColor()));
+        FendlyMotion.setElevation(card, dp(3));
 
         TextView subscriptionLabel = text(translate("Subscription"), 15, secondaryTextColor(), Typeface.NORMAL);
         subscriptionLabel.setIncludeFontPadding(false);
@@ -10766,6 +11061,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         card.setGravity(Gravity.CENTER);
         card.setPadding(dp(8), dp(8), dp(8), dp(8));
         card.setBackground(roundWithStroke(surfaceColor(), 16, borderColor()));
+        FendlyMotion.setElevation(card, dp(3));
         TextView label = text(type + (showIndicator ? "  •" : ""), 9, accent, Typeface.NORMAL);
         label.setGravity(Gravity.CENTER);
         card.addView(label, new LinearLayout.LayoutParams(-1, dp(20)));
@@ -10780,6 +11076,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         card.setOrientation(LinearLayout.VERTICAL);
         card.setPadding(dp(14), dp(14), dp(14), dp(14));
         card.setBackground(roundWithStroke(surfaceColor(), 16, borderColor()));
+        FendlyMotion.setElevation(card, dp(4));
 
         LinearLayout badge = new LinearLayout(this);
         badge.setGravity(Gravity.CENTER_VERTICAL);
@@ -11039,6 +11336,24 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
             openProfilePhotoCamera();
         }
+        if (requestCode == REQUEST_ASSISTANT_AUDIO_PERMISSION) {
+            boolean granted = grantResults.length > 0
+                    && grantResults[0] == PackageManager.PERMISSION_GRANTED;
+            if (granted && pendingAssistantRecognition
+                    && fendlyAssistantDialog != null
+                    && fendlyAssistantDialog.isShowing()) {
+                launchFendlyAssistantSpeechRecognizer();
+            } else {
+                pendingAssistantRecognition = false;
+                if (!granted) {
+                    Toast.makeText(
+                            this,
+                            assistantUiText("speech_unavailable"),
+                            Toast.LENGTH_LONG
+                    ).show();
+                }
+            }
+        }
         if (requestCode == REQUEST_AUDIO_PERMISSION) {
             if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
                 startVoiceRecording(null);
@@ -11060,6 +11375,27 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             if (resultCode == RESULT_OK && data != null) {
                 String smsMessage = data.getStringExtra(SmsRetriever.EXTRA_SMS_MESSAGE);
                 fillOtpFromSms(smsMessage);
+            }
+            return;
+        }
+        if (requestCode == REQUEST_ASSISTANT_SPEECH) {
+            pendingAssistantRecognition = false;
+            if (resultCode == RESULT_OK
+                    && data != null
+                    && fendlyAssistantDialog != null
+                    && fendlyAssistantDialog.isShowing()
+                    && fendlyAssistantInput != null
+                    && fendlyAssistantAskButton != null) {
+                ArrayList<String> results = data.getStringArrayListExtra(
+                        android.speech.RecognizerIntent.EXTRA_RESULTS
+                );
+                if (results != null && !results.isEmpty() && !results.get(0).trim().isEmpty()) {
+                    fendlyAssistantInput.setText(results.get(0).trim());
+                    assistantSpeakNextAnswer = true;
+                    fendlyAssistantAskButton.performClick();
+                } else {
+                    Toast.makeText(this, assistantUiText("speech_unavailable"), Toast.LENGTH_LONG).show();
+                }
             }
             return;
         }
@@ -11185,17 +11521,6 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                     SharedPreferences account = getSharedPreferences("fendly_account", MODE_PRIVATE);
                     account.edit()
                         .putString("profile_image_uri", savedPath)
-        TextView claimsButton = actionButton("Possible-match claims", false);
-        root.addView(claimsButton, contentParams(-1, dp(44), dp(10)));
-        LinearLayout claimsContainer = new LinearLayout(this);
-        claimsContainer.setOrientation(LinearLayout.VERTICAL);
-        root.addView(claimsContainer, contentParams(-1, -2, 0));
-        claimsContainer.setVisibility(View.GONE);
-        claimsButton.setOnClickListener(view -> {
-            boolean show = claimsContainer.getVisibility() != View.VISIBLE;
-            claimsContainer.setVisibility(show ? View.VISIBLE : View.GONE);
-            if (show) loadAdminReportClaims(claimsContainer);
-        });
                         .remove("profile_image_cache_url")
                         .apply();
 
@@ -11292,6 +11617,40 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                         successStories, successStoriesLoaded, successStoriesLoading,
                         successStoriesButton);
             }
+        });
+
+        TextView adoptionRequestsButton = actionButton(
+                LanguageManager.adoptionText(this, "adopt_admin_notifications"),
+                false
+        );
+        root.addView(adoptionRequestsButton, contentParams(-1, dp(44), dp(10)));
+        LinearLayout adoptionRequests = new LinearLayout(this);
+        adoptionRequests.setOrientation(LinearLayout.VERTICAL);
+        root.addView(adoptionRequests, contentParams(-1, -2, 0));
+        adoptionRequests.setVisibility(View.GONE);
+        boolean[] adoptionRequestsLoading = {false};
+        adoptionRequestsButton.setOnClickListener(view -> {
+            boolean show = adoptionRequests.getVisibility() != View.VISIBLE;
+            adoptionRequests.setVisibility(show ? View.VISIBLE : View.GONE);
+            if (show && !adoptionRequestsLoading[0]) {
+                loadAdminAdoptionApplications(
+                        adoptionRequests,
+                        adoptionRequestsButton,
+                        adoptionRequestsLoading
+                );
+            }
+        });
+
+        TextView claimsButton = actionButton("Possible-match claims", false);
+        root.addView(claimsButton, contentParams(-1, dp(44), dp(10)));
+        LinearLayout claimsContainer = new LinearLayout(this);
+        claimsContainer.setOrientation(LinearLayout.VERTICAL);
+        root.addView(claimsContainer, contentParams(-1, -2, 0));
+        claimsContainer.setVisibility(View.GONE);
+        claimsButton.setOnClickListener(view -> {
+            boolean show = claimsContainer.getVisibility() != View.VISIBLE;
+            claimsContainer.setVisibility(show ? View.VISIBLE : View.GONE);
+            if (show) loadAdminReportClaims(claimsContainer);
         });
 
         TextView adoptionListingsButton = actionButton("Adoption listings", false);
@@ -11437,6 +11796,88 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             boolean isLost = "LOST".equals(selectedType);
             int reportIndex = isLost ? 0 : 1;
             if (reportPageLoading[reportIndex] || !reportHasMore[reportIndex]) return;
+            FirebaseUser adminUser = FirebaseAuth.getInstance().getCurrentUser();
+            if (adminUser == null) return;
+            reportPageLoading[reportIndex] = true;
+            adminUser.getIdToken(false).addOnSuccessListener(token -> adminPanelNetwork.execute(() -> {
+                String response = fetchAdminReportPage(
+                        selectedType,
+                        reportOffsets[reportIndex],
+                        token.getToken()
+                );
+                runOnUiThread(() -> {
+                    reportPageLoading[reportIndex] = false;
+                    if (response == null || !selectedType.equals(adminReportFilter)) return;
+                    try {
+                        JSONObject page = new JSONObject(response);
+                        JSONArray pageItems = page.optJSONArray("items");
+                        JSONArray target = isLost ? lostReports[0] : foundReports[0];
+                        if (pageItems != null) {
+                            for (int index = 0; index < pageItems.length(); index++) {
+                                target.put(pageItems.getJSONObject(index));
+                            }
+                        }
+                        if (isLost) lostReports[0] = target;
+                        else foundReports[0] = target;
+                        reportOffsets[reportIndex] = target.length();
+                        reportHasMore[reportIndex] = page.optBoolean("has_more", false);
+                        renderAdminReports(target.toString(), reports, matchesHeading, matches);
+                        if (reportHasMore[reportIndex]) {
+                            addAdminLoadMoreButton(reports, loadNextReportPage[0]);
+                        }
+                    } catch (Exception parseError) {
+                        Log.e("ADMIN", "Could not append an admin report page", parseError);
+                        Toast.makeText(MainActivity.this, "Could not load more reports.", Toast.LENGTH_SHORT).show();
+                    }
+                });
+            })).addOnFailureListener(error -> {
+                reportPageLoading[reportIndex] = false;
+                Log.e("ADMIN", "Could not get an admin token to load more reports", error);
+                runOnUiThread(() -> Toast.makeText(MainActivity.this, "Could not load more reports.", Toast.LENGTH_SHORT).show());
+            });
+        };
+        populateAdminReportCategoryTabs(reportCategoryTabs, search, restoreLiveReports);
+        updateAdminReportFilterStyles(lostCount, foundCount);
+        loadAdminItemSummary(lostCount, foundCount);
+        lostCount.setOnClickListener(view -> selectAdminReportFilter(
+            "LOST", lostCount, foundCount, search, reportsHeading, restoreLiveReports));
+        foundCount.setOnClickListener(view -> selectAdminReportFilter(
+            "FOUND", lostCount, foundCount, search, reportsHeading, restoreLiveReports));
+        search.addTextChangedListener(new TextWatcher() {
+            @Override public void beforeTextChanged(CharSequence value, int start, int count, int after) { }
+            @Override public void onTextChanged(CharSequence value, int start, int before, int count) { }
+            @Override public void afterTextChanged(Editable value) {
+                if (value.toString().trim().isEmpty()) {
+                    searchButton.setText(translate("Search"));
+                    searchButton.setEnabled(true);
+                    reportsHeading.setText(adminReportFilter.isEmpty()
+                            ? translate("Live reports")
+                            : String.format(Locale.ROOT, "%s reports", adminReportFilter));
+                    restoreLiveReports.run();
+                }
+            }
+        });
+        searchButton.setOnClickListener(view -> {
+            String query = search.getText().toString().trim();
+            if (query.isEmpty()) {
+                restoreLiveReports.run();
+                return;
+            }
+            reportsHeading.setText(translate("Search results"));
+            searchAdminUsers(query, reports, searchButton, search, matchesHeading, matches);
+        });
+        root.post(() -> {
+            if (currentPage == PAGE_ADMIN) {
+                fetchPendingNotificationCount();
+                loadAdminAdoptionApplications(
+                        adoptionRequests,
+                        adoptionRequestsButton,
+                        adoptionRequestsLoading
+                );
+            }
+        });
+    }
+
     private void addAdminVerificationEditor(LinearLayout details, JSONObject report) {
         String itemId = report.optString("id", "").trim();
         String itemType = report.optString("type", "").trim().toLowerCase(Locale.ROOT);
@@ -11639,81 +12080,309 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         })).addOnFailureListener(error -> Toast.makeText(
                 this, "Could not verify administrator sign-in.", Toast.LENGTH_LONG).show());
     }
-            FirebaseUser adminUser = FirebaseAuth.getInstance().getCurrentUser();
-            if (adminUser == null) return;
-            reportPageLoading[reportIndex] = true;
-            adminUser.getIdToken(false).addOnSuccessListener(token -> adminPanelNetwork.execute(() -> {
-                String response = fetchAdminReportPage(
-                        selectedType,
-                        reportOffsets[reportIndex],
-                        token.getToken()
-                );
-                runOnUiThread(() -> {
-                    reportPageLoading[reportIndex] = false;
-                    if (response == null || !selectedType.equals(adminReportFilter)) return;
-                    try {
-                        JSONObject page = new JSONObject(response);
-                        JSONArray pageItems = page.optJSONArray("items");
-                        JSONArray target = isLost ? lostReports[0] : foundReports[0];
-                        if (pageItems != null) {
-                            for (int index = 0; index < pageItems.length(); index++) {
-                                target.put(pageItems.getJSONObject(index));
-                            }
-                        }
-                        if (isLost) lostReports[0] = target;
-                        else foundReports[0] = target;
-                        reportOffsets[reportIndex] = target.length();
-                        reportHasMore[reportIndex] = page.optBoolean("has_more", false);
-                        renderAdminReports(target.toString(), reports, matchesHeading, matches);
-                        if (reportHasMore[reportIndex]) {
-                            addAdminLoadMoreButton(reports, loadNextReportPage[0]);
-                        }
-                    } catch (Exception parseError) {
-                        Log.e("ADMIN", "Could not append an admin report page", parseError);
-                        Toast.makeText(MainActivity.this, "Could not load more reports.", Toast.LENGTH_SHORT).show();
-                    }
-                });
-            })).addOnFailureListener(error -> {
-                reportPageLoading[reportIndex] = false;
-                Log.e("ADMIN", "Could not get an admin token to load more reports", error);
-                runOnUiThread(() -> Toast.makeText(MainActivity.this, "Could not load more reports.", Toast.LENGTH_SHORT).show());
-            });
-        };
-        populateAdminReportCategoryTabs(reportCategoryTabs, search, restoreLiveReports);
-        updateAdminReportFilterStyles(lostCount, foundCount);
-        loadAdminItemSummary(lostCount, foundCount);
-        lostCount.setOnClickListener(view -> selectAdminReportFilter(
-            "LOST", lostCount, foundCount, search, reportsHeading, restoreLiveReports));
-        foundCount.setOnClickListener(view -> selectAdminReportFilter(
-            "FOUND", lostCount, foundCount, search, reportsHeading, restoreLiveReports));
-        search.addTextChangedListener(new TextWatcher() {
-            @Override public void beforeTextChanged(CharSequence value, int start, int count, int after) { }
-            @Override public void onTextChanged(CharSequence value, int start, int before, int count) { }
-            @Override public void afterTextChanged(Editable value) {
-                if (value.toString().trim().isEmpty()) {
-                    searchButton.setText(translate("Search"));
-                    searchButton.setEnabled(true);
-                    reportsHeading.setText(adminReportFilter.isEmpty()
-                            ? translate("Live reports")
-                            : String.format(Locale.ROOT, "%s reports", adminReportFilter));
-                    restoreLiveReports.run();
+
+    private void loadAdminAdoptionApplications(
+            LinearLayout requests,
+            TextView trigger,
+            boolean[] loading
+    ) {
+        if (loading[0]) return;
+        FirebaseUser adminUser = FirebaseAuth.getInstance().getCurrentUser();
+        if (adminUser == null) {
+            showAdminPanelMessage(
+                    requests,
+                    LanguageManager.adoptionText(this, "adopt_admin_sign_in")
+            );
+            return;
+        }
+        loading[0] = true;
+        trigger.setText(LanguageManager.adoptionText(this, "adopt_admin_loading"));
+        adminUser.getIdToken(false).addOnSuccessListener(token -> adminPanelNetwork.execute(() -> {
+            AuthorizedResponse response = authorizedRequest(
+                    "GET",
+                    "/api/admin/adoptions/applications",
+                    token.getToken()
+            );
+            runOnUiThread(() -> {
+                loading[0] = false;
+                if (response.statusCode < 200 || response.statusCode >= 300) {
+                    trigger.setText(LanguageManager.adoptionText(
+                            this,
+                            "adopt_admin_notifications"
+                    ));
+                    showAdminPanelMessage(
+                            requests,
+                            LanguageManager.adoptionText(this, "adopt_admin_load_failed")
+                                    + " " + authorizedRequestError(response)
+                    );
+                    return;
                 }
-            }
+                try {
+                    JSONArray applications = new JSONArray(response.body);
+                    requests.removeAllViews();
+                    trigger.setText(applications.length() == 0
+                            ? LanguageManager.adoptionText(this, "adopt_admin_notifications")
+                            : LanguageManager.adoptionText(this, "adopt_admin_requests_count")
+                                    .replace("{count}", localizeDigits(
+                                            String.valueOf(applications.length())
+                                    )));
+                    if (applications.length() == 0) {
+                        requests.addView(text(
+                                LanguageManager.adoptionText(this, "adopt_admin_no_requests"),
+                                13,
+                                secondaryTextColor(),
+                                Typeface.NORMAL
+                        ), contentParams(-1, -2, dp(6)));
+                        requests.setVisibility(View.GONE);
+                        return;
+                    }
+                    requests.setVisibility(View.VISIBLE);
+                    for (int index = 0; index < applications.length(); index++) {
+                        JSONObject application = applications.getJSONObject(index);
+                        LinearLayout card = new LinearLayout(this);
+                        card.setOrientation(LinearLayout.VERTICAL);
+                        card.setPadding(dp(12), dp(12), dp(12), dp(12));
+                        card.setBackground(roundWithStroke(surfaceColor(), 14, borderColor()));
+                        LinearLayout.LayoutParams cardParams =
+                                new LinearLayout.LayoutParams(-1, -2);
+                        cardParams.setMargins(0, 0, 0, dp(10));
+                        requests.addView(card, cardParams);
+
+                        String applicantName = application.optString("applicant_name");
+                        String listerName = application.optString("lister_name");
+                        String applicantPhone = application.optString("applicant_contact_phone");
+                        String listerPhone = application.optString("lister_contact_phone");
+                        boolean ownerApproved = application.optBoolean("owner_approved");
+                        String details = application.optString(
+                                        "pet_name",
+                                        LanguageManager.adoptionText(this, "adopt_admin_this_pet")
+                                )
+                                + " · " + application.optString(
+                                        "species",
+                                        LanguageManager.adoptionText(this, "adopt_species")
+                                )
+                                + " · " + application.optString("location_city", "")
+                                + "\n" + LanguageManager.adoptionText(this, "adopt_admin_applicant")
+                                + ": " + (applicantName.isEmpty()
+                                        ? LanguageManager.adoptionText(
+                                                this,
+                                                "adopt_admin_fendly_user"
+                                        )
+                                        : applicantName)
+                                + "\n" + LanguageManager.adoptionText(
+                                        this,
+                                        "adopt_admin_applicant_phone"
+                                ) + ": " + applicantPhone
+                                + "\n" + LanguageManager.adoptionText(this, "adopt_admin_lister")
+                                + ": " + (listerName.isEmpty()
+                                        ? LanguageManager.adoptionText(
+                                                this,
+                                                "adopt_admin_fendly_user"
+                                        )
+                                        : listerName)
+                                + "\n" + LanguageManager.adoptionText(
+                                        this,
+                                        "adopt_admin_verified_phone"
+                                ) + ": " + (listerPhone.isEmpty()
+                                        ? LanguageManager.adoptionText(
+                                                this,
+                                                "adopt_admin_not_verified"
+                                        )
+                                        : listerPhone)
+                                + "\n" + LanguageManager.adoptionText(this, "adopt_admin_home")
+                                + ": " + application.optString("home_type")
+                                + "\n" + LanguageManager.adoptionText(
+                                        this,
+                                        "adopt_admin_experience"
+                                ) + ": " + application.optString("pet_experience")
+                                + "\n" + LanguageManager.adoptionText(
+                                        this,
+                                        "adopt_admin_selection"
+                                ) + ": " + LanguageManager.adoptionText(
+                                        this,
+                                        ownerApproved ? "adopt_admin_selected" : "adopt_admin_pending"
+                                );
+                        card.addView(text(
+                                details,
+                                13,
+                                primaryTextColor(),
+                                Typeface.NORMAL
+                        ), new LinearLayout.LayoutParams(-1, -2));
+
+                        LinearLayout actions = new LinearLayout(this);
+                        actions.setOrientation(LinearLayout.HORIZONTAL);
+                        LinearLayout.LayoutParams actionsParams =
+                                new LinearLayout.LayoutParams(-1, dp(42));
+                        actionsParams.setMargins(0, dp(8), 0, 0);
+                        card.addView(actions, actionsParams);
+                        TextView reject = actionButton(
+                                LanguageManager.adoptionText(this, "adopt_admin_reject"),
+                                false
+                        );
+                        actions.addView(reject, new LinearLayout.LayoutParams(0, -1, 1f));
+                        reject.setOnClickListener(view -> confirmAdminAdoptionApplicationDecision(
+                                application,
+                                "rejected",
+                                requests,
+                                trigger,
+                                loading
+                        ));
+                        if (ownerApproved && !listerPhone.isEmpty()) {
+                            TextView release = actionButton(
+                                    LanguageManager.adoptionText(
+                                            this,
+                                            "adopt_admin_share_contacts"
+                                    ),
+                                    true
+                            );
+                            LinearLayout.LayoutParams releaseParams =
+                                    new LinearLayout.LayoutParams(0, -1, 1f);
+                            releaseParams.setMargins(dp(8), 0, 0, 0);
+                            actions.addView(release, releaseParams);
+                            release.setOnClickListener(view ->
+                                    confirmAdminAdoptionApplicationDecision(
+                                            application,
+                                            "approved",
+                                            requests,
+                                            trigger,
+                                            loading
+                                    ));
+                        }
+                        if (ownerApproved && listerPhone.isEmpty()) {
+                            card.addView(text(
+                                    LanguageManager.adoptionText(
+                                            this,
+                                            "adopt_admin_verify_before_share"
+                                    ),
+                                    12,
+                                    Color.rgb(190, 45, 55),
+                                    Typeface.NORMAL
+                            ), contentParams(-1, -2, dp(6)));
+                        }
+                    }
+                } catch (Exception error) {
+                    Log.e("ADMIN_ADOPTIONS", "Could not read adoption applications", error);
+                    trigger.setText(LanguageManager.adoptionText(
+                            this,
+                            "adopt_admin_notifications"
+                    ));
+                    showAdminPanelMessage(
+                            requests,
+                            LanguageManager.adoptionText(this, "adopt_admin_load_failed")
+                    );
+                }
+            });
+        })).addOnFailureListener(error -> runOnUiThread(() -> {
+            loading[0] = false;
+            trigger.setText(LanguageManager.adoptionText(this, "adopt_admin_notifications"));
+            showAdminPanelMessage(
+                    requests,
+                    LanguageManager.adoptionText(this, "adopt_admin_signin_failed")
+            );
+        }));
+    }
+
+    private void confirmAdminAdoptionApplicationDecision(
+            JSONObject application,
+            String decision,
+            LinearLayout requests,
+            TextView trigger,
+            boolean[] loading
+    ) {
+        String petName = application.optString(
+                "pet_name",
+                LanguageManager.adoptionText(this, "adopt_admin_this_pet")
+        );
+        String confirmationKey = "approved".equals(decision)
+                ? "adopt_admin_confirm_release"
+                : "adopt_admin_confirm_reject";
+        Dialog dialog = new Dialog(this);
+        dialog.requestWindowFeature(Window.FEATURE_NO_TITLE);
+        LinearLayout content = themedDialogContent(
+                R.drawable.ic_field_lock,
+                LanguageManager.adoptionText(this, "adopt_admin_confirm_title"),
+                LanguageManager.adoptionText(this, confirmationKey).replace("{pet}", petName)
+        );
+        LinearLayout actions = new LinearLayout(this);
+        actions.setGravity(Gravity.END | Gravity.CENTER_VERTICAL);
+        TextView cancel = text(
+                LanguageManager.adoptionText(this, "adopt_admin_cancel"),
+                12,
+                secondaryTextColor(),
+                Typeface.NORMAL
+        );
+        cancel.setGravity(Gravity.CENTER);
+        cancel.setOnClickListener(view -> dialog.dismiss());
+        actions.addView(cancel, new LinearLayout.LayoutParams(dp(88), dp(44)));
+        TextView confirm = filledButton(
+                LanguageManager.adoptionText(this, "adopt_admin_confirm"),
+                GOLD,
+                GOLD_ON
+        );
+        LinearLayout.LayoutParams confirmParams =
+                new LinearLayout.LayoutParams(dp(120), dp(44));
+        confirmParams.setMargins(dp(8), 0, 0, 0);
+        actions.addView(confirm, confirmParams);
+        LinearLayout.LayoutParams actionsParams = new LinearLayout.LayoutParams(-1, dp(44));
+        actionsParams.setMargins(0, dp(8), 0, 0);
+        content.addView(actions, actionsParams);
+        confirm.setOnClickListener(view -> {
+            dialog.dismiss();
+            submitAdminAdoptionApplicationDecision(
+                    application.optString("id"),
+                    decision,
+                    requests,
+                    trigger,
+                    loading
+            );
         });
-        searchButton.setOnClickListener(view -> {
-            String query = search.getText().toString().trim();
-            if (query.isEmpty()) {
-                restoreLiveReports.run();
-                return;
-            }
-            reportsHeading.setText(translate("Search results"));
-            searchAdminUsers(query, reports, searchButton, search, matchesHeading, matches);
-        });
-        root.post(() -> {
-            if (currentPage == PAGE_ADMIN) {
-                fetchPendingNotificationCount();
-            }
-        });
+        dialog.setContentView(content);
+        dialog.show();
+        sizeThemedDialog(dialog);
+    }
+
+    private void submitAdminAdoptionApplicationDecision(
+            String applicationId,
+            String decision,
+            LinearLayout requests,
+            TextView trigger,
+            boolean[] loading
+    ) {
+        FirebaseUser adminUser = FirebaseAuth.getInstance().getCurrentUser();
+        if (adminUser == null) {
+            showAdminPanelMessage(
+                    requests,
+                    LanguageManager.adoptionText(this, "adopt_admin_sign_in")
+            );
+            return;
+        }
+        loading[0] = true;
+        adminUser.getIdToken(false).addOnSuccessListener(token -> adminPanelNetwork.execute(() -> {
+            AuthorizedResponse response = authorizedRequest(
+                    "POST",
+                    "/api/admin/adoptions/applications/" + Uri.encode(applicationId)
+                            + "/decision?decision=" + Uri.encode(decision),
+                    token.getToken()
+            );
+            runOnUiThread(() -> {
+                loading[0] = false;
+                if (response.statusCode < 200 || response.statusCode >= 300) {
+                    showAdminPanelMessage(
+                            requests,
+                            LanguageManager.adoptionText(this, "adopt_admin_review_failed")
+                                    + " " + authorizedRequestError(response)
+                    );
+                    return;
+                }
+                loadAdminAdoptionApplications(requests, trigger, loading);
+            });
+        })).addOnFailureListener(error -> runOnUiThread(() -> {
+            loading[0] = false;
+            showAdminPanelMessage(
+                    requests,
+                    LanguageManager.adoptionText(this, "adopt_admin_signin_failed")
+            );
+        }));
     }
 
     private void showAdminMetaConnectionPage() {
@@ -12138,7 +12807,6 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                     Toast.makeText(
                             this,
                             "Adoption listing was not deleted. "
-            addAdminVerificationEditor(details, report);
                                     + authorizedRequestError(response),
                             Toast.LENGTH_LONG
                     ).show();
@@ -12468,6 +13136,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         if (adminView) {
             addReportDetail(details, "Posted", report.optString("created_at", ""));
             addReportDetail(details, "Reporter ID", report.optString("created_by", ""));
+            addAdminVerificationEditor(details, report);
         }
 
         ScrollView scroll = new ScrollView(this);
@@ -12700,6 +13369,21 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                 if (!reportDate.isEmpty()) {
                     details.addView(text(reportDate, 11, secondaryTextColor(), Typeface.NORMAL));
                 }
+                String sourceReportType = report.optString("type", "");
+                String foundReportId = match.optString("report_id", "").trim();
+                if ("LOST".equalsIgnoreCase(sourceReportType)
+                        && "FOUND".equalsIgnoreCase(reportType)
+                        && !foundReportId.isEmpty()) {
+                    TextView claim = actionButton(
+                            LanguageManager.profileText(this, "claim_submit"),
+                            false
+                    );
+                    LinearLayout.LayoutParams claimParams =
+                            new LinearLayout.LayoutParams(-1, dp(42));
+                    claimParams.setMargins(0, dp(10), 0, 0);
+                    card.addView(claim, claimParams);
+                    claim.setOnClickListener(view -> showReportClaimDialog(report, foundReportId));
+                }
             }
         }
 
@@ -12727,6 +13411,101 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             );
         }
         resultsDialog.show();
+    }
+
+    private void showReportClaimDialog(JSONObject lostReport, String foundReportId) {
+        String lostReportId = lostReport.optString("id", "").trim();
+        if (lostReportId.isEmpty() || foundReportId.trim().isEmpty()) {
+            Toast.makeText(this, LanguageManager.profileText(this, "claim_unavailable"), Toast.LENGTH_LONG).show();
+            return;
+        }
+        LinearLayout content = new LinearLayout(this);
+        content.setOrientation(LinearLayout.VERTICAL);
+        content.setPadding(dp(20), dp(12), dp(20), dp(8));
+        TextView instructions = text(
+                LanguageManager.profileText(this, "claim_prompt"),
+                13,
+                secondaryTextColor(),
+                Typeface.NORMAL
+        );
+        content.addView(instructions, new LinearLayout.LayoutParams(-1, -2));
+        EditText verificationDetail = new EditText(this);
+        verificationDetail.setTextColor(primaryTextColor());
+        verificationDetail.setHintTextColor(secondaryTextColor());
+        verificationDetail.setHint(LanguageManager.profileText(this, "claim_detail_hint"));
+        verificationDetail.setGravity(Gravity.TOP | Gravity.START);
+        verificationDetail.setMinLines(3);
+        verificationDetail.setMaxLines(6);
+        verificationDetail.setInputType(
+                android.text.InputType.TYPE_CLASS_TEXT
+                        | android.text.InputType.TYPE_TEXT_FLAG_MULTI_LINE
+                        | android.text.InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
+        );
+        LinearLayout.LayoutParams inputParams = new LinearLayout.LayoutParams(-1, dp(112));
+        inputParams.setMargins(0, dp(12), 0, 0);
+        content.addView(verificationDetail, inputParams);
+        AlertDialog dialog = new AlertDialog.Builder(this)
+                .setTitle(LanguageManager.profileText(this, "claim_title"))
+                .setView(content)
+                .setNegativeButton(LanguageManager.profileText(this, "cancel"), null)
+                .setPositiveButton(LanguageManager.profileText(this, "claim_submit"), null)
+                .create();
+        dialog.setOnShowListener(ignored -> dialog.getButton(AlertDialog.BUTTON_POSITIVE)
+                .setOnClickListener(view -> {
+                    String entered = verificationDetail.getText().toString().trim();
+                    if (entered.isEmpty()) {
+                        verificationDetail.setError(LanguageManager.profileText(this, "claim_detail_required"));
+                        return;
+                    }
+                    FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
+                    if (user == null) {
+                        Toast.makeText(this, getString(R.string.report_sign_in_required), Toast.LENGTH_LONG).show();
+                        return;
+                    }
+                    user.getIdToken(false).addOnSuccessListener(token -> network.execute(() -> {
+                        try {
+                            JSONObject body = new JSONObject()
+                                    .put("found_item_id", foundReportId)
+                                    .put("verification_detail", entered);
+                            AuthorizedResponse response = authorizedRequest(
+                                    "POST",
+                                    "/api/items/lost/" + Uri.encode(lostReportId) + "/claims",
+                                    token.getToken(),
+                                    body.toString()
+                            );
+                            runOnUiThread(() -> {
+                                if (response.statusCode >= 200 && response.statusCode < 300) {
+                                    dialog.dismiss();
+                                    Toast.makeText(
+                                            this,
+                                            LanguageManager.profileText(this, "claim_pending"),
+                                            Toast.LENGTH_LONG
+                                    ).show();
+                                } else {
+                                    Toast.makeText(
+                                            this,
+                                            response.statusCode == 409
+                                                    ? LanguageManager.profileText(this, "claim_not_ready")
+                                                    : authorizedRequestError(response),
+                                            Toast.LENGTH_LONG
+                                    ).show();
+                                }
+                            });
+                        } catch (Exception error) {
+                            Log.e("REPORT_CLAIM", "Could not submit possible-match claim", error);
+                            runOnUiThread(() -> Toast.makeText(
+                                    this,
+                                    LanguageManager.profileText(this, "claim_unavailable"),
+                                    Toast.LENGTH_LONG
+                            ).show());
+                        }
+                    })).addOnFailureListener(error -> Toast.makeText(
+                            this,
+                            LanguageManager.profileText(this, "claim_unavailable"),
+                            Toast.LENGTH_LONG
+                    ).show());
+                }));
+        dialog.show();
     }
 
     private void confirmAdminReportRemoval(JSONObject report, Dialog detailsDialog) {
@@ -13508,7 +14287,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             fingerprint.setImageResource(R.drawable.ic_fingerprint);
             fingerprint.setContentDescription("Enter admin workspace with fingerprint");
             fingerprint.setColorFilter(accentColor());
-            fingerprint.setBackground(roundWithStroke(surfaceColor(), 12, borderColor()));
+            applyIconDepth(fingerprint, 12);
             fingerprint.setScaleType(ImageView.ScaleType.CENTER_INSIDE);
             fingerprint.setPadding(dp(8), dp(8), dp(8), dp(8));
             fingerprint.setOnClickListener(view -> authenticateAdminWithBiometric(dialog));
@@ -13583,21 +14362,6 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                     }
 
                     @Override
-                String sourceReportType = report.optString("type", "");
-                String foundReportId = item.optString("report_id", "").trim();
-                if ("LOST".equalsIgnoreCase(sourceReportType)
-                        && "FOUND".equalsIgnoreCase(reportType)
-                        && !foundReportId.isEmpty()) {
-                    TextView claim = actionButton(
-                            LanguageManager.profileText(this, "claim_submit"),
-                            false
-                    );
-                    LinearLayout.LayoutParams claimParams =
-                            new LinearLayout.LayoutParams(-1, dp(42));
-                    claimParams.setMargins(0, dp(10), 0, 0);
-                    card.addView(claim, claimParams);
-                    claim.setOnClickListener(view -> showReportClaimDialog(report, foundReportId));
-                }
                     public void onAuthenticationError(
                             int errorCode,
                             CharSequence errorString
@@ -13625,101 +14389,6 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
 
     private String fetchAdminItemSummary(String idToken) {
         return getAuthorized("/api/admin/items/summary", idToken);
-    }
-
-    private void showReportClaimDialog(JSONObject lostReport, String foundReportId) {
-        String lostReportId = lostReport.optString("id", "").trim();
-        if (lostReportId.isEmpty() || foundReportId.trim().isEmpty()) {
-            Toast.makeText(this, LanguageManager.profileText(this, "claim_unavailable"), Toast.LENGTH_LONG).show();
-            return;
-        }
-        LinearLayout content = new LinearLayout(this);
-        content.setOrientation(LinearLayout.VERTICAL);
-        content.setPadding(dp(20), dp(12), dp(20), dp(8));
-        TextView instructions = text(
-                LanguageManager.profileText(this, "claim_prompt"),
-                13,
-                secondaryTextColor(),
-                Typeface.NORMAL
-        );
-        content.addView(instructions, new LinearLayout.LayoutParams(-1, -2));
-        EditText verificationDetail = new EditText(this);
-        verificationDetail.setTextColor(primaryTextColor());
-        verificationDetail.setHintTextColor(secondaryTextColor());
-        verificationDetail.setHint(LanguageManager.profileText(this, "claim_detail_hint"));
-        verificationDetail.setGravity(Gravity.TOP | Gravity.START);
-        verificationDetail.setMinLines(3);
-        verificationDetail.setMaxLines(6);
-        verificationDetail.setInputType(
-                android.text.InputType.TYPE_CLASS_TEXT
-                        | android.text.InputType.TYPE_TEXT_FLAG_MULTI_LINE
-                        | android.text.InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
-        );
-        LinearLayout.LayoutParams inputParams = new LinearLayout.LayoutParams(-1, dp(112));
-        inputParams.setMargins(0, dp(12), 0, 0);
-        content.addView(verificationDetail, inputParams);
-        AlertDialog dialog = new AlertDialog.Builder(this)
-                .setTitle(LanguageManager.profileText(this, "claim_title"))
-                .setView(content)
-                .setNegativeButton(LanguageManager.profileText(this, "cancel"), null)
-                .setPositiveButton(LanguageManager.profileText(this, "claim_submit"), null)
-                .create();
-        dialog.setOnShowListener(ignored -> dialog.getButton(AlertDialog.BUTTON_POSITIVE)
-                .setOnClickListener(view -> {
-                    String entered = verificationDetail.getText().toString().trim();
-                    if (entered.isEmpty()) {
-                        verificationDetail.setError(LanguageManager.profileText(this, "claim_detail_required"));
-                        return;
-                    }
-                    FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
-                    if (user == null) {
-                        Toast.makeText(this, getString(R.string.report_sign_in_required), Toast.LENGTH_LONG).show();
-                        return;
-                    }
-                    user.getIdToken(false).addOnSuccessListener(token -> network.execute(() -> {
-                        try {
-                            JSONObject body = new JSONObject()
-                                    .put("found_item_id", foundReportId)
-                                    .put("verification_detail", entered);
-                            AuthorizedResponse response = authorizedRequest(
-                                    "POST",
-                                    "/api/items/lost/" + Uri.encode(lostReportId) + "/claims",
-                                    token.getToken(),
-                                    body.toString()
-                            );
-                            runOnUiThread(() -> {
-                                if (response.statusCode >= 200 && response.statusCode < 300) {
-                                    dialog.dismiss();
-                                    Toast.makeText(
-                                            this,
-                                            LanguageManager.profileText(this, "claim_pending"),
-                                            Toast.LENGTH_LONG
-                                    ).show();
-                                } else {
-                                    Toast.makeText(
-                                            this,
-                                            response.statusCode == 409
-                                                    ? LanguageManager.profileText(this, "claim_not_ready")
-                                                    : authorizedRequestError(response),
-                                            Toast.LENGTH_LONG
-                                    ).show();
-                                }
-                            });
-                        } catch (Exception error) {
-                            Log.e("REPORT_CLAIM", "Could not submit possible-match claim", error);
-                            runOnUiThread(() -> Toast.makeText(
-                                    this,
-                                    LanguageManager.profileText(this, "claim_unavailable"),
-                                    Toast.LENGTH_LONG
-                            ).show());
-                        }
-                    })).addOnFailureListener(error -> Toast.makeText(
-                            this,
-                            LanguageManager.profileText(this, "claim_unavailable"),
-                            Toast.LENGTH_LONG
-                    ).show());
-                }));
-        dialog.show();
     }
 
     private String fetchAdminReportPage(String reportType, int offset, String idToken) {
@@ -13848,15 +14517,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                     if (notifications.length() == 0) {
                         Toast.makeText(this, LanguageManager.profileText(this, "no_notifications"), Toast.LENGTH_SHORT).show();
                     } else {
-                        showUserNotificationsDialog(notifications);
-                    }
-                    if (unreadCount > 0) {
-                        network.execute(() -> {
-                            if (postAuthorized("/api/users/notifications/read", token.getToken())) {
-                                FendlyWidgetProvider.refresh(this);
-                                runOnUiThread(() -> updateUserNotificationCount(0));
-                            }
-                        });
+                        showUserNotificationsDialog(notifications, token.getToken());
                     }
                 } catch (Exception error) {
                     Toast.makeText(this, "Your notifications could not be read", Toast.LENGTH_LONG).show();
@@ -13865,20 +14526,167 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         }));
     }
 
-    private void showUserNotificationsDialog(JSONArray notifications) throws Exception {
-        StringBuilder message = new StringBuilder();
+    private void showUserNotificationsDialog(
+            JSONArray notifications,
+            String idToken
+    ) throws Exception {
+        Dialog dialog = new Dialog(this);
+        dialog.requestWindowFeature(Window.FEATURE_NO_TITLE);
+
+        LinearLayout form = new LinearLayout(this);
+        form.setOrientation(LinearLayout.VERTICAL);
+        form.setPadding(dp(22), dp(22), dp(22), dp(18));
+        form.setBackground(roundWithStroke(surfaceColor(), 26, borderColor()));
+
+        TextView bellIcon = text("🔔", 24, primaryTextColor(), Typeface.NORMAL);
+        bellIcon.setGravity(Gravity.CENTER);
+        LinearLayout.LayoutParams iconParams = new LinearLayout.LayoutParams(dp(50), dp(50));
+        iconParams.gravity = Gravity.CENTER_HORIZONTAL;
+        form.addView(bellIcon, iconParams);
+
+        String titleText = LanguageManager.profileText(this, "widget_notifications");
+        TextView title = text(titleText, 18, primaryTextColor(), Typeface.BOLD);
+        title.setTypeface(localizedScriptTypeface(title.getText(), Typeface.BOLD));
+        title.setGravity(Gravity.CENTER);
+        title.setPadding(0, dp(4), 0, dp(12));
+        form.addView(title, new LinearLayout.LayoutParams(-1, -2));
+
+        ScrollView scroll = new ScrollView(this);
+        LinearLayout rows = new LinearLayout(this);
+        rows.setOrientation(LinearLayout.VERTICAL);
         for (int index = 0; index < notifications.length(); index++) {
             JSONObject notification = notifications.getJSONObject(index);
-            if (message.length() > 0) message.append("\n\n");
-            message.append(notification.optString("title", "Fendly notification"));
+            LinearLayout row = new LinearLayout(this);
+            row.setOrientation(LinearLayout.VERTICAL);
+            row.setPadding(dp(12), dp(12), dp(12), dp(12));
+            row.setBackground(roundWithStroke(surfaceColor(), 12, fieldBorderColor()));
+
+            String notificationType = notification.optString("type");
+            String notificationTitle = notification.optString("title", "Fendly notification");
             String body = notification.optString("body", "");
-            if (!body.isEmpty()) message.append("\n").append(body);
+            if ("adoption_application_received".equals(notificationType)) {
+                notificationTitle = LanguageManager.adoptionText(
+                        this,
+                        "adopt_notification_received_title"
+                );
+                body = LanguageManager.adoptionText(this, "adopt_notification_received_body");
+            } else if ("adoption_application_update".equals(notificationType)) {
+                notificationTitle = LanguageManager.adoptionText(
+                        this,
+                        "adopt_notification_update_title"
+                );
+                body = LanguageManager.adoptionText(this, "adopt_notification_update_body");
+            }
+            TextView rowTitle = text(notificationTitle, 14, primaryTextColor(), Typeface.BOLD);
+            rowTitle.setTypeface(localizedScriptTypeface(rowTitle.getText(), Typeface.BOLD));
+            row.addView(rowTitle, new LinearLayout.LayoutParams(-1, -2));
+
+            if (!body.isEmpty()) {
+                TextView rowBody = text(body, 12, secondaryTextColor(), Typeface.NORMAL);
+                rowBody.setTypeface(localizedScriptTypeface(rowBody.getText(), Typeface.NORMAL));
+                rowBody.setLineSpacing(dp(2), 1f);
+                LinearLayout.LayoutParams bodyParams = new LinearLayout.LayoutParams(-1, -2);
+                bodyParams.setMargins(0, dp(4), 0, 0);
+                row.addView(rowBody, bodyParams);
+            }
+            String notificationId = notification.optString("id");
+            row.setClickable(true);
+            row.setFocusable(true);
+            row.setOnClickListener(view ->
+                    markUserNotificationRead(notificationId, row, rows, idToken)
+            );
+
+            LinearLayout.LayoutParams rowParams = new LinearLayout.LayoutParams(-1, -2);
+            rowParams.setMargins(0, 0, 0, dp(8));
+            rows.addView(row, rowParams);
         }
-        new AlertDialog.Builder(this)
-                .setTitle("Your notifications")
-                .setMessage(message.toString())
-                .setPositiveButton("Close", null)
-                .show();
+
+        scroll.addView(rows);
+        int maxHeight = Math.max(dp(180), getResources().getDisplayMetrics().heightPixels - dp(300));
+        LinearLayout.LayoutParams scrollParams =
+                new LinearLayout.LayoutParams(-1, Math.min(dp(460), maxHeight));
+        scrollParams.setMargins(0, 0, 0, dp(12));
+        form.addView(scroll, scrollParams);
+
+        TextView close = filledButton(
+                LanguageManager.profileText(this, "close"),
+                GOLD,
+                GOLD_ON
+        );
+        form.addView(close, new LinearLayout.LayoutParams(-1, dp(44)));
+        close.setOnClickListener(view -> dialog.dismiss());
+
+        dialog.setContentView(form);
+        dialog.setCanceledOnTouchOutside(true);
+        dialog.show();
+        sizeThemedDialog(dialog);
+    }
+
+    private void markUserNotificationRead(
+            String notificationId,
+            View notificationRow,
+            LinearLayout notificationRows,
+            String idToken
+    ) {
+        if (notificationId == null || notificationId.isEmpty()) return;
+        network.execute(() -> {
+            boolean marked = postAuthorized(
+                    "/api/users/notifications/" + Uri.encode(notificationId) + "/read",
+                    idToken
+            );
+            runOnUiThread(() -> {
+                if (!marked) {
+                    Toast.makeText(
+                            this,
+                            LanguageManager.profileText(this, "notification_dismiss_failed"),
+                            Toast.LENGTH_LONG
+                    ).show();
+                    return;
+                }
+                if (notificationRows != null && notificationRow != null) {
+                    notificationRows.removeView(notificationRow);
+                    if (notificationRows.getChildCount() == 0) {
+                        TextView empty = text(
+                                LanguageManager.profileText(this, "no_notifications"),
+                                13,
+                                secondaryTextColor(),
+                                Typeface.NORMAL
+                        );
+                        empty.setGravity(Gravity.CENTER);
+                        notificationRows.addView(empty, new LinearLayout.LayoutParams(-1, dp(72)));
+                    }
+                }
+                updateUserNotificationCount(Math.max(0, unreadUserNotificationCount - 1));
+                FendlyWidgetProvider.refresh(this);
+            });
+        });
+    }
+
+    private void markUserNotificationRead(
+            String notificationId,
+            View notificationRow,
+            LinearLayout notificationRows
+    ) {
+        FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
+        if (user == null) {
+            Log.e("USER_NOTIFICATIONS", "Cannot mark notification read without a signed-in user");
+            return;
+        }
+        user.getIdToken(false)
+                .addOnSuccessListener(token -> markUserNotificationRead(
+                        notificationId,
+                        notificationRow,
+                        notificationRows,
+                        token.getToken()
+                ))
+                .addOnFailureListener(error -> {
+                    Log.e("USER_NOTIFICATIONS", "Could not get token to mark notification read", error);
+                    runOnUiThread(() -> Toast.makeText(
+                            this,
+                            LanguageManager.profileText(this, "notification_dismiss_failed"),
+                            Toast.LENGTH_LONG
+                    ).show());
+                });
     }
 
     private void updatePendingNotificationCount(int count) {
@@ -13905,9 +14713,8 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
 
         TextView notificationButton = text("🔔", 16, secondaryTextColor(), Typeface.NORMAL);
         notificationButton.setGravity(Gravity.CENTER);
-        notificationButton.setBackground(roundWithStroke(surfaceColor(), 14, borderColor()));
+        applyIconDepth(notificationButton, 14);
         notificationButton.setPadding(dp(8), dp(8), dp(8), dp(8));
-        notificationButton.setElevation(dp(2));
         notificationButton.setContentDescription(adminNotifications ? "Admin notifications" : "Match notifications");
         if (onClickListener != null) {
             notificationButton.setOnClickListener(onClickListener);
@@ -13932,7 +14739,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         badgeBg.setShape(GradientDrawable.OVAL);
         badgeBg.setColor(Color.rgb(220, 38, 38));
         badge.setBackground(badgeBg);
-        badge.setElevation(dp(4));
+        FendlyMotion.setElevation(badge, dp(4));
 
         FrameLayout.LayoutParams badgeParams = new FrameLayout.LayoutParams(-2, dp(22));
         badgeParams.gravity = Gravity.TOP | Gravity.END;
@@ -14742,10 +15549,9 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
 
             TextView expandButton = text("", 18, secondaryTextColor(), Typeface.NORMAL);
             expandButton.setGravity(Gravity.CENTER);
-            expandButton.setBackground(roundWithStroke(surfaceColor(), 14, borderColor()));
+            applyIconDepth(expandButton, 14);
             expandButton.setPadding(dp(8), dp(8), dp(8), dp(8));
             expandButton.setCompoundDrawablesWithIntrinsicBounds(R.drawable.ic_gear, 0, 0, 0);
-            expandButton.setElevation(dp(2));
             TextViewCompat.setCompoundDrawableTintList(expandButton, ColorStateList.valueOf(accentColor()));
             expandButton.setContentDescription("Expand menu");
 
@@ -14755,10 +15561,9 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
 
             TextView languageIconView = text("", 18, secondaryTextColor(), Typeface.NORMAL);
             languageIconView.setGravity(Gravity.CENTER);
-            languageIconView.setBackground(roundWithStroke(surfaceColor(), 14, borderColor()));
+            applyIconDepth(languageIconView, 14);
             languageIconView.setPadding(dp(8), dp(8), dp(8), dp(8));
             languageIconView.setCompoundDrawablesWithIntrinsicBounds(R.drawable.ic_language, 0, 0, 0);
-            languageIconView.setElevation(dp(2));
             TextViewCompat.setCompoundDrawableTintList(languageIconView, ColorStateList.valueOf(accentColor()));
             languageIconView.setContentDescription("Select language");
             languageIconView.setOnClickListener(view -> showLanguagePicker());
@@ -14770,7 +15575,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             fontSizeIcon.setGravity(Gravity.CENTER);
             fontSizeIcon.setTextAlignment(View.TEXT_ALIGNMENT_CENTER);
             fontSizeIcon.setIncludeFontPadding(false);
-            fontSizeIcon.setBackground(roundWithStroke(surfaceColor(), 14, borderColor()));
+            applyIconDepth(fontSizeIcon, 14);
             fontSizeIcon.setContentDescription(translate("Adjust text size"));
             fontSizeIcon.setOnClickListener(view -> showFontScaleDialog());
             LinearLayout.LayoutParams fontSizeParams = new LinearLayout.LayoutParams(dp(42), dp(42));
@@ -14779,8 +15584,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
 
             TextView welcomeInfoIcon = text("i", 20, accentColor(), Typeface.BOLD);
             welcomeInfoIcon.setGravity(Gravity.CENTER);
-            welcomeInfoIcon.setBackground(roundWithStroke(surfaceColor(), 14, borderColor()));
-            welcomeInfoIcon.setElevation(dp(2));
+            applyIconDepth(welcomeInfoIcon, 14);
             welcomeInfoIcon.setContentDescription(onboardingText("info"));
             welcomeInfoIcon.setOnClickListener(view -> showWelcomeOnboarding());
             LinearLayout.LayoutParams infoParams = new LinearLayout.LayoutParams(dp(42), dp(42));
@@ -14790,7 +15594,10 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             FrameLayout themeIconView = new FrameLayout(this);
             int themeBg = darkMode ? surfaceColor() : Color.rgb(244, 239, 232);
             int themeBorder = darkMode ? borderColor() : Color.rgb(214, 211, 204);
-            themeIconView.setBackground(roundWithStroke(themeBg, 14, themeBorder));
+            themeIconView.setBackground(depthButtonBackground(themeBg, 14, themeBorder));
+            FendlyMotion.setElevation(themeIconView, dp(4));
+            themeIconView.setTranslationZ(dp(1));
+            ButtonPressAnimator.attach(themeIconView);
             themeIconView.setPadding(dp(6), dp(6), dp(6), dp(6));
             ImageView themeImage = new ImageView(this);
             themeImage.setImageResource(darkMode ? R.drawable.ic_light_mode : R.drawable.ic_dark_mode);
@@ -14944,7 +15751,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             instaButton.setBackground(roundWithStroke(surfaceColor(), 14, borderColor()));
             instaButton.setPadding(dp(8), dp(8), dp(8), dp(8));
             instaButton.setCompoundDrawablesWithIntrinsicBounds(R.drawable.ic_instagram, 0, 0, 0);
-            instaButton.setElevation(dp(2));
+            FendlyMotion.setElevation(instaButton, dp(2));
             TextViewCompat.setCompoundDrawableTintList(instaButton, ColorStateList.valueOf(accentColor()));
             instaButton.setContentDescription("Instagram");
             instaButton.setOnClickListener(view -> {
@@ -14963,7 +15770,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             fbButton.setBackground(roundWithStroke(surfaceColor(), 14, borderColor()));
             fbButton.setPadding(dp(8), dp(8), dp(8), dp(8));
             fbButton.setCompoundDrawablesWithIntrinsicBounds(R.drawable.ic_facebook, 0, 0, 0);
-            fbButton.setElevation(dp(2));
+            FendlyMotion.setElevation(fbButton, dp(2));
             TextViewCompat.setCompoundDrawableTintList(fbButton, ColorStateList.valueOf(accentColor()));
             fbButton.setContentDescription("Facebook");
             fbButton.setOnClickListener(view -> {
@@ -14984,7 +15791,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             linkButton.setBackground(roundWithStroke(surfaceColor(), 14, borderColor()));
             linkButton.setPadding(dp(8), dp(8), dp(8), dp(8));
             linkButton.setCompoundDrawablesWithIntrinsicBounds(R.drawable.ic_link, 0, 0, 0);
-            linkButton.setElevation(dp(2));
+            FendlyMotion.setElevation(linkButton, dp(2));
             TextViewCompat.setCompoundDrawableTintList(linkButton, ColorStateList.valueOf(accentColor()));
             linkButton.setContentDescription("Community links");
             linkButton.setOnClickListener(view -> {
@@ -15006,7 +15813,20 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             controls.addView(guideButton, new LinearLayout.LayoutParams(dp(42), dp(42)));
         }
 
-        parent.addView(controls, new LinearLayout.LayoutParams(-1, -2));
+        if (currentPage == PAGE_PROFILE
+                || currentPage == PAGE_HOME
+                || currentPage == PAGE_REPORT
+                || currentPage == PAGE_REPORTS
+                || currentPage == PAGE_ADMIN
+                || currentPage == PAGE_ADMIN_SUBSCRIPTIONS) {
+            controls.setBackgroundColor(backgroundColor());
+            controls.setElevation(0);
+            LinearLayout.LayoutParams toolbarParams =
+                    new LinearLayout.LayoutParams(-1, dp(56));
+            parent.addView(controls, toolbarParams);
+        } else {
+            parent.addView(controls, new LinearLayout.LayoutParams(-1, -2));
+        }
     }
 
     private ImageView createGuideButton(String description, Runnable action) {
@@ -15016,7 +15836,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         button.setScaleType(ImageView.ScaleType.CENTER_INSIDE);
         button.setBackground(roundWithStroke(surfaceColor(), 14, borderColor()));
         button.setPadding(dp(8), dp(8), dp(8), dp(8));
-        button.setElevation(dp(2));
+        FendlyMotion.setElevation(button, dp(2));
         button.setContentDescription(description);
         button.setClickable(true);
         button.setFocusable(true);
@@ -15575,6 +16395,11 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
 
         appendFendlyHelpMessage(conversation, assistantUiText("welcome"), false);
         ArrayList<JSONObject> history = new ArrayList<>();
+        fendlyAssistantDialog = null;
+        fendlyAssistantInput = null;
+        fendlyAssistantAskButton = null;
+        assistantSpeakNextAnswer = false;
+        pendingAssistantRecognition = false;
 
         LinearLayout composer = new LinearLayout(this);
         composer.setGravity(Gravity.CENTER_VERTICAL);
@@ -15592,6 +16417,14 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         LinearLayout.LayoutParams inputParams = new LinearLayout.LayoutParams(0, -2, 1f);
         composer.addView(questionInput, inputParams);
 
+        TextView speakButton = text("🎙", 20, primaryTextColor(), Typeface.NORMAL);
+        speakButton.setGravity(Gravity.CENTER);
+        speakButton.setContentDescription(assistantUiText("speak"));
+        speakButton.setBackground(roundWithStroke(surfaceColor(), 12, borderColor()));
+        LinearLayout.LayoutParams speakParams = new LinearLayout.LayoutParams(dp(48), dp(48));
+        speakParams.setMargins(dp(6), 0, 0, 0);
+        composer.addView(speakButton, speakParams);
+
         TextView askButton = text(assistantUiText("ask"), 14, Color.WHITE, Typeface.BOLD);
         askButton.setGravity(Gravity.CENTER);
         askButton.setMinWidth(dp(62));
@@ -15601,17 +16434,23 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
         askParams.setMargins(dp(8), 0, 0, 0);
         composer.addView(askButton, askParams);
         content.addView(composer, new LinearLayout.LayoutParams(-1, -2));
+        fendlyAssistantInput = questionInput;
+        fendlyAssistantAskButton = askButton;
 
         Dialog dialog = new Dialog(this);
         dialog.requestWindowFeature(Window.FEATURE_NO_TITLE);
         dialog.setContentView(content);
+        fendlyAssistantDialog = dialog;
         closeButton.setOnClickListener(view -> dialog.dismiss());
+        speakButton.setOnClickListener(view -> startFendlyAssistantSpeechInput());
         askButton.setOnClickListener(view -> {
             String question = questionInput.getText().toString().trim();
             if (question.isEmpty()) {
                 questionInput.setError(assistantUiText("empty"));
                 return;
             }
+            boolean speakAnswer = assistantSpeakNextAnswer;
+            assistantSpeakNextAnswer = false;
             questionInput.setText("");
             appendFendlyHelpMessage(conversation, question, true);
             sendFendlyAssistantQuestion(
@@ -15620,8 +16459,19 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                     history,
                     conversation,
                     conversationScroll,
-                    askButton
+                    askButton,
+                    speakAnswer
             );
+        });
+        dialog.setOnDismissListener(ignored -> {
+            if (fendlyAssistantDialog == dialog) {
+                fendlyAssistantDialog = null;
+                fendlyAssistantInput = null;
+                fendlyAssistantAskButton = null;
+                assistantSpeakNextAnswer = false;
+                pendingAssistantRecognition = false;
+            }
+            if (assistantTtsEngine != null) assistantTtsEngine.stop();
         });
         dialog.setOnShowListener(ignored -> {
             if (dialog.getWindow() != null) {
@@ -15654,6 +16504,103 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             WindowManager.LayoutParams params = dialog.getWindow().getAttributes();
             params.y = dp(12);
             dialog.getWindow().setAttributes(params);
+        }
+    }
+
+    private void startFendlyAssistantSpeechInput() {
+        if (fendlyAssistantDialog == null || !fendlyAssistantDialog.isShowing()) return;
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO)
+                != PackageManager.PERMISSION_GRANTED) {
+            pendingAssistantRecognition = true;
+            ActivityCompat.requestPermissions(
+                    this,
+                    new String[]{Manifest.permission.RECORD_AUDIO},
+                    REQUEST_ASSISTANT_AUDIO_PERMISSION
+            );
+            return;
+        }
+        launchFendlyAssistantSpeechRecognizer();
+    }
+
+    private void launchFendlyAssistantSpeechRecognizer() {
+        pendingAssistantRecognition = false;
+        try {
+            Intent intent = new Intent(android.speech.RecognizerIntent.ACTION_RECOGNIZE_SPEECH);
+            intent.putExtra(
+                    android.speech.RecognizerIntent.EXTRA_LANGUAGE_MODEL,
+                    android.speech.RecognizerIntent.LANGUAGE_MODEL_FREE_FORM
+            );
+            intent.putExtra(
+                    android.speech.RecognizerIntent.EXTRA_LANGUAGE,
+                    getTtsLocaleForSelectedLanguage().toLanguageTag()
+            );
+            intent.putExtra(
+                    android.speech.RecognizerIntent.EXTRA_PROMPT,
+                    assistantUiText("listening_prompt")
+            );
+            intent.putExtra(android.speech.RecognizerIntent.EXTRA_MAX_RESULTS, 1);
+            startActivityForResult(intent, REQUEST_ASSISTANT_SPEECH);
+        } catch (android.content.ActivityNotFoundException error) {
+            Log.w("FENDLY_ASSISTANT", "No speech recognition service is available", error);
+            Toast.makeText(this, assistantUiText("speech_unavailable"), Toast.LENGTH_LONG).show();
+        }
+    }
+
+    private void speakFendlyAssistantAnswer(String answer) {
+        String speech = answer
+                .replace("**", "")
+                .replaceAll("(?m)^\\s*[-*•]\\s*", "")
+                .trim();
+        if (speech.isEmpty()) return;
+        pendingAssistantSpeech = speech;
+        if (assistantTtsEngine == null) {
+            assistantTtsEngine = new TextToSpeech(this, status -> {
+                if (isFinishing() || isDestroyed()) return;
+                if (status != TextToSpeech.SUCCESS || assistantTtsEngine == null) {
+                    assistantTtsReady = false;
+                    pendingAssistantSpeech = null;
+                    Log.w("FENDLY_ASSISTANT", "Text-to-speech initialization failed");
+                    runOnUiThread(() -> Toast.makeText(
+                            MainActivity.this,
+                            assistantUiText("speech_unavailable"),
+                            Toast.LENGTH_LONG
+                    ).show());
+                    return;
+                }
+                assistantTtsReady = true;
+                String queuedSpeech = pendingAssistantSpeech;
+                pendingAssistantSpeech = null;
+                if (queuedSpeech != null) speakFendlyAssistantNow(queuedSpeech);
+            });
+            return;
+        }
+        if (assistantTtsReady) {
+            pendingAssistantSpeech = null;
+            speakFendlyAssistantNow(speech);
+        }
+    }
+
+    private void speakFendlyAssistantNow(String speech) {
+        if (assistantTtsEngine == null || !assistantTtsReady) return;
+        int languageStatus = assistantTtsEngine.setLanguage(getTtsLocaleForSelectedLanguage());
+        if (languageStatus == TextToSpeech.LANG_MISSING_DATA
+                || languageStatus == TextToSpeech.LANG_NOT_SUPPORTED) {
+            languageStatus = assistantTtsEngine.setLanguage(Locale.ENGLISH);
+        }
+        if (languageStatus == TextToSpeech.LANG_MISSING_DATA
+                || languageStatus == TextToSpeech.LANG_NOT_SUPPORTED) {
+            Log.w("FENDLY_ASSISTANT", "No speech voice is installed for the assistant response");
+            Toast.makeText(this, assistantUiText("speech_unavailable"), Toast.LENGTH_LONG).show();
+            return;
+        }
+        if (assistantTtsEngine.speak(
+                speech,
+                TextToSpeech.QUEUE_FLUSH,
+                null,
+                "FendlyAssistantAnswer"
+        ) == TextToSpeech.ERROR) {
+            Log.w("FENDLY_ASSISTANT", "Could not speak the assistant response");
+            Toast.makeText(this, assistantUiText("speech_unavailable"), Toast.LENGTH_LONG).show();
         }
     }
 
@@ -15757,7 +16704,8 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             ArrayList<JSONObject> history,
             LinearLayout conversation,
             ScrollView conversationScroll,
-            TextView askButton
+            TextView askButton,
+            boolean speakAnswer
     ) {
         FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
         if (user == null) {
@@ -15798,6 +16746,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                                 Log.e("FENDLY_ASSISTANT", "Could not retain assistant conversation context", error);
                             }
                             appendFendlyHelpMessage(conversation, finalAnswer, false);
+                            if (speakAnswer) speakFendlyAssistantAnswer(finalAnswer);
                         }
                         conversationScroll.post(() -> conversationScroll.fullScroll(View.FOCUS_DOWN));
                     });
@@ -15861,15 +16810,15 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
 
     private String assistantUiText(String key) {
         String[][] labels = {
-                {"Fendly - AI assistant", "Ask Fendly anything about using the app.", "Hi! What would you like to know about Fendly?", "Ask about Fendly", "Ask", "Please enter a question.", "Thinking…", "I couldn’t get an answer right now. Please try again.", "Please sign in to use Fendly AI Help."},
-                {"Fendly AI सहायता", "Fendly ऐप के उपयोग के बारे में कुछ भी पूछें।", "नमस्ते! Fendly के बारे में क्या जानना चाहते हैं?", "Fendly के बारे में पूछें", "पूछें", "कृपया प्रश्न लिखें।", "सोच रहा है…", "अभी उत्तर नहीं मिल सका। फिर कोशिश करें।", "Fendly AI सहायता के लिए साइन इन करें।"},
-                {"Fendly AI मदत", "Fendly अॅप वापरण्याबद्दल काहीही विचारा.", "नमस्कार! Fendly बद्दल काय जाणून घ्यायचे आहे?", "Fendly बद्दल विचारा", "विचारा", "कृपया प्रश्न लिहा.", "विचार करत आहे…", "आत्ता उत्तर मिळू शकले नाही. पुन्हा प्रयत्न करा.", "Fendly AI मदतीसाठी साइन इन करा."},
-                {"Fendly AI સહાય", "Fendly ઍપનો ઉપયોગ કરવા વિશે કંઈપણ પૂછો.", "નમસ્તે! Fendly વિશે શું જાણવા માંગો છો?", "Fendly વિશે પૂછો", "પૂછો", "કૃપા કરીને પ્રશ્ન લખો.", "વિચારી રહ્યું છે…", "હમણાં જવાબ મળી શક્યો નથી. ફરી પ્રયાસ કરો.", "Fendly AI સહાય માટે સાઇન ઇન કરો."},
-                {"Fendly AI সহায়তা", "Fendly অ্যাপ ব্যবহার সম্পর্কে যেকোনো কিছু জিজ্ঞাসা করুন।", "হ্যালো! Fendly সম্পর্কে কী জানতে চান?", "Fendly সম্পর্কে জিজ্ঞাসা করুন", "জিজ্ঞাসা", "অনুগ্রহ করে প্রশ্ন লিখুন।", "ভাবছে…", "এখন উত্তর পাওয়া যায়নি। আবার চেষ্টা করুন।", "Fendly AI সহায়তা ব্যবহার করতে সাইন ইন করুন।"},
-                {"Fendly AI உதவி", "Fendly செயலியைப் பயன்படுத்துவது பற்றி எதையும் கேளுங்கள்.", "வணக்கம்! Fendly பற்றி என்ன தெரிந்துகொள்ள விரும்புகிறீர்கள்?", "Fendly பற்றி கேளுங்கள்", "கேளுங்கள்", "கேள்வியை உள்ளிடவும்.", "சிந்திக்கிறது…", "இப்போது பதில் கிடைக்கவில்லை. மீண்டும் முயற்சிக்கவும்.", "Fendly AI உதவிக்கு உள்நுழையவும்."},
-                {"Fendly AI సహాయం", "Fendly యాప్‌ను ఉపయోగించడం గురించి ఏదైనా అడగండి.", "హాయ్! Fendly గురించి ఏమి తెలుసుకోవాలి?", "Fendly గురించి అడగండి", "అడగండి", "దయచేసి ప్రశ్న నమోదు చేయండి.", "ఆలోచిస్తోంది…", "ఇప్పుడు సమాధానం రాలేదు. మళ్లీ ప్రయత్నించండి.", "Fendly AI సహాయం కోసం సైన్ ఇన్ చేయండి."},
-                {"Fendly AI ಸಹಾಯ", "Fendly ಆ್ಯಪ್ ಬಳಸುವ ಬಗ್ಗೆ ಏನನ್ನಾದರೂ ಕೇಳಿ.", "ನಮಸ್ಕಾರ! Fendly ಬಗ್ಗೆ ಏನು ತಿಳಿಯಲು ಬಯಸುತ್ತೀರಿ?", "Fendly ಬಗ್ಗೆ ಕೇಳಿ", "ಕೇಳಿ", "ದಯವಿಟ್ಟು ಪ್ರಶ್ನೆಯನ್ನು ನಮೂದಿಸಿ.", "ಯೋಚಿಸುತ್ತಿದೆ…", "ಈಗ ಉತ್ತರ ಸಿಗಲಿಲ್ಲ. ಮತ್ತೆ ಪ್ರಯತ್ನಿಸಿ.", "Fendly AI ಸಹಾಯಕ್ಕೆ ಸೈನ್ ಇನ್ ಮಾಡಿ."},
-                {"Fendly AI സഹായം", "Fendly ആപ്പ് ഉപയോഗിക്കുന്നതിനെക്കുറിച്ച് എന്തും ചോദിക്കൂ.", "ഹായ്! Fendlyയെക്കുറിച്ച് എന്താണ് അറിയേണ്ടത്?", "Fendlyയെക്കുറിച്ച് ചോദിക്കൂ", "ചോദിക്കൂ", "ദയവായി ഒരു ചോദ്യം നൽകുക.", "ചിന്തിക്കുന്നു…", "ഇപ്പോൾ മറുപടി ലഭിച്ചില്ല. വീണ്ടും ശ്രമിക്കുക.", "Fendly AI സഹായം ഉപയോഗിക്കാൻ സൈൻ ഇൻ ചെയ്യുക."}
+                {"Fendly - AI assistant", "Ask Fendly anything about using the app.", "Hi! What would you like to know about Fendly?", "Ask about Fendly", "Ask", "Please enter a question.", "Thinking…", "I couldn’t get an answer right now. Please try again.", "Please sign in to use Fendly AI Help.", "Speak", "Listening…", "Say your question", "Speech isn't available on this device."},
+                {"Fendly AI सहायता", "Fendly ऐप के उपयोग के बारे में कुछ भी पूछें।", "नमस्ते! Fendly के बारे में क्या जानना चाहते हैं?", "Fendly के बारे में पूछें", "पूछें", "कृपया प्रश्न लिखें।", "सोच रहा है…", "अभी उत्तर नहीं मिल सका। फिर कोशिश करें।", "Fendly AI सहायता के लिए साइन इन करें।", "बोलें", "सुन रहा है…", "अपना सवाल बोलें", "इस डिवाइस पर आवाज़ की सुविधा उपलब्ध नहीं है।"},
+                {"Fendly AI मदत", "Fendly अॅप वापरण्याबद्दल काहीही विचारा.", "नमस्कार! Fendly बद्दल काय जाणून घ्यायचे आहे?", "Fendly बद्दल विचारा", "विचारा", "कृपया प्रश्न लिहा.", "विचार करत आहे…", "आत्ता उत्तर मिळू शकले नाही. पुन्हा प्रयत्न करा.", "Fendly AI मदतीसाठी साइन इन करा.", "बोला", "ऐकत आहे…", "तुमचा प्रश्न बोला", "या डिव्हाइसवर आवाजाची सुविधा उपलब्ध नाही."},
+                {"Fendly AI સહાય", "Fendly ઍપનો ઉપયોગ કરવા વિશે કંઈપણ પૂછો.", "નમસ્તે! Fendly વિશે શું જાણવા માંગો છો?", "Fendly વિશે પૂછો", "પૂછો", "કૃપા કરીને પ્રશ્ન લખો.", "વિચારી રહ્યું છે…", "હમણાં જવાબ મળી શક્યો નથી. ફરી પ્રયાસ કરો.", "Fendly AI સહાય માટે સાઇન ઇન કરો.", "બોલો", "સાંભળી રહ્યું છે…", "તમારો પ્રશ્ન બોલો", "આ ઉપકરણ પર વાણી સુવિધા ઉપલબ્ધ નથી."},
+                {"Fendly AI সহায়তা", "Fendly অ্যাপ ব্যবহার সম্পর্কে যেকোনো কিছু জিজ্ঞাসা করুন।", "হ্যালো! Fendly সম্পর্কে কী জানতে চান?", "Fendly সম্পর্কে জিজ্ঞাসা করুন", "জিজ্ঞাসা", "অনুগ্রহ করে প্রশ্ন লিখুন।", "ভাবছে…", "এখন উত্তর পাওয়া যায়নি। আবার চেষ্টা করুন।", "Fendly AI সহায়তা ব্যবহার করতে সাইন ইন করুন।", "বলুন", "শুনছে…", "আপনার প্রশ্ন বলুন", "এই ডিভাইসে কথা বলার সুবিধা নেই।"},
+                {"Fendly AI உதவி", "Fendly செயலியைப் பயன்படுத்துவது பற்றி எதையும் கேளுங்கள்.", "வணக்கம்! Fendly பற்றி என்ன தெரிந்துகொள்ள விரும்புகிறீர்கள்?", "Fendly பற்றி கேளுங்கள்", "கேளுங்கள்", "கேள்வியை உள்ளிடவும்.", "சிந்திக்கிறது…", "இப்போது பதில் கிடைக்கவில்லை. மீண்டும் முயற்சிக்கவும்.", "Fendly AI உதவிக்கு உள்நுழையவும்.", "பேசுங்கள்", "கேட்கிறது…", "உங்கள் கேள்வியைச் சொல்லுங்கள்", "இந்தச் சாதனத்தில் குரல் வசதி இல்லை."},
+                {"Fendly AI సహాయం", "Fendly యాప్‌ను ఉపయోగించడం గురించి ఏదైనా అడగండి.", "హాయ్! Fendly గురించి ఏమి తెలుసుకోవాలి?", "Fendly గురించి అడగండి", "అడగండి", "దయచేసి ప్రశ్న నమోదు చేయండి.", "ఆలోచిస్తోంది…", "ఇప్పుడు సమాధానం రాలేదు. మళ్లీ ప్రయత్నించండి.", "Fendly AI సహాయం కోసం సైన్ ఇన్ చేయండి.", "మాట్లాడండి", "వింటోంది…", "మీ ప్రశ్న చెప్పండి", "ఈ పరికరంలో వాయిస్ సదుపాయం లేదు."},
+                {"Fendly AI ಸಹಾಯ", "Fendly ಆ್ಯಪ್ ಬಳಸುವ ಬಗ್ಗೆ ಏನನ್ನಾದರೂ ಕೇಳಿ.", "ನಮಸ್ಕಾರ! Fendly ಬಗ್ಗೆ ಏನು ತಿಳಿಯಲು ಬಯಸುತ್ತೀರಿ?", "Fendly ಬಗ್ಗೆ ಕೇಳಿ", "ಕೇಳಿ", "ದಯವಿಟ್ಟು ಪ್ರಶ್ನೆಯನ್ನು ನಮೂದಿಸಿ.", "ಯೋಚಿಸುತ್ತಿದೆ…", "ಈಗ ಉತ್ತರ ಸಿಗಲಿಲ್ಲ. ಮತ್ತೆ ಪ್ರಯತ್ನಿಸಿ.", "Fendly AI ಸಹಾಯಕ್ಕೆ ಸೈನ್ ಇನ್ ಮಾಡಿ.", "ಮಾತನಾಡಿ", "ಕೇಳುತ್ತಿದೆ…", "ನಿಮ್ಮ ಪ್ರಶ್ನೆಯನ್ನು ಹೇಳಿ", "ಈ ಸಾಧನದಲ್ಲಿ ಧ್ವನಿ ಸೌಲಭ್ಯವಿಲ್ಲ."},
+                {"Fendly AI സഹായം", "Fendly ആപ്പ് ഉപയോഗിക്കുന്നതിനെക്കുറിച്ച് എന്തും ചോദിക്കൂ.", "ഹായ്! Fendlyയെക്കുറിച്ച് എന്താണ് അറിയേണ്ടത്?", "Fendlyയെക്കുറിച്ച് ചോദിക്കൂ", "ചോദിക്കൂ", "ദയവായി ഒരു ചോദ്യം നൽകുക.", "ചിന്തിക്കുന്നു…", "ഇപ്പോൾ മറുപടി ലഭിച്ചില്ല. വീണ്ടും ശ്രമിക്കുക.", "Fendly AI സഹായം ഉപയോഗിക്കാൻ സൈൻ ഇൻ ചെയ്യുക.", "സംസാരിക്കുക", "കേൾക്കുന്നു…", "നിങ്ങളുടെ ചോദ്യം പറയൂ", "ഈ ഉപകരണത്തിൽ ശബ്ദ സൗകര്യം ലഭ്യമല്ല."}
         };
         int language = Math.max(0, Math.min(selectedLanguage, labels.length - 1));
         int labelIndex;
@@ -15882,6 +16831,10 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
             case "empty": labelIndex = 5; break;
             case "thinking": labelIndex = 6; break;
             case "request_failed": labelIndex = 7; break;
+            case "speak": labelIndex = 9; break;
+            case "listening": labelIndex = 10; break;
+            case "listening_prompt": labelIndex = 11; break;
+            case "speech_unavailable": labelIndex = 12; break;
             default: labelIndex = 8; break;
         }
         return labels[language][labelIndex];
@@ -16370,7 +17323,12 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
     private String localizeReportWizardText(String value) {
         if (value == null) return null;
         if (value.startsWith("Step ") && value.endsWith(" of 4")) {
-            return localizeDigits(value);
+            String stepNumber = value.substring(5, value.length() - 5).trim();
+            String[] stepLabels = {
+                    "Step", "चरण", "टप्पा", "પગલું", "ধাপ", "படி", "దశ", "ಹಂತ", "ഘട്ടം"
+            };
+            return localizeDigits(stepLabels[Math.max(0, Math.min(selectedLanguage, stepLabels.length - 1))]
+                    + " " + stepNumber + " / 4");
         }
         String[][] entries = {
                 {"Category", "श्रेणी", "श्रेणी", "શ્રેણી", "বিভাগ", "வகை", "వర్గం", "ವರ್ಗ", "വിഭാഗം"},
@@ -16415,9 +17373,15 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
                 {"e.g. Blue backpack", "उदाहरण: नीला बैकपैक", "उदा. निळी बॅकपॅक", "દા.ત. વાદળી બેકપેક", "যেমন: নীল ব্যাকপ্যাক", "உதா: நீல நிற பை", "ఉదా: నీలం బ్యాక్‌ప్యాక్", "ಉದಾ: ನೀಲಿ ಬ್ಯಾಕ್‌ಪ್ಯಾಕ್", "ഉദാ: നീല ബാക്ക്പാക്ക്"},
                 {"e.g. Brown dog", "उदाहरण: भूरा कुत्ता", "उदा. तपकिरी कुत्रा", "દા.ત. ભૂરા રંગનો કૂતરો", "যেমন: বাদামি কুকুর", "உதா: பழுப்பு நாய்", "ఉదా: గోధుమ రంగు కుక్క", "ಉದಾ: ಕಂದು ನಾಯಿ", "ഉദാ: തവിട്ടുനിറമുള്ള നായ"},
                 {"e.g. Missing person", "उदाहरण: लापता व्यक्ति", "उदा. बेपत्ता व्यक्ती", "દા.ત. ગુમ થયેલ વ્યક્તિ", "যেমন: নিখোঁজ ব্যক্তি", "உதா: காணாமல் போனவர்", "ఉదా: కనిపించని వ్యక్తి", "ಉದಾ: ಕಾಣೆಯಾದ ವ್ಯಕ್ತಿ", "ഉദാ: കാണാതായ വ്യക്തി"},
-                {"e.g. Nagpur", "उदाहरण: नागपुर", "उदा. नागपूर", "દા.ત. નાગપુર", "যেমন: নাগপুর", "உதா: நாக்பூர்", "ఉదా: నాగ్‌పూర్", "ಉದಾ: ನಾಗಪುರ", "ഉദാ: നാഗ്പൂർ"},
+                {"Your city", "आपका शहर", "तुमचे शहर", "તમારું શહેર", "আপনার শহর", "உங்கள் நகரம்", "మీ నగరం", "ನಿಮ್ಮ ನಗರ", "നിങ്ങളുടെ നഗരം"},
                 {"Report wizard", "रिपोर्ट विज़ार्ड", "अहवाल विझार्ड", "રિપોર્ટ વિઝાર્ડ", "রিপোর্ট উইজার্ড", "புகார் வழிகாட்டி", "నివేదిక విజార్డ్", "ವರದಿ ವಿಝಾರ್ಡ್", "റിപ്പോർട്ട് വിസാർഡ്"},
-                {"Describe color, brand, appearance, or other helpful details", "रंग, ब्रांड, रूप-रंग या अन्य उपयोगी विवरण बताएँ", "रंग, ब्रँड, रूप किंवा इतर उपयुक्त तपशील द्या", "રંગ, બ્રાન્ડ, દેખાવ અથવા અન્ય ઉપયોગી વિગતો આપો", "রং, ব্র্যান্ড, চেহারা বা অন্যান্য সহায়ক বিবরণ দিন", "நிறம், பிராண்ட், தோற்றம் அல்லது பிற பயனுள்ள விவரங்களை விவரிக்கவும்", "రంగు, బ్రాండ్, రూపం లేదా ఇతర ఉపయోగకరమైన వివరాలను వివరించండి", "ಬಣ್ಣ, ಬ್ರ್ಯಾಂಡ್, ರೂಪ ಅಥವಾ ಇತರ ಉಪಯುಕ್ತ ವಿವರಗಳನ್ನು ವಿವರಿಸಿ", "നിറം, ബ്രാൻഡ്, രൂപം അല്ലെങ്കിൽ മറ്റ് സഹായകരമായ വിശദാംശങ്ങൾ വിവരിക്കുക"}
+                {"Describe color, brand, appearance, or other helpful details", "रंग, ब्रांड, रूप-रंग या अन्य उपयोगी विवरण बताएँ", "रंग, ब्रँड, रूप किंवा इतर उपयुक्त तपशील द्या", "રંગ, બ્રાન્ડ, દેખાવ અથવા અન્ય ઉપયોગી વિગતો આપો", "রং, ব্র্যান্ড, চেহারা বা অন্যান্য সহায়ক বিবরণ দিন", "நிறம், பிராண்ட், தோற்றம் அல்லது பிற பயனுள்ள விவரங்களை விவரிக்கவும்", "రంగు, బ్రాండ్, రూపం లేదా ఇతర ఉపయోగకరమైన వివరాలను వివరించండి", "ಬಣ್ಣ, ಬ್ರ್ಯಾಂಡ್, ರೂಪ ಅಥವಾ ಇತರ ಉಪಯುಕ್ತ ವಿವರಗಳನ್ನು ವಿವರಿಸಿ", "നിറം, ബ്രാൻഡ്, രൂപം അല്ലെങ്കിൽ മറ്റ് സഹായകരമായ വിശദാംശങ്ങൾ വിവരിക്കുക"},
+                {"Describe report by voice", "आवाज़ से रिपोर्ट बताएँ", "आवाजेतून अहवाल सांगा", "અવાજથી રિપોર્ટ જણાવો", "কণ্ঠে রিপোর্ট বলুন", "குரலில் புகாரைச் சொல்லுங்கள்", "వాయిస్ ద్వారా నివేదిక చెప్పండి", "ಧ್ವನಿಯ ಮೂಲಕ ವರದಿ ತಿಳಿಸಿ", "ശബ്ദത്തിലൂടെ റിപ്പോർട്ട് പറയുക"},
+                {"Tap to record a short description, then tap again to finish. Fendly will fill in report details for you to review.", "छोटा विवरण रिकॉर्ड करने के लिए टैप करें, फिर समाप्त करने के लिए दोबारा टैप करें। Fendly रिपोर्ट की जानकारी भरेगा, जिसे आप जाँच सकते हैं।", "थोडक्यात वर्णन रेकॉर्ड करण्यासाठी टॅप करा आणि पूर्ण झाल्यावर पुन्हा टॅप करा. Fendly अहवालाचा तपशील भरेल; तो तुम्ही तपासू शकता.", "ટૂંકું વર્ણન રેકોર્ડ કરવા ટૅપ કરો, પછી પૂરું કરવા ફરી ટૅપ કરો. Fendly રિપોર્ટની વિગતો ભરશે, જે તમે તપાસી શકો છો.", "সংক্ষিপ্ত বিবরণ রেকর্ড করতে ট্যাপ করুন, শেষ করতে আবার ট্যাপ করুন। Fendly রিপোর্টের তথ্য পূরণ করবে, যা আপনি দেখে নিতে পারবেন।", "சுருக்கமான விளக்கத்தைப் பதிவு செய்யத் தட்டவும்; முடிக்க மீண்டும் தட்டவும். Fendly அறிக்கை விவரங்களை நிரப்பும்; அவற்றை நீங்கள் சரிபார்க்கலாம்.", "చిన్న వివరణను రికార్డ్ చేయడానికి నొక్కండి, పూర్తయ్యాక మళ్లీ నొక్కండి. Fendly నివేదిక వివరాలను నింపుతుంది; మీరు వాటిని పరిశీలించవచ్చు.", "ಸಂಕ್ಷಿಪ್ತ ವಿವರಣೆಯನ್ನು ದಾಖಲಿಸಲು ಟ್ಯಾಪ್ ಮಾಡಿ; ಮುಗಿಸಲು ಮತ್ತೊಮ್ಮೆ ಟ್ಯಾಪ್ ಮಾಡಿ. Fendly ವರದಿ ವಿವರಗಳನ್ನು ತುಂಬುತ್ತದೆ; ನೀವು ಪರಿಶೀಲಿಸಬಹುದು.", "ചെറിയ വിവരണം റെക്കോർഡ് ചെയ്യാൻ ടാപ്പ് ചെയ്യുക; പൂർത്തിയാക്കാൻ വീണ്ടും ടാപ്പ് ചെയ്യുക. Fendly റിപ്പോർട്ട് വിവരങ്ങൾ പൂരിപ്പിക്കും; നിങ്ങൾക്ക് അവ പരിശോധിക്കാം."},
+                {"Record report details by voice", "आवाज़ से रिपोर्ट का विवरण रिकॉर्ड करें", "आवाजेतून अहवालाचा तपशील रेकॉर्ड करा", "અવાજથી રિપોર્ટની વિગતો રેકોર્ડ કરો", "কণ্ঠে রিপোর্টের বিবরণ রেকর্ড করুন", "குரலில் அறிக்கை விவரங்களைப் பதிவு செய்யுங்கள்", "వాయిస్ ద్వారా నివేదిక వివరాలను రికార్డ్ చేయండి", "ಧ್ವನಿಯ ಮೂಲಕ ವರದಿ ವಿವರಗಳನ್ನು ದಾಖಲಿಸಿ", "ശബ്ദത്തിലൂടെ റിപ്പോർട്ട് വിവരങ്ങൾ റെക്കോർഡ് ചെയ്യുക"},
+                {"I agree to follow Fendly's Community Guidelines", "मैं Fendly के समुदाय दिशानिर्देशों का पालन करने के लिए सहमत हूँ", "मी Fendly च्या समुदाय मार्गदर्शक तत्त्वांचे पालन करण्यास सहमत आहे", "હું Fendlyની સમુદાય માર્ગદર્શિકાનું પાલન કરવા સંમત છું", "আমি Fendly-এর সম্প্রদায়ের নির্দেশিকা মেনে চলতে সম্মত", "Fendly சமூக வழிகாட்டுதல்களைப் பின்பற்ற ஒப்புக்கொள்கிறேன்", "Fendly సంఘం మార్గదర్శకాలను పాటించడానికి అంగీకరిస్తున్నాను", "Fendly ಸಮುದಾಯ ಮಾರ್ಗಸೂಚಿಗಳನ್ನು ಪಾಲಿಸಲು ಒಪ್ಪುತ್ತೇನೆ", "Fendly കമ്മ്യൂണിറ്റി മാർഗ്ഗനിർദ്ദേശങ്ങൾ പാലിക്കാൻ ഞാൻ സമ്മതിക്കുന്നു"},
+                {"Read Community Guidelines", "समुदाय दिशानिर्देश पढ़ें", "समुदाय मार्गदर्शक तत्त्वे वाचा", "સમુદાય માર્ગદર્શિકા વાંચો", "সম্প্রদায়ের নির্দেশিকা পড়ুন", "சமூக வழிகாட்டுதல்களைப் படிக்கவும்", "సంఘం మార్గదర్శకాలను చదవండి", "ಸಮುದಾಯ ಮಾರ್ಗಸೂಚಿಗಳನ್ನು ಓದಿ", "കമ്മ്യൂണിറ്റി മാർഗ്ഗനിർദ്ദേശങ്ങൾ വായിക്കുക"},
+                {"Please accept the Community Guidelines to continue.", "जारी रखने के लिए समुदाय दिशानिर्देश स्वीकार करें।", "पुढे जाण्यासाठी समुदाय मार्गदर्शक तत्त्वे स्वीकारा.", "આગળ વધવા માટે સમુદાય માર્ગદર્શિકા સ્વીકારો.", "চালিয়ে যেতে সম্প্রদায়ের নির্দেশিকা মেনে নিন।", "தொடர சமூக வழிகாட்டுதல்களை ஏற்கவும்.", "కొనసాగించడానికి సంఘం మార్గదర్శకాలను అంగీకరించండి.", "ಮುಂದುವರಿಯಲು ಸಮುದಾಯ ಮಾರ್ಗಸೂಚಿಗಳನ್ನು ಒಪ್ಪಿಕೊಳ್ಳಿ.", "തുടരാൻ കമ്മ്യൂണിറ്റി മാർഗ്ഗനിർദ്ദേശങ്ങൾ അംഗീകരിക്കുക."}
         };
         int language = Math.max(0, Math.min(selectedLanguage, entries[0].length - 1));
         for (String[] entry : entries) {
@@ -17205,11 +18169,7 @@ public final class MainActivity extends FragmentActivity implements PaymentResul
     }
 
     private GradientDrawable goldButton() {
-        GradientDrawable button = new GradientDrawable();
-        button.setColor(GOLD);
-        button.setCornerRadius(dp(24));
-        button.setStroke(dp(1), Color.argb(120, 255, 255, 255));
-        return button;
+        return depthButtonBackground(GOLD, 24, Color.argb(150, 255, 255, 255));
     }
 
     private GradientDrawable outlineButton() {

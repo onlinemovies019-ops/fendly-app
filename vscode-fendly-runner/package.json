@@ -1,7 +1,7 @@
 {
     "name": "fendly-device-runner",
     "displayName": "Fendly Device Runner",
-    "description": "Reconnect Redmi over Wi-Fi and build, install, and launch Fendly from VS Scrcpy.",
+    "description": "Build, install, and launch Fendly from VS Scrcpy.",
     "version": "0.1.7",
     "publisher": "fendly",
     "engines": {
@@ -10,12 +10,6 @@
     "categories": [
         "Other"
     ],
-    "activationEvents": [
-        "onCommand:fendly.runOnDevice",
-        "onCommand:fendly.reconnectWifiAdb",
-        "onCommand:fendly.refreshScrcpyMirror",
-        "onStartupFinished"
-    ],
     "main": "./extension.js",
     "contributes": {
         "commands": [
@@ -23,11 +17,6 @@
                 "command": "fendly.runOnDevice",
                 "title": "Build, Install & Run Fendly",
                 "icon": "$(play)"
-            },
-            {
-                "command": "fendly.reconnectWifiAdb",
-                "title": "Reconnect Fendly over Wi-Fi",
-                "icon": "$(refresh)"
             },
             {
                 "command": "fendly.refreshScrcpyMirror",
@@ -43,14 +32,9 @@
                     "group": "navigation@1"
                 },
                 {
-                    "command": "fendly.reconnectWifiAdb",
-                    "when": "view == scrcpySidebar",
-                    "group": "navigation@2"
-                },
-                {
                     "command": "fendly.refreshScrcpyMirror",
                     "when": "view == scrcpySidebar",
-                    "group": "navigation@3"
+                    "group": "navigation@2"
                 }
             ]
         }

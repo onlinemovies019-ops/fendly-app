@@ -197,6 +197,7 @@ class AdoptionApplication(Base):
     home_type: Mapped[str] = mapped_column(String(120))
     pet_experience: Mapped[str] = mapped_column(Text)
     contact_phone: Mapped[str] = mapped_column(String(32))
+    owner_approved: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     status: Mapped[str] = mapped_column(String(16), default="submitted")
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
@@ -225,15 +226,15 @@ class AdminMatchAlert(Base):
 
 class LostItem(Base):
     __tablename__ = "lost_items"
-
     __table_args__ = (
         UniqueConstraint("created_by", "client_draft_id", name="uq_lost_items_client_draft"),
     )
+
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
     created_by: Mapped[str] = mapped_column(String(128), index=True)
-    status: Mapped[str] = mapped_column(
     client_draft_id: Mapped[str | None] = mapped_column(String(36))
     hidden_verification_detail: Mapped[str | None] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(
         String(16), default="LOST", server_default="LOST", index=True
     )
     title: Mapped[str] = mapped_column(String(160))
@@ -265,15 +266,15 @@ class LostItem(Base):
 
 class FoundItem(Base):
     __tablename__ = "found_items"
-
     __table_args__ = (
         UniqueConstraint("created_by", "client_draft_id", name="uq_found_items_client_draft"),
     )
+
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
     created_by: Mapped[str] = mapped_column(String(128), index=True)
-    status: Mapped[str] = mapped_column(
     client_draft_id: Mapped[str | None] = mapped_column(String(36))
     hidden_verification_detail: Mapped[str | None] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(
         String(16), default="FOUND", server_default="FOUND", index=True
     )
     title: Mapped[str] = mapped_column(String(160))
@@ -303,7 +304,6 @@ class FoundItem(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
-class SocialAccount(Base):
 class ReportClaim(Base):
     __tablename__ = "report_claims"
     __table_args__ = (
@@ -329,6 +329,7 @@ class ReportClaim(Base):
     )
 
 
+class SocialAccount(Base):
     __tablename__ = "social_accounts"
 
     provider: Mapped[str] = mapped_column(String(16), primary_key=True)

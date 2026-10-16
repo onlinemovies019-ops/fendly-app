@@ -49,6 +49,7 @@
         <activity
             android:name=".MainActivity"
             android:exported="false"
+            android:launchMode="singleTop"
             android:theme="@style/Theme.Fendly"
             android:windowSoftInputMode="adjustResize">
         </activity>

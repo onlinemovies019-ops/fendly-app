@@ -189,6 +189,13 @@ async def lifespan(_: FastAPI):
             add_column_if_missing("users", "profile_photo_url", "varchar(1000)")
             add_column_if_missing("users", "instagram_url", "varchar(2048)")
             add_column_if_missing("users", "facebook_url", "varchar(2048)")
+            add_column_if_missing(
+                "adoption_applications",
+                "owner_approved",
+                "boolean",
+                not_null=True,
+                default="false",
+            )
             add_column_if_missing("users", "email_verified", "boolean", not_null=True, default="false")
             add_column_if_missing("users", "mobile_verified", "boolean", not_null=True, default="false")
             add_column_if_missing("users", "annual_subscription_expires_at", "bigint")
@@ -214,13 +221,6 @@ async def lifespan(_: FastAPI):
             # --- ITEM EMBEDDINGS & REPORT COLUMNS ---
             add_column_if_missing("lost_items", "image_embedding", "vector(512)")
             add_column_if_missing("found_items", "image_embedding", "vector(512)")
-            add_column_if_missing("lost_items", "image_embedding_model", "varchar(64)")
-            add_column_if_missing("found_items", "image_embedding_model", "varchar(64)")
-            add_column_if_missing("lost_items", "embedding", "vector(1536)")
-            add_column_if_missing("found_items", "embedding", "vector(1536)")
-            add_column_if_missing("lost_items", "report_date", "varchar(32)")
-            add_column_if_missing("lost_items", "report_location", "varchar(500)")
-            add_column_if_missing("lost_items", "image_urls", "json")
             add_column_if_missing("lost_items", "client_draft_id", "varchar(36)")
             add_column_if_missing("found_items", "client_draft_id", "varchar(36)")
             add_column_if_missing("lost_items", "hidden_verification_detail", "text")
@@ -245,6 +245,13 @@ async def lifespan(_: FastAPI):
                         "WHERE client_draft_id IS NOT NULL"
                     )
                 )
+            add_column_if_missing("lost_items", "image_embedding_model", "varchar(64)")
+            add_column_if_missing("found_items", "image_embedding_model", "varchar(64)")
+            add_column_if_missing("lost_items", "embedding", "vector(1536)")
+            add_column_if_missing("found_items", "embedding", "vector(1536)")
+            add_column_if_missing("lost_items", "report_date", "varchar(32)")
+            add_column_if_missing("lost_items", "report_location", "varchar(500)")
+            add_column_if_missing("lost_items", "image_urls", "json")
             add_column_if_missing("lost_items", "social_poster_url", "varchar(1000)")
             add_column_if_missing("lost_items", "title_en", "text")
             add_column_if_missing("lost_items", "description_en", "text")

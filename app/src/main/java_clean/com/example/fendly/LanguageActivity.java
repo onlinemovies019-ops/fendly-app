@@ -164,7 +164,7 @@ public final class LanguageActivity extends AppCompatActivity {
         TextView continueButton = text("Continue", 14, GOLD_ON, Typeface.NORMAL);
         continueButton.setGravity(Gravity.CENTER);
         continueButton.setBackground(round(GOLD, 24));
-        continueButton.setElevation(dp(5));
+        FendlyMotion.setElevation(continueButton, dp(5));
         ButtonPressAnimator.attach(continueButton);
         continueButton.setOnClickListener(view -> continueToApp());
         LinearLayout.LayoutParams buttonParams = new LinearLayout.LayoutParams(-1, dp(52));

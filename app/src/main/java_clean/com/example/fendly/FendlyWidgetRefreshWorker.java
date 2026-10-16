@@ -1,6 +1,7 @@
 package com.example.fendly;
 
 import android.content.Context;
+import android.util.Log;
 
 import androidx.annotation.NonNull;
 import androidx.work.Worker;
@@ -17,7 +18,12 @@ public final class FendlyWidgetRefreshWorker extends Worker {
     @NonNull
     @Override
     public Result doWork() {
-        FendlyWidgetProvider.refreshWidgetsInBackground(getApplicationContext());
-        return Result.success();
+        try {
+            FendlyWidgetProvider.refreshWidgetsInBackground(getApplicationContext());
+            return Result.success();
+        } catch (Exception error) {
+            Log.e("FendlyWidget", "Unable to refresh widget after a notification", error);
+            return Result.retry();
+        }
     }
 }

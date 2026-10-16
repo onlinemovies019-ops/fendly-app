@@ -6,10 +6,9 @@ import math
 import os
 import re
 from datetime import datetime, timedelta, timezone
-
 from typing import Literal
 from urllib.parse import unquote, urlsplit
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import firebase_admin
 from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Response, UploadFile, status
@@ -17,7 +16,7 @@ from firebase_admin import firestore
 from pydantic import BaseModel, Field, model_validator
 from PIL import Image, UnidentifiedImageError
 from sqlalchemy import delete, func, or_, select
-from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from ai_matching import create_embedding, item_text
@@ -49,9 +48,9 @@ from schemas import (
     ItemUpdate,
     MatchRequest,
     MatchResponse,
+    ReportResolutionUpdate,
     ReportClaimCreate,
     ReportClaimResponse,
-    ReportResolutionUpdate,
     VisualSearchResponse,
     VisualSearchUploadResponse,
 )
@@ -203,8 +202,8 @@ class ItemSubmission(BaseModel):
     report_location: str | None = Field(default=None, max_length=500)
     category: str = Field(default="other", min_length=1, max_length=80)
     community_guidelines_accepted: bool = False
-    client_draft_id: UUID | None = None
     payment_id: str | None = Field(default=None, max_length=128)
+    client_draft_id: UUID | None = None
 
     @model_validator(mode="before")
     @classmethod
@@ -652,13 +651,6 @@ async def create_item_compat(
         raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, "Unable to create report") from exc
 
 
-@router.get("/items/{item_type}/{item_id}/community-poster")
-async def get_community_poster(
-    item_type: str,
-    item_id: str,
-    language: str | None = None,
-    session: Session | None = Depends(get_db),
-    uid: str = Depends(get_current_user),
 @router.post(
     "/items/lost/{lost_item_id}/claims",
     response_model=ReportClaimResponse,
@@ -730,6 +722,13 @@ def submit_report_claim(
     return ReportClaimResponse(id=claim.id, status=claim.status)
 
 
+@router.get("/items/{item_type}/{item_id}/community-poster")
+async def get_community_poster(
+    item_type: str,
+    item_id: str,
+    language: str | None = None,
+    session: Session | None = Depends(get_db),
+    uid: str = Depends(get_current_user),
 ) -> Response:
     session = _require_db_session(session)
     model = (

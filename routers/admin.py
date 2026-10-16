@@ -32,7 +32,11 @@ from models import (
     User,
     UserNotification,
 )
-from notifications import persist_admin_match_alert, send_verified_match_push
+from notifications import (
+    persist_admin_match_alert,
+    send_user_notification_push,
+    send_verified_match_push,
+)
 from report_deletion import delete_report_from_app
 from schemas import ItemResponse
 from translation import translate_report_fields, translate_report_fields_batch
@@ -110,10 +114,6 @@ class AlertReviewRequest(BaseModel):
     verification_notes: str | None = Field(default=None, max_length=1000)
 
 
-class SubscriptionOverrideRequest(BaseModel):
-    action: str = Field(pattern="^(add|cancel)$")
-
-
 class VerificationDetailUpdate(BaseModel):
     detail: str = Field(max_length=2000)
 
@@ -121,6 +121,10 @@ class VerificationDetailUpdate(BaseModel):
 class ReportClaimReviewRequest(BaseModel):
     decision: str = Field(pattern="^(confirmed|rejected)$")
     review_notes: str | None = Field(default=None, max_length=1000)
+
+
+class SubscriptionOverrideRequest(BaseModel):
+    action: str = Field(pattern="^(add|cancel)$")
 
 
 def _parse_admin_uids(raw_value: str | None) -> set[str]:
@@ -501,10 +505,6 @@ async def browse_admin_items(
     }
 
 
-@router.get("/success-stories")
-def list_opted_in_success_stories(
-    session: Session = Depends(get_db),
-    _: str = Depends(require_admin),
 @router.get("/items/{report_type}/{item_id}/verification-detail")
 def get_report_verification_detail(
     report_type: str,
@@ -625,6 +625,10 @@ def review_report_claim(
     return {"status": claim.status}
 
 
+@router.get("/success-stories")
+def list_opted_in_success_stories(
+    session: Session = Depends(get_db),
+    _: str = Depends(require_admin),
 ) -> list[dict[str, object]]:
     reports: list[tuple[str, LostItem | FoundItem]] = []
     for item_type, model in (("lost", LostItem), ("found", FoundItem)):
@@ -688,6 +692,181 @@ def list_admin_adoptions(
         }
         for listing in listings
     ]
+
+
+@router.get("/adoptions/applications")
+def list_admin_adoption_applications(
+    session: Session = Depends(get_db),
+    _: str = Depends(require_admin),
+) -> list[dict[str, object]]:
+    applications = session.scalars(
+        select(AdoptionApplication)
+        .where(AdoptionApplication.status == "submitted")
+        .order_by(desc(AdoptionApplication.created_at))
+        .limit(200)
+    ).all()
+    results = []
+    for application in applications:
+        listing = session.get(AdoptionListing, application.listing_id)
+        if listing is None:
+            continue
+        lister = session.scalar(
+            select(User).where(User.firebase_uid == listing.lister_user_id)
+        )
+        applicant = session.scalar(
+            select(User).where(User.firebase_uid == application.applicant_user_id)
+        )
+        results.append(
+            {
+                "id": application.id,
+                "listing_id": listing.id,
+                "pet_name": listing.pet_name,
+                "species": listing.species,
+                "location_city": listing.location_city,
+                "home_type": application.home_type,
+                "pet_experience": application.pet_experience,
+                "applicant_contact_phone": application.contact_phone,
+                "applicant_name": (
+                    (applicant.full_name or applicant.username or "")
+                    if applicant is not None
+                    else ""
+                ),
+                "lister_contact_phone": (
+                    lister.mobile
+                    if lister is not None and lister.mobile_verified
+                    else None
+                ),
+                "lister_name": (
+                    (lister.full_name or lister.username or "")
+                    if lister is not None
+                    else ""
+                ),
+                "owner_approved": application.owner_approved,
+                "created_at": (
+                    application.created_at.isoformat()
+                    if application.created_at
+                    else None
+                ),
+            }
+        )
+    return results
+
+
+@router.post("/adoptions/applications/{application_id}/decision")
+def decide_admin_adoption_application(
+    application_id: str,
+    decision: str = Query(..., pattern="^(approved|rejected)$"),
+    session: Session = Depends(get_db),
+    _: str = Depends(require_admin),
+) -> dict[str, str]:
+    application = session.scalar(
+        select(AdoptionApplication)
+        .where(AdoptionApplication.id == application_id)
+        .with_for_update()
+    )
+    if application is None:
+        raise HTTPException(404, "Adoption application not found")
+    listing = session.scalar(
+        select(AdoptionListing)
+        .where(AdoptionListing.id == application.listing_id)
+        .with_for_update()
+    )
+    if listing is None:
+        raise HTTPException(404, "Adoption listing not found")
+    if application.status != "submitted":
+        raise HTTPException(409, "This application has already been decided")
+
+    notifications = []
+    if decision == "approved":
+        if not application.owner_approved:
+            raise HTTPException(
+                409,
+                "The pet lister must select this application before contacts can be shared",
+            )
+        lister = session.scalar(
+            select(User).where(User.firebase_uid == listing.lister_user_id)
+        )
+        if lister is None or not lister.mobile_verified or not lister.mobile:
+            raise HTTPException(
+                409,
+                "The pet lister must have a verified phone number before contacts can be shared",
+            )
+        application.status = "approved"
+        listing.status = "adopted"
+        other_applications = session.scalars(
+            select(AdoptionApplication).where(
+                AdoptionApplication.listing_id == listing.id,
+                AdoptionApplication.id != application.id,
+                AdoptionApplication.status == "submitted",
+            )
+        ).all()
+        for other in other_applications:
+            other.status = "rejected"
+            notifications.append(
+                UserNotification(
+                    firebase_uid=other.applicant_user_id,
+                    found_item_id=None,
+                    adoption_listing_id=listing.id,
+                    notification_type="adoption_application_update",
+                    title="Adoption application update",
+                    body=f"The application for {listing.pet_name} was not selected.",
+                    score=0.0,
+                )
+            )
+        applicant_message = (
+            f"Fendly completed its review for {listing.pet_name}. "
+            "The lister's verified contact is now available in My Applications."
+        )
+        lister_message = (
+            f"Fendly completed its review for {listing.pet_name}. "
+            "The selected applicant's contact is now available in My Listings."
+        )
+    else:
+        application.status = "rejected"
+        remaining = session.scalar(
+            select(AdoptionApplication.id).where(
+                AdoptionApplication.listing_id == listing.id,
+                AdoptionApplication.id != application.id,
+                AdoptionApplication.status == "submitted",
+            ).limit(1)
+        )
+        if remaining is None:
+            listing.status = "available"
+        applicant_message = (
+            f"Fendly did not approve the adoption request for {listing.pet_name}."
+        )
+        lister_message = (
+            f"Fendly did not approve the adoption request for {listing.pet_name}."
+        )
+
+    notifications.extend(
+        [
+            UserNotification(
+                firebase_uid=application.applicant_user_id,
+                found_item_id=None,
+                adoption_listing_id=listing.id,
+                notification_type="adoption_application_update",
+                title="Adoption application update",
+                body=applicant_message,
+                score=0.0,
+            ),
+            UserNotification(
+                firebase_uid=listing.lister_user_id,
+                found_item_id=None,
+                adoption_listing_id=listing.id,
+                notification_type="adoption_application_update",
+                title="Adoption application update",
+                body=lister_message,
+                score=0.0,
+            ),
+        ]
+    )
+    session.add_all(notifications)
+    session.commit()
+    for notification in notifications:
+        session.refresh(notification)
+        send_user_notification_push(session, notification)
+    return {"status": decision}
 
 
 @router.delete("/adoptions/{listing_id}")

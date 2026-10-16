@@ -27,27 +27,6 @@ function run(command, args, cwd, env, output) {
     });
 }
 
-function adbDevices(output) {
-    return output
-        .split(/\r?\n/)
-        .slice(1)
-        .map((line) => line.trim())
-        .filter((line) => line && !line.startsWith("*"))
-        .map((line) => {
-            const [serial, state, ...details] = line.split(/\s+/);
-            return { serial, state, details: details.join(" ") };
-        });
-}
-
-function isRedmiDevice(device) {
-    return /(?:product:violet|model:Redmi_Note_7_Pro)/.test(device.details);
-}
-
-function adbTransportId(device) {
-    const match = device.details.match(/\btransport_id:(\d+)/);
-    return match ? match[1] : null;
-}
-
 function wait(milliseconds) {
     return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
@@ -94,216 +73,13 @@ function resolveJavaHome(output) {
 function activate(context) {
     const output = vscode.window.createOutputChannel("Fendly Device Runner");
     context.subscriptions.push(output);
-    let automaticReconnectRunning = false;
-    let startupWarningShown = false;
-    let observedWifiTransportId = context.globalState.get("fendly.wifiAdbTransportId");
-    let startupReconnect;
-    let disposed = false;
     context.subscriptions.push(
         vscode.commands.registerCommand("fendly.refreshScrcpyMirror", async () => {
             try {
-                const adb = resolveAdb();
-                if (!adb) {
-                    throw new Error("Android Debug Bridge (adb) was not found.");
-                }
-                const root = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || process.cwd();
-                const env = { ...process.env, PATH: `${path.dirname(adb)}:${process.env.PATH || ""}` };
-                const connectedDevices = adbDevices(
-                    await run(adb, ["devices", "-l"], root, env, output)
-                );
-                const wifiEndpoint = context.globalState.get("fendly.wifiAdbEndpoint");
-                const redmiConnected = connectedDevices.some((device) =>
-                    device.state === "device"
-                    && isRedmiDevice(device)
-                    && (!wifiEndpoint || device.serial === wifiEndpoint)
-                );
-                if (!redmiConnected) {
-                    throw new Error("Redmi is not connected to ADB. Use Reconnect Fendly over Wi-Fi first.");
-                }
-
                 await refreshScrcpyMirror();
-                vscode.window.showInformationMessage(
-                    "Scrcpy mirror restarted. Select the Redmi's current Wi-Fi connection if prompted."
-                );
+                vscode.window.showInformationMessage("Scrcpy mirror restarted.");
             } catch (error) {
                 vscode.window.showErrorMessage(`Could not refresh Scrcpy mirror: ${error.message}`);
-            }
-        }),
-    );
-    const scheduleAutomaticReconnect = (delay = 5000) => {
-        startupReconnect = setTimeout(async () => {
-            if (disposed) return;
-            if (automaticReconnectRunning) {
-                scheduleAutomaticReconnect(10000);
-                return;
-            }
-            automaticReconnectRunning = true;
-            try {
-                await vscode.commands.executeCommand("fendly.reconnectWifiAdb", true);
-            } finally {
-                if (!disposed) scheduleAutomaticReconnect(15000);
-            }
-        }, delay);
-    };
-    context.subscriptions.push(
-        vscode.commands.registerCommand("fendly.reconnectWifiAdb", async (automatic = false) => {
-            const adb = resolveAdb();
-            if (!adb) {
-                if (!automatic) {
-                    vscode.window.showErrorMessage("Android Debug Bridge (adb) was not found.");
-                } else {
-                    automaticReconnectRunning = false;
-                }
-                return;
-            }
-
-            const root = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || process.cwd();
-            const env = { ...process.env, PATH: `${path.dirname(adb)}:${process.env.PATH || ""}` };
-            const savedEndpoint = context.globalState.get("fendly.wifiAdbEndpoint");
-            if (!automatic) {
-                output.clear();
-                output.show(true);
-            }
-            output.appendLine(automatic
-                ? "Automatically reconnecting Redmi over Wi-Fi..."
-                : "Checking Fendly device Wi-Fi connection...");
-
-            try {
-                const checkDevices = async () =>
-                    adbDevices(await run(adb, ["devices", "-l"], root, env, output));
-                let devices = await checkDevices();
-                const connectedWifi = devices.find((device) =>
-                    device.state === "device"
-                    && device.serial.includes(":")
-                    && isRedmiDevice(device)
-                );
-                if (connectedWifi) {
-                    await context.globalState.update("fendly.wifiAdbEndpoint", connectedWifi.serial);
-                    const currentTransportId = adbTransportId(connectedWifi);
-                    const transportChanged = observedWifiTransportId !== currentTransportId;
-                    observedWifiTransportId = currentTransportId;
-                    if (currentTransportId) {
-                        await context.globalState.update(
-                            "fendly.wifiAdbTransportId",
-                            currentTransportId
-                        );
-                    }
-                    if (automatic && transportChanged) {
-                        try {
-                            await refreshScrcpyMirror();
-                            output.appendLine("Refreshed VS Scrcpy for the current ADB transport.");
-                        } catch (error) {
-                            output.appendLine(`Redmi is online; reopen the mirror if needed: ${error.message}`);
-                        }
-                    }
-                    if (!automatic) {
-                        vscode.window.showInformationMessage(`Redmi is connected over Wi-Fi at ${connectedWifi.serial}.`);
-                    }
-                    return;
-                }
-
-                const usbDevice = devices.find((device) =>
-                    device.state === "device"
-                    && !device.serial.includes(":")
-                    && isRedmiDevice(device)
-                );
-
-                let endpoint = savedEndpoint;
-                if (usbDevice) {
-                    output.appendLine(`Preparing Wi-Fi ADB from USB device ${usbDevice.serial}...`);
-                    let ipMatch = null;
-                    const attempts = automatic ? 1 : 12;
-                    for (let attempt = 0; attempt < attempts; attempt += 1) {
-                        const ipOutput = await run(
-                            adb,
-                            ["-s", usbDevice.serial, "shell", "ip", "-4", "-o", "addr", "show", "wlan0"],
-                            root,
-                            env,
-                            output,
-                        );
-                        ipMatch = ipOutput.match(/\binet\s+((?:\d{1,3}\.){3}\d{1,3})\/\d+/);
-                        if (ipMatch && !ipMatch[1].startsWith("169.254.")) break;
-                        if (attempt + 1 < attempts) {
-                            output.appendLine("Waiting for Redmi Wi-Fi to become available...");
-                            await wait(5000);
-                        }
-                    }
-                    if (!ipMatch || ipMatch[1].startsWith("169.254.")) {
-                        throw new Error("Redmi is not connected to Wi-Fi. Connect it and the Mac to the same network first.");
-                    }
-                    endpoint = `${ipMatch[1]}:5555`;
-                    await run(adb, ["-s", usbDevice.serial, "tcpip", "5555"], root, env, output);
-                    await new Promise((resolve) => setTimeout(resolve, 1200));
-                }
-
-                if (!endpoint) {
-                    const message = "After a Redmi reboot, Android 10 disables Wi-Fi ADB. Connect it to this Mac with USB once, unlock it, and ensure both devices are on the same Wi-Fi.";
-                    if (automatic) {
-                        output.appendLine(message);
-                        if (!startupWarningShown) {
-                            startupWarningShown = true;
-                            vscode.window.showWarningMessage(
-                                "Redmi Wi-Fi ADB is off. Connect it to this Mac by USB once; Fendly will keep retrying automatically."
-                            );
-                        }
-                        return;
-                    }
-                    throw new Error(message);
-                }
-
-                output.appendLine(`Connecting to ${endpoint}...`);
-                let connected = false;
-                const attempts = automatic ? 1 : 12;
-                for (let attempt = 0; attempt < attempts; attempt += 1) {
-                    await run(adb, ["connect", endpoint], root, env, output);
-                    devices = await checkDevices();
-                    connected = devices.some((device) =>
-                        device.serial === endpoint && device.state === "device"
-                    );
-                    if (connected || attempt + 1 >= attempts) break;
-                    output.appendLine("Waiting for Redmi Wi-Fi ADB to respond...");
-                    await wait(5000);
-                }
-                if (!connected) {
-                    throw new Error(
-                        usbDevice
-                            ? `Could not connect to ${endpoint}. Keep the Redmi awake and on the same Wi-Fi, then retry.`
-                            : `Could not reach ${endpoint}. After a phone reboot, connect USB and click this button to re-enable Wi-Fi ADB.`
-                    );
-                }
-
-                await context.globalState.update("fendly.wifiAdbEndpoint", endpoint);
-                const connectedRedmi = devices.find((device) =>
-                    device.serial === endpoint && device.state === "device"
-                );
-                const currentTransportId = connectedRedmi && adbTransportId(connectedRedmi);
-                if (currentTransportId) {
-                    observedWifiTransportId = currentTransportId;
-                    await context.globalState.update(
-                        "fendly.wifiAdbTransportId",
-                        currentTransportId
-                    );
-                }
-                if (!automatic) {
-                    vscode.window.showInformationMessage(`Redmi connected over Wi-Fi at ${endpoint}. You can unplug USB now.`);
-                } else {
-                    output.appendLine(`Redmi automatically connected over Wi-Fi at ${endpoint}.`);
-                    try {
-                        await refreshScrcpyMirror();
-                        output.appendLine("Refreshed VS Scrcpy after ADB reconnected.");
-                    } catch (error) {
-                        output.appendLine(`ADB reconnected; reopen the Scrcpy mirror if needed: ${error.message}`);
-                    }
-                }
-            } catch (error) {
-                output.appendLine(String(error));
-                if (!automatic) {
-                    vscode.window.showErrorMessage(`Could not reconnect Redmi over Wi-Fi: ${error.message}`);
-                }
-            } finally {
-                if (automatic) {
-                    automaticReconnectRunning = false;
-                }
             }
         }),
     );
@@ -343,20 +119,7 @@ function activate(context) {
                 JAVA_HOME: javaHome,
                 PATH: `${path.join(javaHome, "bin")}:${path.dirname(adb)}:${process.env.PATH || ""}`,
             };
-            const wifiEndpoint = context.globalState.get("fendly.wifiAdbEndpoint");
-            if (wifiEndpoint) {
-                try {
-                    const devices = adbDevices(await run(adb, ["devices", "-l"], root, env, output));
-                    if (devices.some((device) => device.serial === wifiEndpoint && device.state === "device")) {
-                        env.ANDROID_SERIAL = wifiEndpoint;
-                        output.appendLine(`Using Wi-Fi device: ${wifiEndpoint}`);
-                    }
-                } catch (error) {
-                    output.appendLine(String(error));
-                    vscode.window.showErrorMessage(`Could not check connected Android devices: ${error.message}`);
-                    return;
-                }
-            }
+            delete env.ANDROID_SERIAL;
 
             output.appendLine(`Using JDK 17: ${javaHome}`);
             output.appendLine("Building and installing Fendly...");
@@ -376,12 +139,13 @@ function activate(context) {
                             output,
                         );
                         output.appendLine("Launching Fendly...");
-                        const launchArgs = ["shell", "am", "start", "-n", "com.example.fendly/.SplashActivity"];
-                        if (env.ANDROID_SERIAL) {
-                            launchArgs.unshift(env.ANDROID_SERIAL);
-                            launchArgs.unshift("-s");
-                        }
-                        await run(adb, launchArgs, root, env, output);
+                        await run(
+                            adb,
+                            ["shell", "am", "start", "-n", "com.example.fendly/.SplashActivity"],
+                            root,
+                            env,
+                            output,
+                        );
                         vscode.window.showInformationMessage("Fendly is running on your connected device.");
                     } catch (error) {
                         output.appendLine(String(error));
@@ -391,13 +155,6 @@ function activate(context) {
             );
         }),
     );
-    scheduleAutomaticReconnect();
-    context.subscriptions.push({
-        dispose: () => {
-            disposed = true;
-            clearTimeout(startupReconnect);
-        },
-    });
 }
 
 function deactivate() {}

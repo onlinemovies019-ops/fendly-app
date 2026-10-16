@@ -6,6 +6,7 @@ import android.animation.ValueAnimator;
 import android.os.Build;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.ViewParent;
 import android.view.animation.DecelerateInterpolator;
 import android.widget.ImageView;
 
@@ -40,11 +41,50 @@ final class FendlyMotion {
     }
 
     static void animateLogo(ImageView logo, float liftPx) {
-        if (logo == null || !animationsEnabled()) return;
+        if (logo == null) return;
         logo.setAlpha(1f);
+        setElevation(logo, liftPx * 1.5f);
+        logo.setTranslationZ(liftPx * 0.5f);
+        logo.setCameraDistance(8000f * logo.getResources().getDisplayMetrics().density);
+        if (!animationsEnabled()) return;
         LogoAnimation animation = new LogoAnimation(logo, liftPx);
         logo.addOnAttachStateChangeListener(animation);
         if (logo.isAttachedToWindow()) animation.start();
+    }
+
+    static void setElevation(View view, float elevationPx) {
+        if (view == null) return;
+        view.setElevation(elevationPx);
+        allowShadowOverflow(view);
+    }
+
+    static void allowShadowOverflow(View view) {
+        if (view == null) return;
+        if (view.isAttachedToWindow()) {
+            disableAncestorClipping(view);
+            return;
+        }
+        View.OnAttachStateChangeListener listener = new View.OnAttachStateChangeListener() {
+            @Override
+            public void onViewAttachedToWindow(View attachedView) {
+                disableAncestorClipping(attachedView);
+                attachedView.removeOnAttachStateChangeListener(this);
+            }
+
+            @Override
+            public void onViewDetachedFromWindow(View detachedView) { }
+        };
+        view.addOnAttachStateChangeListener(listener);
+    }
+
+    private static void disableAncestorClipping(View view) {
+        ViewParent parent = view.getParent();
+        while (parent instanceof ViewGroup) {
+            ViewGroup group = (ViewGroup) parent;
+            group.setClipChildren(false);
+            group.setClipToPadding(false);
+            parent = group.getParent();
+        }
     }
 
     private static final class LogoAnimation implements View.OnAttachStateChangeListener {
@@ -59,20 +99,20 @@ final class FendlyMotion {
             floating.setDuration(2400L);
             floating.setRepeatCount(ValueAnimator.INFINITE);
 
-            ObjectAnimator pulseX = ObjectAnimator.ofFloat(
-                    logo, View.SCALE_X, 1f, 1.02f, 1f
+            ObjectAnimator tiltX = ObjectAnimator.ofFloat(
+                    logo, View.ROTATION_X, 0f, 2f, 0f, -2f, 0f
             );
-            pulseX.setDuration(2400L);
-            pulseX.setRepeatCount(ValueAnimator.INFINITE);
+            tiltX.setDuration(4800L);
+            tiltX.setRepeatCount(ValueAnimator.INFINITE);
 
-            ObjectAnimator pulseY = ObjectAnimator.ofFloat(
-                    logo, View.SCALE_Y, 1f, 1.02f, 1f
+            ObjectAnimator tiltY = ObjectAnimator.ofFloat(
+                    logo, View.ROTATION_Y, 0f, -3f, 0f, 3f, 0f
             );
-            pulseY.setDuration(2400L);
-            pulseY.setRepeatCount(ValueAnimator.INFINITE);
+            tiltY.setDuration(4800L);
+            tiltY.setRepeatCount(ValueAnimator.INFINITE);
 
             animatorSet = new AnimatorSet();
-            animatorSet.playTogether(floating, pulseX, pulseY);
+            animatorSet.playTogether(floating, tiltX, tiltY);
         }
 
         void start() {
@@ -88,8 +128,8 @@ final class FendlyMotion {
         public void onViewDetachedFromWindow(View view) {
             animatorSet.cancel();
             logo.setTranslationY(0f);
-            logo.setScaleX(1f);
-            logo.setScaleY(1f);
+            logo.setRotationX(0f);
+            logo.setRotationY(0f);
         }
     }
 }

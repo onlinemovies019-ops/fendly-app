@@ -230,7 +230,11 @@ def list_my_adoption_applications(
             "id": application.id,
             "listing_id": listing.id,
             "pet_name": listing.pet_name,
-            "status": application.status,
+            "status": (
+                "owner_approved"
+                if application.owner_approved and application.status == "submitted"
+                else application.status
+            ),
             "created_at": (
                 application.created_at.isoformat() if application.created_at else None
             ),
@@ -517,11 +521,23 @@ def apply_to_adoption(
     try:
         session.add(application)
         listing.status = "pending"
+        notification = UserNotification(
+            firebase_uid=listing.lister_user_id,
+            found_item_id=None,
+            adoption_listing_id=listing.id,
+            notification_type="adoption_application_received",
+            title="New pet adoption request",
+            body=f"Someone has requested to adopt {listing.pet_name}. Open Fendly to review the application.",
+            score=0.0,
+        )
+        session.add(notification)
         session.commit()
         session.refresh(application)
+        session.refresh(notification)
     except IntegrityError as exc:
         session.rollback()
         raise HTTPException(409, "You have already applied for this pet") from exc
+    send_user_notification_push(session, notification)
     return {
         "id": application.id,
         "listing_id": listing.id,
@@ -550,8 +566,14 @@ def list_listing_applications(
             "id": application.id,
             "home_type": application.home_type,
             "pet_experience": application.pet_experience,
-            "contact_phone": application.contact_phone,
-            "status": application.status,
+            "contact_phone": (
+                application.contact_phone if application.status == "approved" else ""
+            ),
+            "status": (
+                "owner_approved"
+                if application.owner_approved and application.status == "submitted"
+                else application.status
+            ),
             "created_at": (
                 application.created_at.isoformat() if application.created_at else None
             ),
@@ -588,30 +610,16 @@ def decide_adoption_application(
     if decision == "approved" and listing.status not in ("available", "pending"):
         raise HTTPException(409, "This pet is no longer available")
 
-    application.status = decision
     if decision == "approved":
-        listing.status = "adopted"
-        other_applications = session.scalars(
-            select(AdoptionApplication).where(
-                AdoptionApplication.listing_id == listing.id,
-                AdoptionApplication.id != application.id,
-                AdoptionApplication.status == "submitted",
-            )
-        ).all()
-        for other in other_applications:
-            other.status = "rejected"
-            session.add(
-                UserNotification(
-                    firebase_uid=other.applicant_user_id,
-                    found_item_id=None,
-                    adoption_listing_id=listing.id,
-                    notification_type="adoption_application_update",
-                    title="Adoption application update",
-                    body=f"The application for {listing.pet_name} was not selected.",
-                    score=0.0,
-                )
-            )
+        if application.owner_approved:
+            raise HTTPException(409, "This application has already been selected")
+        application.owner_approved = True
+        notification_body = (
+            f"The lister selected your request for {listing.pet_name}. "
+            "Fendly is reviewing it; contact details remain private until then."
+        )
     else:
+        application.status = "rejected"
         remaining = session.scalar(
             select(AdoptionApplication.id).where(
                 AdoptionApplication.listing_id == listing.id,
@@ -621,6 +629,7 @@ def decide_adoption_application(
         )
         if remaining is None:
             listing.status = "available"
+        notification_body = f"Your application for {listing.pet_name} was not selected."
 
     notification = UserNotification(
         firebase_uid=application.applicant_user_id,
@@ -628,16 +637,12 @@ def decide_adoption_application(
         adoption_listing_id=listing.id,
         notification_type="adoption_application_update",
         title="Adoption application update",
-        body=(
-            f"Your application for {listing.pet_name} was approved. "
-            "Open Fendly to view the lister's contact details."
-            if decision == "approved"
-            else f"Your application for {listing.pet_name} was not selected."
-        ),
+        body=notification_body,
         score=0.0,
     )
     session.add(notification)
     session.commit()
+    session.refresh(notification)
     send_user_notification_push(session, notification)
     return {"status": decision}
 

@@ -32,6 +32,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.material3.AlertDialog
@@ -39,7 +40,6 @@ import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Tab
@@ -59,8 +59,12 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.lerp
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.ImeAction
@@ -69,6 +73,7 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
@@ -98,6 +103,10 @@ import java.util.Locale
 
 
 class AdoptionActivity : ComponentActivity() {
+    companion object {
+        const val EXTRA_OPEN_LISTING_ID = "open_adoption_listing_id"
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         val darkMode = getSharedPreferences("fendly_settings", MODE_PRIVATE)
             .getBoolean("dark_mode", false)
@@ -249,25 +258,33 @@ private fun AdoptionScreen(onBack: () -> Unit) {
     val context = LocalContext.current
     val focusManager = LocalFocusManager.current
     val keyboardController = LocalSoftwareKeyboardController.current
+    val notificationListingId = remember {
+        (context as? AdoptionActivity)?.intent?.getStringExtra(
+            AdoptionActivity.EXTRA_OPEN_LISTING_ID,
+        ).orEmpty()
+    }
     fun t(key: String): String = LanguageManager.adoptionText(context, key)
     val scope = rememberCoroutineScope()
     val feed = remember { mutableStateListOf<AdoptionListing>() }
     val mine = remember { mutableStateListOf<AdoptionListing>() }
     val myApplications = remember { mutableStateListOf<MyAdoptionApplication>() }
     val reviewApplications = remember { mutableStateListOf<AdoptionApplicationView>() }
+    val mineListState = rememberLazyListState()
     var mineLoaded by remember { mutableStateOf(false) }
     var mineLoading by remember { mutableStateOf(false) }
     var reviewListing by remember { mutableStateOf("") }
     var reviewLoadingListing by remember { mutableStateOf("") }
     var expandedListing by remember { mutableStateOf("") }
+    var expandedBrowseListings by remember { mutableStateOf(emptySet<String>()) }
     var editingListing by remember { mutableStateOf<AdoptionListing?>(null) }
     var deletingListing by remember { mutableStateOf<AdoptionListing?>(null) }
-    var tab by remember { mutableStateOf(0) }
+    var tab by remember { mutableStateOf(if (notificationListingId.isBlank()) 0 else 1) }
     var cityFilter by remember { mutableStateOf("") }
     var speciesFilter by remember { mutableStateOf("") }
     var minimumAge by remember { mutableStateOf("") }
     var maximumAge by remember { mutableStateOf("") }
     var showCreate by remember { mutableStateOf(false) }
+    var publishingListing by remember { mutableStateOf(false) }
     var applyingTo by remember { mutableStateOf<AdoptionListing?>(null) }
     var petName by remember { mutableStateOf("") }
     var species by remember { mutableStateOf("") }
@@ -521,7 +538,21 @@ private fun AdoptionScreen(onBack: () -> Unit) {
     }
 
     LaunchedEffect(Unit) {
-        refreshFeed()
+        if (notificationListingId.isBlank()) refreshFeed() else loadMine()
+    }
+    LaunchedEffect(mineLoaded, notificationListingId) {
+        if (!mineLoaded || notificationListingId.isBlank()) return@LaunchedEffect
+        val listing = mine.firstOrNull { it.id == notificationListingId }
+        if (listing != null) {
+            expandedListing = listing.id
+            mineListState.animateScrollToItem(mine.indexOf(listing))
+            loadApplications(listing)
+            (context as? AdoptionActivity)?.intent?.removeExtra(
+                AdoptionActivity.EXTRA_OPEN_LISTING_ID,
+            )
+        } else {
+            message = t("adopt_notification_listing_unavailable")
+        }
     }
     fun addSelectedPhotos(uris: List<Uri>) {
         val emptySlots = selectedPhotos.indices.filter { selectedPhotos[it] == null }
@@ -747,6 +778,15 @@ private fun AdoptionScreen(onBack: () -> Unit) {
                                     listing = listing,
                                     t = ::t,
                                     actionLabel = t("adopt_request"),
+                                    expanded = listing.id in expandedBrowseListings,
+                                    onToggleExpand = {
+                                        expandedBrowseListings =
+                                            if (listing.id in expandedBrowseListings) {
+                                                expandedBrowseListings - listing.id
+                                            } else {
+                                                expandedBrowseListings + listing.id
+                                            }
+                                    },
                                 ) {
                                     if (listing.status !in setOf("available", "pending")) {
                                         message = t("adopt_not_accepting")
@@ -784,6 +824,7 @@ private fun AdoptionScreen(onBack: () -> Unit) {
                         TextButton(onClick = { loadMine() }) { Text(t("adopt_refresh")) }
                     }
                     else -> LazyColumn(
+                        state = mineListState,
                         modifier = Modifier.weight(1f),
                         verticalArrangement = Arrangement.spacedBy(10.dp),
                     ) {
@@ -928,6 +969,8 @@ private fun AdoptionScreen(onBack: () -> Unit) {
                                                     )
                                                 },
                                             )
+                                        } else if (application.status == "owner_approved") {
+                                            Text(t("adopt_contact_pending"))
                                         }
                                     }
                                 }
@@ -948,7 +991,9 @@ private fun AdoptionScreen(onBack: () -> Unit) {
         val healthFocus = remember { FocusRequester() }
         val descriptionFocus = remember { FocusRequester() }
         val cityFocus = remember { FocusRequester() }
-        Dialog(onDismissRequest = { showCreate = false }) {
+        Dialog(onDismissRequest = {
+            if (!publishingListing) showCreate = false
+        }) {
             val dialogFocusManager = LocalFocusManager.current
             val dialogKeyboardController = LocalSoftwareKeyboardController.current
             FendlyCard(Modifier.fillMaxWidth()) {
@@ -1097,11 +1142,20 @@ private fun AdoptionScreen(onBack: () -> Unit) {
                         style = MaterialTheme.typography.bodySmall,
                     )
                     Column(verticalArrangement = Arrangement.spacedBy(4.dp), modifier = Modifier.fillMaxWidth()) {
-                        TextButton(onClick = { showCreate = false }) { Text(t("adopt_cancel")) }
+                        TextButton(
+                            enabled = !publishingListing,
+                            onClick = { showCreate = false },
+                        ) { Text(t("adopt_cancel")) }
                         FendlyPrimaryButton(
-                            text = t("adopt_publish"),
-                            enabled = !busy,
+                            text = if (publishingListing) {
+                                t("adopt_publishing")
+                            } else {
+                                t("adopt_publish")
+                            },
+                            enabled = !busy && !publishingListing,
+                            loading = publishingListing,
                             onClick = {
+                                if (publishingListing) return@FendlyPrimaryButton
                                 val ageValue = age.toIntOrNull()
                                 val photos = selectedPhotos.filterNotNull()
                                 if (
@@ -1121,7 +1175,10 @@ private fun AdoptionScreen(onBack: () -> Unit) {
                                 ) {
                                     message = t("adopt_invalid_fields")
                                 } else {
-                                    withToken { token ->
+                                    publishingListing = true
+                                    withToken(
+                                        onFailure = { publishingListing = false },
+                                    ) { token ->
                                         busy = true
                                         scope.launch {
                                             try {
@@ -1159,6 +1216,7 @@ private fun AdoptionScreen(onBack: () -> Unit) {
                                                 ).filterNotNull().joinToString(" ")
                                             } finally {
                                                 busy = false
+                                                publishingListing = false
                                             }
                                         }
                                     }
@@ -1435,24 +1493,53 @@ private fun ListingCard(
                     Text(listing.petName, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                     Text("${t("adopt_status")}: ${t("adopt_${listing.status}")}")
                 }
-                if (ownerActions != null) {
-                    IconButton(
-                        onClick = onToggleExpand,
-                        modifier = Modifier
-                            .size(40.dp)
-                            .background(MaterialTheme.colorScheme.surface, CircleShape)
-                            .border(1.dp, MaterialTheme.colorScheme.outline, CircleShape)
-                            .semantics {
-                                contentDescription = t(
-                                    if (expanded) "adopt_collapse" else "adopt_expand",
-                                )
-                            },
-                    ) {
-                        Text(
-                            if (expanded) "▲" else "▼",
-                            color = MaterialTheme.colorScheme.onSurface,
+                val toggleShape = RoundedCornerShape(24.dp)
+                val toggleSurface = MaterialTheme.colorScheme.surface
+                val toggleBorder = if (toggleSurface.red < 0.5f) {
+                    Color(0xFF323943)
+                } else {
+                    Color(0xFFD8D0C4)
+                }
+                val screenWidthDp = LocalContext.current.resources.configuration.screenWidthDp
+                val textScale = when {
+                    screenWidthDp < 360 -> 0.90f
+                    screenWidthDp < 480 -> 0.94f
+                    screenWidthDp < 720 -> 1f
+                    else -> 1.08f
+                }
+                val userFontScale = LocalContext.current
+                    .getSharedPreferences("fendly_settings", ComponentActivity.MODE_PRIVATE)
+                    .getFloat("font_scale", 1f)
+                    .coerceIn(0.85f, 1.25f)
+                Box(
+                    modifier = Modifier
+                        .size(40.dp)
+                        .shadow(3.dp, toggleShape)
+                        .background(
+                            Brush.verticalGradient(
+                                listOf(
+                                    lerp(toggleSurface, Color.White, 0.14f),
+                                    toggleSurface,
+                                    lerp(toggleSurface, Color.Black, 0.12f),
+                                ),
+                            ),
+                            toggleShape,
                         )
-                    }
+                        .border(1.dp, toggleBorder, toggleShape)
+                        .clickable(role = Role.Button, onClick = onToggleExpand)
+                        .semantics {
+                            contentDescription = t(
+                                if (expanded) "adopt_collapse" else "adopt_expand",
+                            )
+                        },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        if (expanded) "▲" else "▼",
+                        color = MaterialTheme.colorScheme.onSurface,
+                        fontSize = (12 * textScale * userFontScale).sp,
+                        fontWeight = FontWeight.Normal,
+                    )
                 }
             }
             if (expanded) {
@@ -1682,7 +1769,11 @@ private fun ApplicationReviewCard(
             )
             Text("${t("adopt_home_label")}: ${application.homeType}")
             Text("${t("adopt_experience_label")}: ${application.experience}")
-            Text("${t("adopt_phone_label")}: ${application.phone}")
+            if (application.phone.isBlank()) {
+                Text(t("adopt_contact_pending"))
+            } else {
+                Text("${t("adopt_phone_label")}: ${application.phone}")
+            }
             if (application.status == "submitted") {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     TextButton(onClick = { onDecision("approved") }) { Text(t("adopt_approve")) }

@@ -105,6 +105,7 @@ def send_user_notification_push(
                     "body": persisted_notification.body,
                     "notification_type": persisted_notification.notification_type,
                     "adoption_listing_id": persisted_notification.adoption_listing_id or "",
+                    "notification_id": persisted_notification.id,
                 },
                 android=messaging.AndroidConfig(priority="high"),
             )

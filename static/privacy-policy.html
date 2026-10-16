@@ -17,14 +17,14 @@
 <body>
   <main>
     <h1>Fendly Privacy Policy</h1>
-    <p class="updated">Effective date: October 11, 2026</p>
+    <p class="updated">Effective date: October 16, 2026</p>
     <p>Fendly is operated by the developer of the Fendly app. Questions or
       privacy requests can be sent to
       <a href="mailto:info.fendly@gmail.com">info.fendly@gmail.com</a>.</p>
 
     <h2>Information handled by Fendly</h2>
     <ul>
-      <li><strong>Account and profile:</strong> Firebase account identifier,
+      <li><strong>Account and profile:</strong> account identifier,
         username, name, email address, phone number, state, city, and profile
         photo when you provide them.</li>
       <li><strong>Lost-and-found reports:</strong> report title, description,
@@ -44,9 +44,9 @@
         are created only after an administrator manually verifies a potential
         match.</li>
       <li><strong>Payments:</strong> subscription status and a payment
-        transaction identifier are stored by Fendly. Payment details are
-        processed by Razorpay; Fendly does not receive or store your full card
-        number or payment credentials through the app.</li>
+        transaction identifier are stored by Fendly. A payment service
+        provider processes payment details; Fendly does not receive or store
+        your full card number or payment credentials through the app.</li>
       <li><strong>Private reports:</strong> lost-and-found reports and their
         images are visible to the report owner and authorized Fendly
         administrators. Other users do not receive full report details; a
@@ -82,20 +82,17 @@
       and does not include either user's contact details. When an
       administrator opens a map link, the selected location is passed
       to the mapping application or service.</p>
-    <p>Depending on the services enabled for the deployment, information is
-      processed by service providers that support Fendly, including Firebase
-      Authentication, Firestore and Firebase Cloud Messaging; the configured
-      database and image-storage provider (including Supabase Storage or the
-      Fendly API host); Resend for email verification codes; Fast2SMS for SMS
-      verification; Razorpay for payments; and Brevo for administrator email
-      alerts. Report photos may also be processed by Fendly's Google Cloud
-      image-matching function to generate visual similarity embeddings; the
-      function returns image-match vectors to Fendly and does not provide
-      report details to other users. Report text and submitted report images
-      are sent to OpenAI for safety moderation before storage. When configured,
-      report text may also be sent to OpenAI or Google Gemini for translation.
-      These providers process information under their own terms and privacy
-      notices.</p>
+    <p>Depending on the services enabled for the deployment, service providers
+      process the information needed for sign-in and notifications, report and
+      image storage, email or SMS verification, payments, administrator alerts,
+      and technical operations. Report photos may be processed by an image
+      matching service to calculate visual similarities; the resulting match
+      information is returned to Fendly and does not provide full report
+      details to other users. Report text and images may be processed by
+      automated safety-moderation services before storage. When translation
+      features are enabled, report text may be processed by translation
+      services. Only data needed for the relevant enabled feature is shared
+      with its service provider.</p>
     <p>Fendly does not automatically publish Lost/Theft or Found reports to
       Facebook, Instagram, or other social platforms. An owner may choose to
       generate a community poster or alert card and share it using another app; information in
@@ -134,8 +131,8 @@
     <p>When account deletion completes, Fendly deletes the account's profiles,
       lost-and-found reports, adoption listings and applications, report photos,
       adoption photos, generated adoption graphics, and community posters
-      managed by Fendly, and related match alerts from active service stores.
-      Images hosted outside services
+      managed by Fendly, notification records and tokens, content reports, and
+      related match alerts from active service stores. Images hosted outside services
       Fendly controls cannot be removed by Fendly; contact us if you need help
       identifying such an image.</p>
 
@@ -144,7 +141,7 @@
       selecting <strong>Delete account</strong>. You can also submit a deletion
       request without the app on our
       <a href="/static/delete-account.html">account deletion request page</a>.
-      The request deletes your Firebase sign-in, profile information, profile
+      The request deletes your account sign-in, profile information, profile
       document copies, notification records and token, username reservation,
       blocked-account settings,
       pending email-verification challenges, lost-and-found reports, adoption

@@ -94,7 +94,11 @@ Required environment variables:
 	are provider usage and may consume free-tier quota or incur charges according
 	to the Google AI Studio account's current plan and limits. If Gemini is
 	misconfigured or unavailable, the endpoint reports an error to the app rather
-	than returning a fabricated/offline answer.
+	than returning a fabricated/offline answer. In the Android assistant, users
+	can tap the microphone to dictate a question in their selected app language;
+	voice-submitted questions are sent through this same authenticated endpoint,
+	and the answer is spoken aloud using the device's selected-language speech
+	engine.
 
 Uploads require Supabase Storage. Report images and encrypted vault images use
 separate private buckets; the API blocks public access to legacy
@@ -132,9 +136,18 @@ before searching.
   selected app `language`, local `current_date`, and current
   `current_report_type`; returns report fields in that language, separates
   neighborhood/area `location_hint` from city-only `city_tag`, classifies
-  items/pets/people and lost/found intent, verifies Maharashtra city names
-  against the transcript, formats stated dates as `DD/MM/YYYY`, and separates
+  items/pets/people and lost/found intent, verifies Indian city/place names
+  against the app's India-wide location catalog and GeoNames populated-place
+  data, faithfully interprets simple or child-like speech without adding
+  assumptions, formats stated dates as `DD/MM/YYYY`, and separates
   brand/model/serial details into `identifier_details`)
+- India place-name data in `routers/india_places_geonames.tsv` is from the
+  [GeoNames `cities500` dataset](https://download.geonames.org/export/dump/cities500.zip),
+  filtered to Indian populated places and supplemented by the app's location
+  picker entries.
+  For places not listed in the picker, gazetteer-based city correction filters
+  small localities to reduce area/city mix-ups. GeoNames data is licensed under
+  [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/).
 - `POST /api/items/lost`
 - `POST /api/items/found`
 - Device IMEI collection and SafeTrade verification are disabled. The retired
@@ -163,7 +176,9 @@ before searching.
 - `GET /api/admin/items/summary` and `GET /api/admin/items/browse?type=LOST&offset=0&limit=30`
   (admin-only; lightweight report counts and paginated report browsing)
 - `GET /api/admin/items` (admin-only full legacy report export)
-- `GET /api/admin/adoptions` and `DELETE /api/admin/adoptions/{listing_id}`
+- `GET /api/admin/adoptions`, `DELETE /api/admin/adoptions/{listing_id}`,
+  `GET /api/admin/adoptions/applications`, and
+  `POST /api/admin/adoptions/applications/{application_id}/decision?decision=approved|rejected`
 - `GET /api/admin/matches/{found_item_id}`
 - `POST /api/admin/matches/{found_item_id}/notify`
 - `POST /api/devices/fcm-token`
@@ -171,7 +186,15 @@ before searching.
 - `GET /api/adoptions` (public, filterable pet adoption feed)
 - `POST /api/adoptions` and `POST /api/adoptions/{id}/apply` (authenticated)
 - `GET /api/adoptions/{id}/applications` (lister-only application review)
-- `POST /api/adoptions/applications/{id}/decision` (lister-only decision)
+- `POST /api/adoptions/applications/{id}/decision` (lister selection/rejection)
+
+Adoption requests notify the pet lister in the Fendly inbox and, when a device
+FCM token and notification permission are available, with an Android push.
+Push taps require the signed-in user's biometric check or PIN and open the
+specific listing's application review. A lister's selection does not share
+contact details; the admin dashboard shows pending requests for follow-up with
+both users. Only the admin's final approval releases the applicant's contact
+to the lister and the lister's verified phone to the applicant.
 
 Protected `/api` endpoints require `Authorization: Bearer <Firebase ID token>`.
 SMS send/verify endpoints are unauthenticated for sign-up support and are
@@ -193,7 +216,11 @@ where identifiable.
 Apply `supabase/migrations/20261011150000_add_adoption_module.sql` before
 deploying the adoption feature. It creates API-only adoption tables and the
 public `adoption-images` bucket; Lost/Found photos remain private in
-`report-images`. Adoption auto-posting uses the Facebook Page and Instagram account saved
+`report-images`.
+Apply `supabase/migrations/20261016120000_adoption_admin_review.sql` when
+deploying the admin-mediated adoption contact-release workflow; it adds the
+lister-selection flag to adoption applications.
+Adoption auto-posting uses the Facebook Page and Instagram account saved
 through the admin workspace's **Connect / reconnect Facebook and Instagram**
 control. Reconnecting in Fendly refreshes the encrypted saved connection and
 takes precedence over any legacy `META_PAGE_ACCESS_TOKEN` fallback in Render.

@@ -38,3 +38,13 @@ def test_adoption_migration_creates_private_api_tables_and_public_photo_bucket()
     assert "'adoption-images'" in migration
     assert "public = true" in migration
     assert "found_item_id DROP NOT NULL" in migration
+
+
+def test_adoption_admin_review_migration_adds_lister_selection_flag():
+    repository_root = Path(__file__).resolve().parents[1]
+    migration = (
+        repository_root
+        / "supabase/migrations/20261016120000_adoption_admin_review.sql"
+    ).read_text(encoding="utf-8")
+
+    assert "ADD COLUMN IF NOT EXISTS owner_approved boolean NOT NULL DEFAULT false" in migration

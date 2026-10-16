@@ -255,7 +255,7 @@ public final class PhotoCropActivity extends Activity {
         button.setTextColor(textColor);
         button.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15);
         button.setBackgroundColor(fillColor);
-        button.setElevation(dp(2));
+        FendlyMotion.setElevation(button, dp(2));
         button.setPadding(dp(16), dp(8), dp(16), dp(8));
     }
 

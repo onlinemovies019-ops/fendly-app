@@ -425,8 +425,21 @@ def test_authenticated_browse_feed_excludes_the_listers_own_listings(adoption_cl
     assert [listing["id"] for listing in response.json()] == ["other-owners-pet"]
 
 
-def test_applications_may_be_multiple_pending_and_only_lister_can_approve(adoption_client):
+def test_adoption_contacts_require_lister_selection_and_admin_release(
+    adoption_client,
+    monkeypatch,
+):
     client, session_factory, current_uid = adoption_client
+    push_deliveries = []
+
+    def capture_push(_session, notification):
+        push_deliveries.append(
+            (notification.firebase_uid, notification.notification_type)
+        )
+        return 1
+
+    monkeypatch.setattr(adoptions_module, "send_user_notification_push", capture_push)
+    monkeypatch.setattr(admin_module, "send_user_notification_push", capture_push)
     try:
         listing_response = _create_listing(client)
         assert listing_response.status_code == 201, listing_response.text
@@ -451,6 +464,7 @@ def test_applications_may_be_multiple_pending_and_only_lister_can_approve(adopti
             },
         )
         assert first.status_code == 201, first.text
+        assert first.json()["status"] == "submitted"
 
         current_uid[0] = "applicant-two"
         second = client.post(
@@ -467,23 +481,83 @@ def test_applications_may_be_multiple_pending_and_only_lister_can_approve(adopti
         assert denied.status_code == 403
 
         current_uid[0] = "lister"
+        lister_inbox = client.get("/api/notifications")
+        assert lister_inbox.status_code == 200, lister_inbox.text
+        assert lister_inbox.json()["unread_count"] == 2
+        assert all(
+            item["type"] == "adoption_application_received"
+            for item in lister_inbox.json()["notifications"]
+        )
+        opened_notification_id = lister_inbox.json()["notifications"][0]["id"]
+        opened = client.post(
+            f"/api/users/notifications/{opened_notification_id}/read"
+        )
+        assert opened.status_code == 200, opened.text
+        assert opened.json() == {"updated": 1}
+        refreshed_inbox = client.get("/api/users/notifications")
+        assert refreshed_inbox.status_code == 200
+        assert refreshed_inbox.json()["unread_count"] == 1
+        assert all(
+            item["id"] != opened_notification_id
+            for item in refreshed_inbox.json()["notifications"]
+        )
         applications = client.get(f"/api/adoptions/{listing_id}/applications")
         assert applications.status_code == 200
         assert len(applications.json()) == 2
+        assert all(item["contact_phone"] == "" for item in applications.json())
         applicant_id = first.json()["id"]
         approval = client.post(
             f"/api/adoptions/applications/{applicant_id}/decision",
             data={"decision": "approved"},
         )
         assert approval.status_code == 200
+        assert approval.json() == {"status": "approved"}
+        applications = client.get(f"/api/adoptions/{listing_id}/applications")
+        selected = next(item for item in applications.json() if item["id"] == applicant_id)
+        assert selected["status"] == "owner_approved"
+        assert selected["contact_phone"] == ""
+
+        current_uid[0] = "applicant-one"
+        my_applications = client.get("/api/adoptions/applications/mine")
+        assert my_applications.status_code == 200
+        assert my_applications.json()[0]["status"] == "owner_approved"
+        assert "lister_contact_phone" not in my_applications.json()[0]
+
+        monkeypatch.setenv("ADMIN_FIREBASE_UIDS", "lister")
+        current_uid[0] = "lister"
+        admin_queue = client.get("/api/admin/adoptions/applications")
+        assert admin_queue.status_code == 200, admin_queue.text
+        selected_for_admin = next(
+            item for item in admin_queue.json() if item["id"] == applicant_id
+        )
+        assert selected_for_admin["applicant_contact_phone"] == "+911234567890"
+        assert selected_for_admin["lister_contact_phone"] == "+911234560000"
+        assert selected_for_admin["owner_approved"] is True
+
+        release = client.post(
+            f"/api/admin/adoptions/applications/{applicant_id}/decision",
+            params={"decision": "approved"},
+        )
+        assert release.status_code == 200, release.text
+        assert release.json() == {"status": "approved"}
 
         current_uid[0] = "applicant-one"
         my_applications = client.get("/api/adoptions/applications/mine")
         assert my_applications.status_code == 200
         assert my_applications.json()[0]["lister_contact_phone"] == "+911234560000"
+        current_uid[0] = "lister"
+        owner_applications = client.get(f"/api/adoptions/{listing_id}/applications")
+        released_application = next(
+            item for item in owner_applications.json() if item["id"] == applicant_id
+        )
+        assert released_application["contact_phone"] == "+911234567890"
+        current_uid[0] = "applicant-one"
         notification_inbox = client.get("/api/notifications")
         assert notification_inbox.status_code == 200
-        assert notification_inbox.json()["notifications"][0]["adoption_listing_id"] == listing_id
+        assert any(
+            item["adoption_listing_id"] == listing_id
+            for item in notification_inbox.json()["notifications"]
+        )
 
         with Session(session_factory.kw["bind"]) as session:
             listing = session.get(AdoptionListing, listing_id)
@@ -499,8 +573,12 @@ def test_applications_may_be_multiple_pending_and_only_lister_can_approve(adopti
             ).all()
         assert listing.status == "adopted"
         assert sorted(app_statuses) == ["approved", "rejected"]
-        assert len(notifications) == 2
+        assert len(notifications) == 6
         assert all(notification.score == 0 for notification in notifications)
+        assert push_deliveries.count(("lister", "adoption_application_received")) == 2
+        assert push_deliveries.count(("applicant-one", "adoption_application_update")) == 2
+        assert push_deliveries.count(("applicant-two", "adoption_application_update")) == 1
+        assert push_deliveries.count(("lister", "adoption_application_update")) == 1
     finally:
         current_uid[0] = "lister"
 

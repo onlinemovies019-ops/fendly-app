@@ -55,11 +55,13 @@ def delete_report_from_app(
             )
         )
     )
-    if report_type == "found":
-        session.execute(
-            delete(UserNotification).where(
-                UserNotification.found_item_id == report.id
+    session.execute(
+        delete(UserNotification).where(
+            or_(
+                UserNotification.lost_item_id == report.id,
+                UserNotification.found_item_id == report.id,
             )
         )
+    )
     session.delete(report)
     session.commit()

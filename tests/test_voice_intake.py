@@ -298,6 +298,12 @@ def test_voice_intake_uses_selected_app_language_and_extracts_date_and_brand(
     assert response.json()["identifier_details"] == "Northstar X7"
     extraction_payload = FakeAsyncClient.calls[1][1]["json"]
     assert f"Target output language: {expected_language}." in extraction_payload["messages"][0]["content"]
+    assert "Understand simple, child-like, fragmented, or grammatically imperfect speech." in (
+        extraction_payload["messages"][0]["content"]
+    )
+    assert "Respect what the speaker says and preserve their intended meaning" in (
+        extraction_payload["messages"][0]["content"]
+    )
     assert json.loads(extraction_payload["messages"][1]["content"])["target_language"] == expected_language
 
 
@@ -435,9 +441,51 @@ def test_voice_intake_preserves_selected_type_when_transcript_does_not_classify_
             "Amravati",
             "",
         ),
+        (
+            "My wallet was lost near Hawa Mahal in Jaipur, Rajasthan.",
+            "Kolkata",
+            "Hawa Mahal, Jaipur",
+            "Jaipur",
+            "Hawa Mahal",
+        ),
+        (
+            "I found my bag near HSR Layout in Bengaluru.",
+            "Hyderabad",
+            "HSR Layout, Bengaluru",
+            "Bengaluru",
+            "HSR Layout",
+        ),
+        (
+            "My phone was lost in Navi Mumbai.",
+            "Mumbai",
+            "Navi Mumbai",
+            "Navi Mumbai",
+            "",
+        ),
+        (
+            "My purse was lost in Port Blair.",
+            "Nagpur",
+            "Port Blair",
+            "Port Blair",
+            "",
+        ),
+        (
+            "My passport was lost in Kolkata.",
+            "Nagpur",
+            "Kolkata",
+            "Kolkata",
+            "",
+        ),
+        (
+            "My wallet was lost in Zahirabad.",
+            "Nagpur",
+            "Zahirabad",
+            "Zahirabad",
+            "",
+        ),
     ],
 )
-def test_voice_intake_uses_only_cities_spoken_in_transcript(
+def test_voice_intake_uses_only_indian_places_spoken_in_transcript(
     voice_client,
     transcript,
     ai_city,

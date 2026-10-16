@@ -325,7 +325,10 @@ def delete_account(
             )
             session.execute(
                 delete(UserNotification).where(
-                    UserNotification.found_item_id.in_(report_ids)
+                    or_(
+                        UserNotification.found_item_id.in_(report_ids),
+                        UserNotification.lost_item_id.in_(report_ids),
+                    )
                 )
             )
         session.execute(delete(LostItem).where(LostItem.created_by == uid))

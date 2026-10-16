@@ -8,9 +8,9 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.view.View;
-import android.util.Log;
 import android.widget.RemoteViews;
 
+import androidx.work.BackoffPolicy;
 import androidx.work.ExistingWorkPolicy;
 import androidx.work.OneTimeWorkRequest;
 import androidx.work.WorkManager;
@@ -32,7 +32,6 @@ import java.util.Locale;
 import java.util.concurrent.TimeUnit;
 
 public final class FendlyWidgetProvider extends AppWidgetProvider {
-    private static final String TAG = "FendlyWidget";
     private static final String API_BASE = "https://fendly-api.onrender.com";
     private static final String ACTION_REFRESH = "com.example.fendly.action.REFRESH_WIDGET";
     private static final String PREFERENCES = "fendly_widget_state";
@@ -44,9 +43,10 @@ public final class FendlyWidgetProvider extends AppWidgetProvider {
 
     public static void refresh(Context context) {
         OneTimeWorkRequest request = new OneTimeWorkRequest.Builder(FendlyWidgetRefreshWorker.class)
+                .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 30, TimeUnit.SECONDS)
                 .build();
         WorkManager.getInstance(context.getApplicationContext())
-                .enqueueUniqueWork(REFRESH_WORK_NAME, ExistingWorkPolicy.KEEP, request);
+                .enqueueUniqueWork(REFRESH_WORK_NAME, ExistingWorkPolicy.REPLACE, request);
     }
 
     @Override
@@ -63,18 +63,10 @@ public final class FendlyWidgetProvider extends AppWidgetProvider {
         refresh(context);
     }
 
-    static void refreshWidgetsInBackground(Context applicationContext) {
+    static void refreshWidgetsInBackground(Context applicationContext) throws Exception {
         renderWidgets(applicationContext);
-        try {
-            refreshCounts(applicationContext);
-        } catch (Exception error) {
-            Log.e(TAG, "Unable to refresh widget counts; keeping the last saved values", error);
-        }
-        try {
-            renderWidgets(applicationContext);
-        } catch (RuntimeException error) {
-            Log.e(TAG, "Unable to render refreshed widget counts", error);
-        }
+        refreshCounts(applicationContext);
+        renderWidgets(applicationContext);
     }
 
     private static void refreshCounts(Context context) throws Exception {
