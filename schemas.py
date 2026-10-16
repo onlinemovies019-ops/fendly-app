@@ -65,7 +65,6 @@ class MatchRequest(BaseModel):
 
 
 class MatchPreview(BaseModel):
-    report_id: str | None = None
     title: str
     category: str
     report_date: str | None = None
@@ -74,6 +73,7 @@ class MatchPreview(BaseModel):
 
 
 class MatchResponse(BaseModel):
+    report_id: str | None = None
     item: ItemResponse | MatchPreview | None = None
     score: float = Field(ge=0, le=1)
     matchType: str | None = None

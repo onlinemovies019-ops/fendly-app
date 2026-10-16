@@ -1260,6 +1260,7 @@ async def test_visual_search_threshold_order_limit_and_private_response(monkeypa
     assert validated["searched_reports"] == 13
     assert validated["unindexed_reports"] == 1
     preview = validated["matches"][0]["item"]
+    assert validated["matches"][0]["report_id"] == "eligible-11"
     assert preview["report_type"] == "FOUND"
     assert set(preview) == {"title", "category", "report_date", "image_url", "report_type"}
 

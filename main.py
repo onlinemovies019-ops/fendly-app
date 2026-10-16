@@ -225,20 +225,26 @@ async def lifespan(_: FastAPI):
             add_column_if_missing("found_items", "client_draft_id", "varchar(36)")
             add_column_if_missing("lost_items", "hidden_verification_detail", "text")
             add_column_if_missing("found_items", "hidden_verification_detail", "text")
-            connection.execute(
-                text(
-                    "CREATE UNIQUE INDEX IF NOT EXISTS uq_lost_items_client_draft "
-                    "ON lost_items (created_by, client_draft_id) "
-                    "WHERE client_draft_id IS NOT NULL"
+            if table_has_column("lost_items", "created_by") and table_has_column(
+                "lost_items", "client_draft_id"
+            ):
+                connection.execute(
+                    text(
+                        "CREATE UNIQUE INDEX IF NOT EXISTS uq_lost_items_client_draft "
+                        "ON lost_items (created_by, client_draft_id) "
+                        "WHERE client_draft_id IS NOT NULL"
+                    )
                 )
-            )
-            connection.execute(
-                text(
-                    "CREATE UNIQUE INDEX IF NOT EXISTS uq_found_items_client_draft "
-                    "ON found_items (created_by, client_draft_id) "
-                    "WHERE client_draft_id IS NOT NULL"
+            if table_has_column("found_items", "created_by") and table_has_column(
+                "found_items", "client_draft_id"
+            ):
+                connection.execute(
+                    text(
+                        "CREATE UNIQUE INDEX IF NOT EXISTS uq_found_items_client_draft "
+                        "ON found_items (created_by, client_draft_id) "
+                        "WHERE client_draft_id IS NOT NULL"
+                    )
                 )
-            )
             add_column_if_missing("lost_items", "social_poster_url", "varchar(1000)")
             add_column_if_missing("lost_items", "title_en", "text")
             add_column_if_missing("lost_items", "description_en", "text")

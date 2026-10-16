@@ -296,11 +296,11 @@ def delete_account(
         app = _firebase_app()
         _delete_firestore_account_copies(app, uid, email)
         _delete_supabase_account_matching_data(report_ids)
+        session.execute(delete(ReportClaim).where(ReportClaim.claimant_uid == uid))
         if report_ids:
             session.execute(
                 delete(ReportClaim).where(
                     or_(
-                        ReportClaim.claimant_uid == uid,
                         ReportClaim.lost_item_id.in_(report_ids),
                         ReportClaim.found_item_id.in_(report_ids),
                     )
@@ -309,8 +309,6 @@ def delete_account(
             session.execute(
                 delete(SocialPublication).where(SocialPublication.report_id.in_(report_ids))
             )
-        else:
-            session.execute(delete(ReportClaim).where(ReportClaim.claimant_uid == uid))
             session.execute(
                 delete(ContentReport).where(
                     ContentReport.report_type.in_(("lost", "found")),

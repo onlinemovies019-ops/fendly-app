@@ -123,8 +123,8 @@ def test_hidden_verification_detail_is_only_available_to_admin_routes(claim_clie
 def test_possible_match_preview_contains_claim_id_but_not_verification_secret():
     response = VisualSearchResponse.model_validate({
         "matches": [{
+            "report_id": "found-report",
             "item": {
-                "report_id": "found-report",
                 "title": "Found camera",
                 "category": "Electronics",
                 "report_type": "FOUND",

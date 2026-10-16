@@ -332,7 +332,7 @@ async def _save_item(
     model: type[LostItem] | type[FoundItem],
     background_tasks: BackgroundTasks | None = None,
     client_draft_id: str | None = None,
-) -> tuple[LostItem | FoundItem, bool]:
+) -> LostItem | FoundItem:
     if client_draft_id:
         existing = session.scalar(
             select(model).where(
@@ -341,7 +341,7 @@ async def _save_item(
             )
         )
         if existing is not None:
-            return existing, False
+            return existing
 
     if not payload.community_guidelines_accepted:
         raise HTTPException(
@@ -386,8 +386,8 @@ async def _save_item(
     # 4. Create and persist record
     item_values = payload.model_dump(
         exclude={"payment_id", "community_guidelines_accepted"}
-    item_values["client_draft_id"] = client_draft_id
     )
+    item_values["client_draft_id"] = client_draft_id
     item_values["category"] = category
     item_values["image_url"] = private_image_reference(
         payload.image_url or (payload.image_urls[0] if payload.image_urls else None)
@@ -422,9 +422,9 @@ async def _save_item(
                 )
             )
             if existing is not None:
-                return existing, False
+                return existing
         raise
-    return record, True
+    return record
 
 
 async def _process_created_report(record: LostItem | FoundItem, session: Session) -> None:
@@ -621,7 +621,15 @@ async def create_item_compat(
             payment_id=request.payment_id,
         )
         model = LostItem if request.type == "lost" else FoundItem
-        record, created = await _save_item(
+        existing_draft = None
+        if request.client_draft_id:
+            existing_draft = session.scalar(
+                select(model).where(
+                    model.created_by == uid,
+                    model.client_draft_id == str(request.client_draft_id),
+                )
+            )
+        record = await _save_item(
             payload,
             session,
             uid,
@@ -629,6 +637,12 @@ async def create_item_compat(
             background_tasks,
             str(request.client_draft_id) if request.client_draft_id else None,
         )
+        if existing_draft is None:
+            background_tasks.add_task(
+                _process_created_report_background,
+                record.id,
+                "lost" if model is LostItem else "found",
+            )
         response = ItemResponse.model_validate(record).model_dump()
         response.update(_report_image_fields(record))
         return response
@@ -980,6 +994,7 @@ async def search_visual_matches(
     )
     results = [
         {
+            "report_id": candidate.id,
             "item": {
                 "title": candidate.title,
                 "category": candidate.category,
@@ -988,7 +1003,6 @@ async def search_visual_matches(
                 "report_type": (
                     "FOUND" if normalized_type == "lost" else "LOST"
                 ),
-                "report_id": candidate.id,
             },
             "score": max(0.0, min(1.0, float(score))),
             "matchType": "IMAGE",
